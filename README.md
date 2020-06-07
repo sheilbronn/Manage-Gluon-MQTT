@@ -4,17 +4,17 @@ Monitor and control Freifunk Nodes (Gluon) by MQTT
 
 ## manage_gluon_mqtt
 
-**manage_gluon_mqtt** is a shell script supporting a simple integration of Freifunk nodes into a MQTT network. The focus is on monitoring but maybe extended to control operations for a private MQTT network:
+**manage_gluon_mqtt** is a shell script supporting a simple integration of Freifunk nodes into a [MQTT](https://en.wikipedia.org/wiki/MQTT) network. The focus is on monitoring but maybe extended to control operations for a private MQTT network:
 
 Supported functions/return information:
 
 * Data about software versions and the auto-updater on the node
-* Query and possibly set UCI values
+* Query and possibly set [UCI](https://openwrt.org/docs/guide-user/base-system/uci) values
 * Query, stop and start the Freifunk public Wifi interface
 * Temporarely modify the Freifunk SSID (within the limits of the local Freifunk community)
 * Query amount and fingerprint of locally connected Freifunk Wifi clients
-* Query static and dynamic data (returned as JSON): nodeinfo, neighbours,statistics as well as the output from ``gluon-show-site´´.
-* Invoke a reboot
+* Query static and dynamic [Gluon](https://gluon.readthedocs.io/en/latest/) data (returned as [JSON](https://de.wikipedia.org/wiki/JavaScript_Object_Notation)): nodeinfo, neighbours,statistics as well as the output from `gluon-show-site`.
+* Invoke a reboot on the Freifunk node.
 
 IMPORTANT: The script needs quite some refactoring, the code is provided as is. Yes, I know, it's ugly ;)
 
@@ -28,7 +28,7 @@ B. Management of an (untouched) Freifunk node by **remote SSH** commands (public
 
 C. Monitoring by **MQTT messages**: Invoked by an explicit SSH call or by cron, this script runs locally on the Freifunk node, returning its output as **MQTT messages**.
 
-D. Local management like a daemon: This script listens to **MQTT messages** and returns results a MQTT messages, too. (D does not exclude C)
+D. Local management like a daemon: This script listens to **MQTT messages** and returns results a MQTT messages, too. (D does not exclude C, also the script can run as a daemon invoking commands on pre-configured Freifunk hosts as in A or B)
 
 Other aspects:
 
@@ -43,7 +43,8 @@ Depending on the use case to be supported, some prequisites have to be fulfilled
 
 * Installation of the "Mosquitto" packages mosquitto_pub and mosquitto_sub
 * Automatic remote invocation via SSH using private/public key authentication
-* Some version of Gluon or at least OpenWRT: So far, this script has only been tested on Freifunk München nodes with Gluon 2019.1.*. Please let me know or open an issue, if you have success or problems with other versions
+* Some version of Gluon or at least OpenWRT: So far, this script has only been tested on Freifunk München nodes with [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*. Please let me know or open an issue, if you have success or problems with other versions
+* Optional: To ease debugging of the installation consider using the script [mqtt-grep-color](https://github.com/sheilbronn/mqtt-grep-color) (from my other Github repo)
 
 ### Command-line options / Invocation
 
@@ -76,15 +77,15 @@ Supported commands for the -c option are - names might change during refactoring
 * localclients: Amount and fingerprints of clients attached to the node
 * nodeinfo ...
 * neighbours ...
-* statistics: JSON results from the invocation of ``gluon-neighbour-info´´ with these commands as the resp. option.
-* gluon-show-site: JSON info from command ``gluon-show-site´´
+* statistics: JSON results from the invocation of `gluon-neighbour-info` with these commands as the resp. option.
+* gluon-show-site: JSON info from command `gluon-show-site`
 * reboot: Reboot the node (limited to A,B)
 
 ### Example invocations
 
-(to be documented after refactoring)
+[ ] to be documented after refactoring.
 
 ### Notes / Comments
 
-* Script needs heavy refactoring
-* To ease debugging of the installation consider using the script mqtt-grep-color (from my other Github repo)
+- [ ] Script needs heavy refactoring
+- [ ] Handle more diffrent Gluon versions gracefully
