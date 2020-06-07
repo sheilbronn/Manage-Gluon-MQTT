@@ -33,11 +33,11 @@ D. Local management like a daemon: This script listens to **MQTT messages** and 
 Other aspects:
 
 * [Home assistant](https://www.home-assistant.io/docs/mqtt/discovery/) and [Homie](https://homieiot.github.io/specification/) auto-discovery for important topics.
+* MQTT discovery is tested with the [OpenHAB MQTT binding](https://www.openhab.org/addons/bindings/mqtt/) and [HoDD](https://github.com/rroemhild/hodd)
 * Script runs on [bash](https://de.wikipedia.org/wiki/Bash_(Shell)) as well as [ash](https://en.wikipedia.org/wiki/Almquist_shell) (ash is used in [OpenWrt](https://openwrt.org/) as the default shell).
 * If the Freifunk node has very limited memory, e.g. on [4/32 devices](https://openwrt.org/supported_devices/openwrt_on_432_devices), B might be preferred over C or D.
-* In order to install the mosquitto_pub|mosquitto_sub packages, the package installation opkg is needed on Freifunk (Gluon) devices. It might not be available on [devices with limited memory](https://openwrt.org/supported_devices/openwrt_on_432_devices): Use case A and B are a workaround.
-* Remote management via a Freifunk "edge" node acting as a SSH proxy to other Freifunk nodes is supported, e.g. use the [ProxyJump directive](https://www.redhat.com/sysadmin/ssh-proxy-bastion-proxyjump) in your `.ssh/config`.
-
+* In order to install the Mosquitto packages, the package installation opkg is needed on Freifunk (Gluon) devices. opkg might not be available on [devices with limited memory](https://openwrt.org/supported_devices/openwrt_on_432_devices): Use case A and B as a workaround.
+* Remote management via a Freifunk "edge" node acting as a SSH proxy to other Freifunk nodes works well, e.g. use the [ProxyJump directive](https://www.redhat.com/sysadmin/ssh-proxy-bastion-proxyjump) in your `.ssh/config`.
 
 ### Prerequisites
 
@@ -89,5 +89,5 @@ Supported commands for the -c option are - names might change during refactoring
 
 ### Notes / Comments
 
-- [ ] Script needs heavy refactoring
-- [ ] Handle more diffrent Gluon versions gracefully
+* [ ] Script needs heavy refactoring
+* [ ] Handle more and different Gluon versions gracefully.
