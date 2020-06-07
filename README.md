@@ -44,48 +44,50 @@ Other aspects:
 Depending on the use case to be supported, some prequisites have to be fulfilled in order the the script work:
 
 * Installation of the [Mosquitto](https://mosquitto.org) packages mosquitto_pub and mosquitto_sub. They should be in every Linux repository, including OpenWrt.
-* Enable Automatic [remote invocation via SSH using public key authentication](https://openwrt.org/docs/guide-user/security/dropbear.public-key.auth)
-* Some version of Gluon or at least OpenWRT: So far, this script has only been tested on [Freifunk München](https://ffmuc.net) nodes with [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*. Please let me know or open a GitHub issue if you have success or problems with other versions
+* For use case A, B, and C as well as debugging purposes: 
+  Enable Automatic [remote invocation via SSH using public key authentication](https://openwrt.org/docs/guide-user/security/dropbear.public-key.auth)
+* If you want to use the script remotely: Install ash from a package repository or replace ash by bash in the first line.
+* Freifunk relies on some version of Gluon or at least OpenWRT: So far, this script has only been tested on [Freifunk Munich](https://ffmuc.net) nodes with [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*. Please let me know or open a GitHub issue if you have success or problems with other versions
 * Optional: To ease debugging of the installation consider using the script [mqtt-grep-color](https://github.com/sheilbronn/mqtt-grep-color) (from my other Github repo)
 
 ### Command-line options / Invocation
 
-* -c (commands): One or more management commands to be executed (comma-separated)
-* -s (server): If the script is not run locally on a Freifunk node, the SSH names of one or more Freifunk nodes maybe passed with -s (comma-seperated)
-* -v (verbose): more output from the script as well as intermediate steps
+* -c (commands): One or more management commands to be executed (comma-separated), see below for details.
+* -s (server): If the script is not run locally on the Freifunk node itself (localhost), the SSH names of one or more other Freifunk nodes maybe passed with -s (comma-seperated)
+* -v (verbose): more, verbose output from the script as well as intermediate steps
 * -x (execute): each shell command is echoed to stdout before execution (for debugging)
 * -q (quit): no output on stdout
 * -h (host): name or IP adress of the MQTT broker (momentarily still -m).
     The public test broker test.mosquitto.org may be abbreviated as -h test.
     If no broker is given, mosquitto_pub and mosquitto_sub will use their defaults (see their manual pages)
 * -m (mqtt): use MQTT or not (currently only implied by -p)
-* -p : support Homie or Home-Assitant auto-discovery (not fully implemented yet)
+* -p : support Homie or Home-Assistant auto-discovery (not fully verified yet)
 
 Supported commands for the -c option are - names might change during refactoring:
 
-* mqtt: Script will become a daemon waiting for MQTT commands, subsequent commands are ignored (Use case D)
-* noop: Do nothing (for testing purposes)
-* sh: Invoke a remote SSH shell on the remote host (limited to A,B for security!)
-* homie-update: Issue all auto-discovery announcements as well as the values. (NB: Command name might change in future versions)
-* homie-delete: Remove all retained messages for auto-discovery. (NB: Command name might change in future versions)
-* ffstatus ...
-* ffdown ...
-* ffup: Return status of the public Freifunk wifi interface, or switch it down or up
-* ffotherssid: Change name of public Wifi interface (within community boundaries)
-* ffgluonreconfigure: Reset interface name back to original
-* gluon-data
-* machine-data: Version and CPU info of the node
-* status: Load and uptime of the node
-* localclients: Amount and fingerprints of clients attached to the node
-* nodeinfo ...
-* neighbours ...
-* statistics: JSON results from the invocation of `gluon-neighbour-info` with these commands as the resp. option.
-* gluon-show-site: JSON info from command `gluon-show-site`
-* reboot: Reboot the node (limited to A,B)
+* *mqtt*: Script will become a daemon waiting for MQTT commands, subsequent commands are ignored (Use case D)
+* *noop*: Do nothing (for testing purposes)
+* *sh*: Invoke a remote SSH shell on the remote host (limited to A,B for security!)
+* *homie-update*: Issue all auto-discovery announcements as well as the values. (NB: Command name might change in future versions)
+* *homie-delete*: Remove all retained messages for auto-discovery. (NB: Command name might change in future versions)
+* *ffstatus* ...
+* *ffdown* ...
+* *ffup*: Return status of the public Freifunk wifi interface, or switch it down or up
+* *ffotherssid*: Change name of public Wifi interface (within community boundaries)
+* *ffgluonreconfigure*: Reset interface name back to original
+* *gluon-data*
+* *machine-data*: Version and CPU info of the node
+* *status*: Load and uptime of the node
+* *localclients*: Amount and fingerprints of clients attached to the node
+* *nodeinfo* ...
+* *neighbours* ...
+* *statistics*: JSON results from the invocation of `gluon-neighbour-info` with these commands as the resp. option.
+* *gluon-show-site*: JSON info from command `gluon-show-site`
+* *reboot*: Reboot the node (limited to A,B)
 
 ### Example invocations
 
-[ ] to be documented after refactoring.
+[ ] Examples to be documented after refactoring.
 
 ### Notes / Comments
 
