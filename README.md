@@ -48,12 +48,13 @@ Depending on the use case to be supported, some prequisites have to be fulfilled
   Enable Automatic [remote invocation via SSH using public key authentication](https://openwrt.org/docs/guide-user/security/dropbear.public-key.auth)
 * If you want to use the script remotely: Install ash from a package repository or replace ash by bash in the first line.
 * Freifunk relies on some version of Gluon or at least OpenWRT: So far, this script has only been tested on [Freifunk Munich](https://ffmuc.net) nodes with [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*. Please let me know or open a GitHub issue if you have success or problems with other versions
-* Optional: To ease debugging of the installation consider using the script [mqtt-grep-color](https://github.com/sheilbronn/mqtt-grep-color) (from my other Github repo)
+* In case of MQTT connection problems: Ensure that incoming or outgoing MQTT connections are not blocked by a firewall - consider my [mqtt-grep-color](https://github.com/sheilbronn/mqtt-grep-color) to verify and debug your MQTT setup more easily.
 
 ### Command-line options / Invocation
 
 * -c (commands): One or more management commands to be executed (comma-separated), see below for details.
 * -s (server): If the script is not run locally on the Freifunk node itself (localhost), the SSH names of one or more other Freifunk nodes maybe passed with -s (comma-seperated)
+* -g (give): In the output add an informative line with host and command (useful für multiple commands and hosts)
 * -v (verbose): more, verbose output from the script as well as intermediate steps
 * -x (execute): each shell command is echoed to stdout before execution (for debugging)
 * -q (quit): no output on stdout
@@ -87,7 +88,7 @@ Supported commands for the -c option are - names might change during refactoring
 
 ### Example invocations
 
-[ ] Examples to be documented after refactoring.
+You might want to try the following examples on the command line first
 
 ### Notes / Comments
 

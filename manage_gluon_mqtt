@@ -4,12 +4,12 @@
 #
 # manage_gluon_mqtt
 #
-# Monitor and control Freifunk Nodes (Gluon) by MQTT
+# Monitor and control Freifunk nodes (Gluon) by MQTT
 #
-# Docs: https://github.com/sheilbronn/Manage-Gluon-MQTT
+# Repo: https://github.com/sheilbronn/Manage-Gluon-MQTT
 #
 
-### Some fixed parameters and prelimenary (fixed) setting ....
+### Some fixed parameters and prelimenary (fixed) settings ....
 
 wifiupsleep="7" # seconds to sleep after "wifi up"
 uci_opt_ssid1="wireless.wan_radio0"
@@ -21,12 +21,16 @@ phonefile="/srv/openhab2-conf/phones" # file is not necessary for the beginning
 
 # this list should contain all SSH names of the nodes to be managed remotely:
 # (it is only necessary for the ``-s +´´ abbreviation in the option -s)
+# needs refactoring and extraction:
 myhostcollection="alt-solln,hera-e,hermes-e,archimedes-e,phoebe-e,odysseus-e,dionysos-e"
 
-# This option will limit security and escaping problems:
-set -o noglob
+set -o noglob  # "noglob"" will limit security and escaping problems:
 scriptname="${0##*/}"
-ssid_len=9
+areaid="$( { cat /proc/sys/kernel/hostname 2>/dev/null || hostname || echo "unknown" ; } )"
+[ "$areaid" = "openHABianPi" ] && areaid="${areaid}$(ifconfig | sed -n -E -e "s/HWaddr/ether/" -e "s/.*(..:..:..:..:..:..).*/\1/" -e "T" -e "s/://g" -e p -e q )"
+areaid="$(echo $areaid | tr "A-Z" "a-z")"
+
+# ssid_len=9
 ifipv6="bat0"
 ffssid=".*"
 uci_opt_ssid="$uci_opt_ssid1"
@@ -95,15 +99,16 @@ query_and_extract_uci_on_host() {
 	}
 
 error_and_exit() {
-	echo "$scriptname: $*" 1>&2
+	echo "$scriptname: ERROR: $*... Exiting." 1>&2
 	exit 1
 	}
-error_and_exit() {
-	echo "$scriptname: $*" 1>&2
-	exit 1
-	}
+
 echo_if_not_quiet() {
 	[ "$quiet" ] || echo "$*"
+ }
+
+echo_if_verbose() {
+	[ "$verbose" ] && echo "$*"
  }
 
 shorten_ethernet_addr_in_json() {
@@ -111,7 +116,8 @@ shorten_ethernet_addr_in_json() {
 	}
 
 publish_to_mqtt() {
-	[ "$cmd_mospub" != "true" ] && $cmd_mospub $mqtthost -t "$1" -m "$2" $3
+	echo_if_verbose "publish_to_mqtt: TOPIC=$1  MSG=$2  OPTIONS=$3"
+	[ "$cmd_mospub" != "true" ] && $cmd_mospub $mqtthost -t "$1" -m "$2" $3  #  $3 is passed without quotes on purpose
 	}
 
 publish_to_mqtt_maybe() {
@@ -339,7 +345,7 @@ else                                      # on rest-of-world (e.g. Raspi or some
 fi
 
 tmpdir="/tmp/${scriptname%.sh}.$( id -nu )/$$" && mkdir -p "$tmpdir"
-cachedir="$( dirname "$tmpdir" )" # one up
+cachedir="$( dirname "$tmpdir" )" # one up in the hierarchy
 debugfile="$tmpdir/debugfile"
 clientcollection="$tmpdir/clientcollection"
 echo "$0  "  "$@" > "$debugfile"
@@ -347,7 +353,7 @@ echo "$0  "  "$@" > "$debugfile"
 [ $# -eq 0 ] && { show_help ; exit 1 ; } # there must be some parameter...
 
 # https://wiki.bash-hackers.org/howto/getopts_tutorial
-while getopts "?h:gvxqas:pf:m:n:c:o:w:" opt 
+while getopts "?h:gvxqas:pi:f:m:n:c:o:w:" opt 
 do
     case "$opt" in
     \?) show_help
@@ -356,7 +362,7 @@ do
     h|s)  ffhosts="$OPTARG" # one or more Freifunk node(s)
 		if expr index ."$ffhosts" "+*" > /dev/null # substitute a literal + or * for a set of predefined hosts
 		then
-			ffhosts=$( echo "$ffhosts" | sed -e "s/[+*]/$hostcollection/g" )
+			ffhosts=$( echo "$ffhosts" | sed -e "s/[+*]/$myhostcollection/g" )
 			collectedsumofclients=0 # start collecting only if + or * appeared
 			collectedclients="" # redundant
 		fi
@@ -374,6 +380,9 @@ do
     a)  bDoAllOfIt=yes
 		;;
 	p)  homie="yes" # implies MQTT
+		[ "$cmd_mospub" = "true" ] && error_and_exit "the MQTT client mosquitto_pub is not installed, but -$opt requested..."
+		;;
+	i)	areaid="$OPTARG"
 		;;
 	f)  additional_option="$OPTARG"
 		filetocopy="$OPTARG" 
@@ -403,12 +412,13 @@ done
 
 shift "$((OPTIND-1))"   # Discard the options parsed so far, but leave the rest of the cmd line...
 
+# find a name for the collection of all clients here:
 for ffhost in $( echo "${ffhosts:-localhost}" | tr -s "," " " ) # for each given host, maybe just one... (tr needed on ash)
 do
 	if [ "$ffhost" = "localhost" ] ; then
 		sSshUser="NOUSER"
 		ssh_cmd="sh -c"
-		sTargetHost="$( thishostname )"
+		sTargetHost="$areaid"
 	else
 		sSshUser="root@$ffhost"
 		ssh_cmd="ssh -T $sSshUser" 
@@ -777,17 +787,14 @@ do
 	fi
 done
 
-myid="mifi"
-
 [ "$collectedsumofclients" ] && {
-	publish_to_mqtt_maybe "$myid/publicwifi/allclientscount" "$collectedsumofclients"
+	publish_to_mqtt_maybe "$areaid/publicwifi/allclientscount" "$collectedsumofclients"
 
 	[ -n "$collectedclients" ] && {
 		# echo :::$collectedclients::: 
-		id=$( cat /proc/sys/kernel/hostname 2>/dev/null || hostname || echo "unknown" )
-		string="$( echo "$collectedclients" | xargs -n 1 | sort | awk -F, -v id="$id" -v lcount="$collectedsumofclients" 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lcount, id } { printf "{*addr*:*%s*}%s", $1 , ( NR<=(lcount-1) ) ? "," : "" } END { printf "]}" }' )"
-		echo_if_not_quiet $string # | $json_pp
-		publish_to_mqtt_starred "ffmuc/$myid/alllocalclients" "$string"
+		string="$( echo "$collectedclients" | xargs -n 1 | sort | awk -F, -v id="$areaid" -v lcount="$collectedsumofclients" 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lcount, id } { printf "{*addr*:*%s*}%s", $1 , ( NR<=(lcount-1) ) ? "," : "" } END { printf "]}" }' )"
+		echo_if_not_quiet "$(echo "$string" | json_pp)"
+		publish_to_mqtt_starred "ffmuc/$areaid/alllocalclients" "$string"
 	}
 }
 
