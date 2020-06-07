@@ -32,18 +32,20 @@ D. Local management like a daemon: This script listens to **MQTT messages** and 
 
 Other aspects:
 
-* Home assistant and Homie auto-discovery for important topics.
-* Script runs on bash as well as ash (used in OpenWrt).
-* If the freifunk node has very limited memory, e.g. on 4/32 devices, B might be preferred over C or D.
-* Remote management via a Freifunk "edge" node acting as a SSH proxy to other Freifunk nodes is supported.
+* [Home assistant](https://www.home-assistant.io/docs/mqtt/discovery/) and [Homie](https://homieiot.github.io/specification/) auto-discovery for important topics.
+* Script runs on [bash](https://de.wikipedia.org/wiki/Bash_(Shell)) as well as [ash](https://en.wikipedia.org/wiki/Almquist_shell) (ash is used in [OpenWrt](https://openwrt.org/) as the default shell).
+* If the Freifunk node has very limited memory, e.g. on [4/32 devices](https://openwrt.org/supported_devices/openwrt_on_432_devices), B might be preferred over C or D.
+* In order to install the mosquitto_pub|mosquitto_sub packages, the package installation opkg is needed on Freifunk (Gluon) devices. It might not be available on [devices with limited memory](https://openwrt.org/supported_devices/openwrt_on_432_devices): Use case A and B are a workaround.
+* Remote management via a Freifunk "edge" node acting as a SSH proxy to other Freifunk nodes is supported, e.g. use the [ProxyJump directive](https://www.redhat.com/sysadmin/ssh-proxy-bastion-proxyjump) in your `.ssh/config`.
+
 
 ### Prerequisites
 
 Depending on the use case to be supported, some prequisites have to be fulfilled in order the the script work:
 
-* Installation of the "Mosquitto" packages mosquitto_pub and mosquitto_sub
-* Automatic remote invocation via SSH using private/public key authentication
-* Some version of Gluon or at least OpenWRT: So far, this script has only been tested on Freifunk München nodes with [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*. Please let me know or open an issue, if you have success or problems with other versions
+* Installation of the [Mosquitto](https://mosquitto.org) packages mosquitto_pub and mosquitto_sub. They should be in every Linux repository, including OpenWrt.
+* Enable Automatic [remote invocation via SSH using public key authentication](https://openwrt.org/docs/guide-user/security/dropbear.public-key.auth)
+* Some version of Gluon or at least OpenWRT: So far, this script has only been tested on [Freifunk München](https://ffmuc.net) nodes with [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*. Please let me know or open a GitHub issue if you have success or problems with other versions
 * Optional: To ease debugging of the installation consider using the script [mqtt-grep-color](https://github.com/sheilbronn/mqtt-grep-color) (from my other Github repo)
 
 ### Command-line options / Invocation
