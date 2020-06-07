@@ -153,10 +153,6 @@ homie_init() {
 	ad_devname="$( echo "$1" | awk -- '{ print toupper(substr($i,1,1)) substr($i,2) }' )"
 	homie_meta $1 "homie" 3.0.1 $2
 	homie_meta $1 "name" "$ad_devname" $2
-	#	homie/device0001/$localip 127.0.0.1
-	#	homie/device0001/$mac 00:00:00:00:00:00
-	#   homie/device0001/$fw/name homie v3
-	# set -x
 	[ "$gluon" ] && {
 		ad_fwversion="$( cat /lib/gluon/gluon-version 2>/dev/null || cat /proc/version )"
 		homie_meta $1 fw/version "$ad_fwversion"
@@ -165,9 +161,6 @@ homie_init() {
 	homie_meta $1 "fw/name"       "$ad_fwname" $2
 	homie_meta $1 "implementation" Linux $2
 	homie_meta $1 "state" ready $2
-	# homie_meta $1 "fw/name" ""  $2
-	# homie_meta $1 "fw/version" ""  $2
-	# homie_meta $1 "implementation" linux  $2
 	# homie_meta $1 "stats/interval" 600  $2
 	# [ "$gluon" ] && homie_meta $1 "stats/uptime" "$( cat /proc/uptime | cut -f 1 -d . )"  $2
 	homie_meta $1             nodes      publicwifi,gluondata $2
@@ -226,18 +219,8 @@ homie_init() {
 	homie_meta $1/gluondata/model         datatype string $2
 
 	homie_meta $1/gluondata/core-domain name "Core Domain" $2
-	# homie_meta $1/gluondata/core-domain settable false $2
 	homie_meta $1/gluondata/core-domain retained false $2
 	homie_meta $1/gluondata/core-domain datatype string $2
-
-# homie/device0002/contact/$name Contact
-# homie/device0002/contact/$type contact
-# homie/device0002/contact/$properties contact
-# homie/device0002/contact/contact/$name Contact
-# homie/device0002/contact/contact/$settable false
-# homie/device0002/contact/contact/$retained false
-# homie/device0002/contact/contact/$datatype enum
-# homie/device0002/contact/contact/$format OPEN,CLOSED
 
 	homie_meta $1 state ready $2
 
@@ -364,13 +347,13 @@ echo "$0  "  "$@" > "$debugfile"
 [ $# -eq 0 ] && { show_help ; exit 1 ; } # there must be some parameter...
 
 # https://wiki.bash-hackers.org/howto/getopts_tutorial
-while getopts "?h:gvxqas:pf:m:n:c:o:w:" opt     #   "?h:gqv1256789at:skmn:c:o:w:p:z:A:V:J:" 
+while getopts "?h:gvxqas:pf:m:n:c:o:w:" opt 
 do
     case "$opt" in
     \?) show_help
         exit 1
         ;;
-    h|s)  ffhosts="$OPTARG" # work on named Freifunk node
+    h|s)  ffhosts="$OPTARG" # one or more Freifunk node(s)
 		if expr index ."$ffhosts" "+*" > /dev/null # substitute a literal + or * for a set of predefined hosts
 		then
 			ffhosts=$( echo "$ffhosts" | sed -e "s/[+*]/$hostcollection/g" )
@@ -383,7 +366,7 @@ do
 		;;
     v)  verbose=yes
 		;;
-    x)  verbose=yes
+	x)  verbose=yes
 		set -o xtrace
         ;;
 	q)	quiet="yes"
@@ -418,9 +401,7 @@ do
     esac
 done
 
-shift "$((OPTIND-1))"   # Discard the options parsed so far, but leave the rest...
-
-# set -x && echo hallo
+shift "$((OPTIND-1))"   # Discard the options parsed so far, but leave the rest of the cmd line...
 
 for ffhost in $( echo "${ffhosts:-localhost}" | tr -s "," " " ) # for each given host, maybe just one... (tr needed on ash)
 do

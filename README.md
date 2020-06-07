@@ -21,16 +21,21 @@ IMPORTANT: The script needs quite some refactoring, the code is provided as is. 
 ### More Details
 
 The following 4 different use cases are supported:
+
 A. Management of an (untouched) Freifunk node by **remote SSH** commands (public/private key authentication): Command results are returned as **terminal output** (stdout)
+
 B. Management of an (untouched) Freifunk node by **remote SSH** commands (public/private key authentication): Command results are returned as **MQTT messages**.
+
 C. Monitoring by **MQTT messages**: Invoked by an explicit SSH call or by cron, this script runs locally on the Freifunk node, returning its output as **MQTT messages**.
+
 D. Local management like a daemon: This script listens to **MQTT messages** and returns results a MQTT messages, too. (D does not exclude C)
 
 Other aspects:
+
 * Home assistant and Homie auto-discovery for important topics.
-* Script runs on bash as well as ash (used in OpenWrt)
-* If the freifunk node has very limited memory, e.g. on 4/32 devices, B may be preferred over C or D.
-* Remote management via a Freifunk "edge" node acting as a SSH proxy is supported.
+* Script runs on bash as well as ash (used in OpenWrt).
+* If the freifunk node has very limited memory, e.g. on 4/32 devices, B might be preferred over C or D.
+* Remote management via a Freifunk "edge" node acting as a SSH proxy to other Freifunk nodes is supported.
 
 ### Prerequisites
 
