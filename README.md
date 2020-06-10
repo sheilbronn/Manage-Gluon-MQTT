@@ -88,7 +88,9 @@ Supported commands for the -c option are - names might change during refactoring
 
 ### Example invocations
 
-You might want to try the following examples on the command line first
+You might want to try the following examples on the command line first before putting them into a cron job:
+
+* ...
 
 ### Notes / Comments
 

@@ -27,8 +27,8 @@ myhostcollection="alt-solln,hera-e,hermes-e,archimedes-e,phoebe-e,odysseus-e,dio
 set -o noglob  # "noglob"" will limit security and escaping problems:
 scriptname="${0##*/}"
 areaid="$( { cat /proc/sys/kernel/hostname 2>/dev/null || hostname || echo "unknown" ; } )"
-[ "$areaid" = "openHABianPi" ] && areaid="${areaid}$(ifconfig | sed -n -E -e "s/HWaddr/ether/" -e "s/.*(..:..:..:..:..:..).*/\1/" -e "T" -e "s/://g" -e p -e q )"
-areaid="$(echo $areaid | tr "A-Z" "a-z")"
+[ "$areaid" = "openHABianPi" -o "$areaid" = "unknown" ] && areaid="${areaid}$( sed -e "s/://g"  < /sys/class/net/eth0/address )"
+areaid="$(echo $areaid | tr "A-Z" "a-z")" # lowercase only
 
 # ssid_len=9
 ifipv6="bat0"
@@ -96,6 +96,29 @@ query_and_extract_uci_on_host() {
 	local __fresult="$($ssh_cmd "uci show $1" | xargs -r -n 1 | sed 's/.*=//g' )"
 	# echo "extract_uci_values returns: <$__fresult>" 1>&2
 	echo "$__fresult"
+	}
+
+persist_semi() { # read/write a kay/value pair to be cached across script invocations from the same user; empty cache after 2 day
+	local __file="$cachedir/$1.persisted"
+	local __val="$2"
+	if [ -z "$1" ] ; then
+		echo "#INVALIDPARAM"
+	elif [ "$__val" = "#READ#" ] ; then
+		if [ -r "$__file" ] ; then
+			__output="$( find "$__file" -mtime +2 | head -1 | xargs -r -t rm 2>&1 )" # delete >1day old, cached values
+			if [ -n "$__output" ] ; then
+				# echo "#OLDCACHE#"
+				echo "#NOTFOUND#" # more simply
+			else
+				__val="$( cat "$__file" )"
+				{ [ "$__val" ] && echo "$__val" ; } || echo "#EMPTY#" # pass EMPTY explicitly
+			fi
+		else
+			echo "#NOTFOUND#"
+		fi
+	else
+		echo "$__val" > "$__file"
+	fi
 	}
 
 error_and_exit() {
@@ -691,29 +714,32 @@ do
 				;;
 			nodeinfo|neighbours|statistics)  
 				tmpfilejson="$tmpdir/$sTargetHost.$command.tmp"
-				tmpfile_routerip="$tmpdir/$sTargetHost.routerip" 
-				find "$cachedir" -name "$sTargetHost.routerip" -mtime +1 -exec rm '{}' \; # age once in a while
+				# tmpfile_routerip="$tmpdir/$sTargetHost.routerip" 
+				cachedrouterip="$( persist_semi "$sTargetHost.routerip" "#READ#" )"
+				# find "$cachedir" -name "$sTargetHost.routerip" -mtime +1 -exec rm '{}' \; # age once in a while
 
-				if [ -r "$cachedir/$sTargetHost.routerip" ] 
+				# if [ -r "$cachedir/$sTargetHost.routerip" ] 
+				if [ "$cachedrouterip" = "#NOTFOUND#" -o "$cachedrouterip" = "#EMPTY#" ]
 				then
-					ffrouterip=$( cat "$cachedir/$sTargetHost.routerip" ) && [ -n "$ffrouterip" ] && \
-						$ssh_cmd "gluon-neighbour-info -i br-client -p 1001 -r $command -d $ffrouterip" | tee $tmpfilemqtt
+					ffrouterip=$( $ssh_cmd "ip -f inet6 -o addr show dev $ifipv6" | awk -e '{ print gensub("/.*", "", "1", $4) ; exit 0 }'  ) && \
+						$ssh_cmd "gluon-neighbour-info -i br-client -p 1001 -r $command -d $ffrouterip" | tee "$tmpfilemqtt"
 				else
-					ffrouterip=$( $ssh_cmd "ifconfig $ifipv6" | awk -e '/inet6/ { print gensub("/.*","",1,$3) ; exit 0 }' | tee $tmpfile_routerip ) && \
-						$ssh_cmd "gluon-neighbour-info -i br-client -p 1001 -r $command -d $ffrouterip" | tee $tmpfilemqtt
+					ffrouterip="$cachedrouterip" && \
+						$ssh_cmd "gluon-neighbour-info -i br-client -p 1001 -r $command -d $ffrouterip" | tee "$tmpfilemqtt"
 				fi
-				returnsize=$( wc -l < $tmpfilemqtt )
-				find "$tmpdir" -name "$( basename $tmpfile_routerip )" -size -26c -exec rm '{}' \; # delete file if too small
+				returnsize=$( wc -l < "$tmpfilemqtt" )
+				# find "$tmpdir" -name "$( basename "$tmpfile_routerip" )" -size -26c -exec rm '{}' \; # delete file if it is too small...
 
 				if [ -z "$ffrouterip" ]
 				then
 					echo "$scriptname: router IP :$ffrouterip: empty. Command $command failed..." 1>&2
-					rm -f $tmpfile_routerip
+					# rm -f "$tmpfile_routerip"
 				elif [ $returnsize -eq 0 ] 
 				then
 					echo "$scriptname: Connection to $sSshUser or gluon-neighbour-info failed. Command $command on node ip $ffrouterip failed..." 1>&2
-					rm -f $tmpfile_routerip
+					# rm -f $tmpfile_routerip
 				else
+					[ "$ffrouterip" != "$cachedrouterip" ] && persist_semi "$sTargetHost.routerip" "$ffrouterip"
 					publish_to_mqtt_maybe "$sTargetHost/$command" "$( cat $tmpfilemqtt )"
 					[ "$command" = "statistics" ] && {
 						# node_id=$( jq -r .node_id $tmpfilemqtt )
@@ -735,9 +761,9 @@ do
 					chmod g+w $tmpfilejson
 				fi
 
-				# 33 * * * * /srv/openhab2-conf/manage-gluon-mqtt/manage_gluon_mqtt.sh -1 -c statistics
-				# 43 * * * * /srv/openhab2-conf/manage-gluon-mqtt/manage_gluon_mqtt.sh -1 -c neighbours
-				# 53 * * * * /srv/openhab2-conf/manage-gluon-mqtt/manage_gluon_mqtt.sh -1 -c nodeinfo
+				# 33 * * * * /srv/openhab2-conf/manage-gluon-mqtt/manage_gluon_mqtt.sh -c statistics
+				# 43 * * * * /srv/openhab2-conf/manage-gluon-mqtt/manage_gluon_mqtt.sh -c neighbours
+				# 53 * * * * /srv/openhab2-conf/manage-gluon-mqtt/manage_gluon_mqtt.sh -c nodeinfo
 				;;
 			showsite)  
 				tmpfilejson="$tmpdir/$sTargetHost.$command.old"
