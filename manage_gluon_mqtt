@@ -19,13 +19,9 @@ ff_if_pub2="wlan0-1"
 ff_if_priv2="wlan0-2"
 phonefile="/srv/openhab2-conf/phones" # file is not necessary for the beginning
 
-# this list should contain all SSH names of the nodes to be managed remotely:
-# (it is only necessary for the ``-s +´´ abbreviation in the option -s)
-# needs refactoring and extraction:
-myhostcollection="alt-solln,hera-e,hermes-e,archimedes-e,phoebe-e,odysseus-e,dionysos-e"
-
 set -o noglob  # "noglob"" will limit security and escaping problems:
 scriptname="${0##*/}"
+userconfigdir="$HOME/.${scriptname%.sh}"
 areaid="$( { cat /proc/sys/kernel/hostname 2>/dev/null || hostname || echo "unknown" ; } )"
 [ "$areaid" = "openHABianPi" -o "$areaid" = "unknown" ] && areaid="${areaid}$( sed -e "s/://g"  < /sys/class/net/eth0/address )"
 areaid="$(echo $areaid | tr "A-Z" "a-z")" # lowercase only
@@ -48,8 +44,8 @@ ff_if_priv="$ff_if_priv1"
 show_help() {
 	cat << EOF
    Usage: $scriptname ... -c command ...
-   Execute arbitrary as well as predefined commands on Freifunk routers using uci and filter Wifi scans.
-   Automatic (e.g. key-based) access to the Freifunk node using SSH is assumed.
+   Execute arbitrary as well as predefined commands on Freifunk routers using uci and other commands. Return values on stdout or MQTT.
+   Either, automatic (e.g. key-based) access to the Freifunk node using SSH or local execution is possible.
 EOF
 }
 
@@ -59,20 +55,17 @@ sort_and_tail_file() {
 	local __tailcnt=${2:-20}
 	local __colno=${3:-1}
 
-	# cat $__fn > $__tmpfile.x
 	[ -r "$__fn" ] && [ -w "$__fn" ] && sort -k "$(( $__colno + 1 ))" "$__fn" | uniq -f "$__colno" | tail -"$__tailcnt" | sort  -k "$(( $__colno + 1 ))" > $__tmpfile \
 		&& cat "$__tmpfile" > "$__fn" && rm -f "$__tmpfile"	
-	# set +o noglob
 	}
 
 tail_file() {
 	local __tmpfile="$tmpdir/tailfile"
 	local __fn="$1"
 	local __tailcnt=${2:-20}
+	local -
 
-	set -o noglob
 	[ -r "$__fn" ] && [ -w "$__fn" ] && tail -"$__tailcnt" "$__fn" > $__tmpfile && cat "$__tmpfile" > "$__fn" && rm -f "$__tmpfile"	
-	set +o noglob
 	}
 
 extract_uci_values() {
@@ -81,7 +74,7 @@ extract_uci_values() {
 	echo "$__fresult"
 	}
 
-query_uci_on_host() {
+query_uci_on_host() { # query (show) possibly many UCI values from a host and return them all
 	local __lines="$( $ssh_cmd "uci show $1" )"
 	# echo "lines: $__lines" 1>&2
 	echo "$__lines"
@@ -92,33 +85,74 @@ get_uci_on_host() {
 	echo "$__lines"
 	}
 
-query_and_extract_uci_on_host() {
+query_and_extract_uci_on_host() { # query the FIRST of possibly many UCI values from a host and return its value
 	local __fresult="$($ssh_cmd "uci show $1" | xargs -r -n 1 | sed 's/.*=//g' )"
 	# echo "extract_uci_values returns: <$__fresult>" 1>&2
 	echo "$__fresult"
 	}
 
-persist_semi() { # read/write a kay/value pair to be cached across script invocations from the same user; empty cache after 2 day
-	local __file="$cachedir/$1.persisted"
-	local __val="$2"
+storage_cache_write() { # write a key/value pair to be cached across script invocations from the same user
 	if [ -z "$1" ] ; then
-		echo "#INVALIDPARAM"
-	elif [ "$__val" = "#READ#" ] ; then
-		if [ -r "$__file" ] ; then
-			__output="$( find "$__file" -mtime +2 | head -1 | xargs -r -t rm 2>&1 )" # delete >1day old, cached values
-			if [ -n "$__output" ] ; then
-				# echo "#OLDCACHE#"
-				echo "#NOTFOUND#" # more simply
-			else
-				__val="$( cat "$__file" )"
-				{ [ "$__val" ] && echo "$__val" ; } || echo "#EMPTY#" # pass EMPTY explicitly
-			fi
+		echo "##INVALIDPARAM##"
+		error_and_exit "storage_cache_write($1,...) with ##INVALIDPARAM##"
+	else
+		echo "$2" > "$cachedir/$1.cached"
+		echo_if_verbose "storage_cache_write($1, \"$2\")"
+	fi
+	}
+storage_cache_read() { # read a key/value pair to be cached across script invocations from the same user; empty cache after 2 day
+	local __file="$cachedir/$1.cached"
+	local __fresult=""
+	local __value=""
+	# set -x
+
+	if [ -z "$1" ] ; then
+		__fresult="##INVALIDPARAM##"
+		error_and_exit "storage_cache_read($1,...) with $__fresult"
+	elif [ -r "$__file" ] ; then
+		__deloutput="$( find "$__file" -mtime +2 | head -1 | xargs -r -t rm 2>&1 )" # consider cache invalidated after 2 days and remove file
+		if [ -n "$__deloutput" ] ; then
+			__fresult="##NOTFOUND##" # cache is invalid
 		else
-			echo "#NOTFOUND#"
+			__value="$( cat "$__file" )" # read value from cache file
+			__fresult="##FOUND##"
+			[ "$__value" ] || __fresult="##EMPTY##"
 		fi
 	else
-		echo "$__val" > "$__file"
+		__fresult="##NOTFOUND##"
 	fi
+	echo_if_verbose "storage_cache_read($1)=\"$__value\" ($__fresult)" 1>&2
+	echo "${__value}" # __fresult values are ignored for now
+	}
+
+storage_user_write() { # write a key/value pair permanently across script invocations 
+	if [ -z "$1" ] ; then
+		echo "##INVALIDPARAM##"
+		error_and_exit "storage_user_write($1, \"$2\") with ##INVALIDPARAM##"
+	else
+		mkdir -p "$userconfigdir"
+		echo "$2" > "$userconfigdir/$1.persisted"
+		echo_if_verbose "storage_user_write($1, \"$2\") returned $?"
+	fi
+	}
+storage_user_read() { # read a key/value pair across script invocations
+	local __file="$userconfigdir/$1.persisted"
+	local __fresult=""
+	local __value=""
+	# set -x
+
+	if [ -z "$1" ] ; then
+		__fresult="##INVALIDPARAM##"
+		error_and_exit "storage_user_read($1,...) with $__fresult"
+	elif [ -r "$__file" ] ; then
+		__value="$( cat "$__file" )" # read value from cache file
+		__fresult="##FOUND##"
+		[ "$__value" ] || __fresult="##EMPTY##"
+	else
+		__fresult="##NOTFOUND##"
+	fi
+	echo_if_verbose "storage_user_read($1)=\"$__value\" ($__fresult)" 1>&2
+	echo "${__value}" # __fresult values are ignored for now
 	}
 
 error_and_exit() {
@@ -175,6 +209,7 @@ homie_meta() {
 homie_init() {
 	# { [ "$mqtthost" ] && [ "$cmd_mospub" = "true" ] ; } || return
 	# echo homie_init: eins: $1, zwei: $2
+	local -
 	if [ -z "$2" ] ; then
 		[ "$gluon" ] && homie_line "$1/\$stats/uptime" "$( cut -f 1 -d . < /proc/uptime )"
 		homie_state_is_not_ready $1 > /dev/null || return 0
@@ -267,7 +302,6 @@ homie_init() {
 	}
 
 hass_init() {
-
 	# homeassistant/switch/0x7cb03eaa0a096d9c/switch/config 
 	# {"payload_off":"OFF","payload_on":"ON","value_template":"{{ value_json.state }}","command_topic":"zigbee2mqtt/Osram-Smart-Plus/set","state_topic":"zigbee2mqtt/Osram-Smart-Plus","json_attributes_topic":"zigbee2mqtt/Osram-Smart-Plus","name":"Osram-Smart-Plus_switch","unique_id":"0x7cb03eaa0a096d9c_switch_zigbee2mqtt","device":{"identifiers":["zigbee2mqtt_0x7cb03eaa0a096d9c"],"name":"Osram-Smart-Plus","sw_version":"Zigbee2mqtt 1.13.0","model":"Smart+ plug (AB3257001NJ)","manufacturer":"OSRAM"},"availability_topic":"zigbee2mqtt/bridge/state"}
 
@@ -373,10 +407,9 @@ debugfile="$tmpdir/debugfile"
 clientcollection="$tmpdir/clientcollection"
 echo "$0  "  "$@" > "$debugfile"
 
-[ $# -eq 0 ] && { show_help ; exit 1 ; } # there must be some parameter...
+[ $# -eq 0 ] && { show_help ; exit 1 ; } # at least one parameter on the command line is required
 
-# https://wiki.bash-hackers.org/howto/getopts_tutorial
-while getopts "?h:gvxqas:pi:f:m:n:c:o:w:" opt 
+while getopts "?h:gvxqas:pi:f:m:n:c:o:w:" opt   # https://wiki.bash-hackers.org/howto/getopts_tutorial
 do
     case "$opt" in
     \?) show_help
@@ -385,6 +418,12 @@ do
     h|s)  ffhosts="$OPTARG" # one or more Freifunk node(s)
 		if expr index ."$ffhosts" "+*" > /dev/null # substitute a literal + or * for a set of predefined hosts
 		then
+			# the values used for + should be stored externally in $userconfigdir/myhosts.persisted:
+			# "host1,host2,host3" (without double quotes)
+
+			myhostcollection=""
+			[ "$myhostcollection" ] || myhostcollection="$( storage_user_read myhosts )"
+			[ "$myhostcollection" ] || error_and_exit "config for collection of hosts is missing ($userconfigdir/myhosts.persisted)"
 			ffhosts=$( echo "$ffhosts" | sed -e "s/[+*]/$myhostcollection/g" )
 			collectedsumofclients=0 # start collecting only if + or * appeared
 			collectedclients="" # redundant
@@ -433,7 +472,7 @@ do
     esac
 done
 
-shift "$((OPTIND-1))"   # Discard the options parsed so far, but leave the rest of the cmd line...
+shift "$((OPTIND-1))"   # Discard the options parsed so far and leave the rest of the cmd line...
 
 # find a name for the collection of all clients here:
 for ffhost in $( echo "${ffhosts:-localhost}" | tr -s "," " " ) # for each given host, maybe just one... (tr needed on ash)
@@ -715,11 +754,10 @@ do
 			nodeinfo|neighbours|statistics)  
 				tmpfilejson="$tmpdir/$sTargetHost.$command.tmp"
 				# tmpfile_routerip="$tmpdir/$sTargetHost.routerip" 
-				cachedrouterip="$( persist_semi "$sTargetHost.routerip" "#READ#" )"
-				# find "$cachedir" -name "$sTargetHost.routerip" -mtime +1 -exec rm '{}' \; # age once in a while
+				cachedrouterip="$( storage_cache_read "$sTargetHost.routerip" )"
 
-				# if [ -r "$cachedir/$sTargetHost.routerip" ] 
-				if [ "$cachedrouterip" = "#NOTFOUND#" -o "$cachedrouterip" = "#EMPTY#" ]
+				# if [ "$cachedrouterip" = "##NOTFOUND##" -o "$cachedrouterip" = "##EMPTY##" ]
+				if [ -z "$cachedrouterip" ]
 				then
 					ffrouterip=$( $ssh_cmd "ip -f inet6 -o addr show dev $ifipv6" | awk -e '{ print gensub("/.*", "", "1", $4) ; exit 0 }'  ) && \
 						$ssh_cmd "gluon-neighbour-info -i br-client -p 1001 -r $command -d $ffrouterip" | tee "$tmpfilemqtt"
@@ -739,7 +777,7 @@ do
 					echo "$scriptname: Connection to $sSshUser or gluon-neighbour-info failed. Command $command on node ip $ffrouterip failed..." 1>&2
 					# rm -f $tmpfile_routerip
 				else
-					[ "$ffrouterip" != "$cachedrouterip" ] && persist_semi "$sTargetHost.routerip" "$ffrouterip"
+					[ "$ffrouterip" != "$cachedrouterip" ] && storage_cache_write "$sTargetHost.routerip" "$ffrouterip"
 					publish_to_mqtt_maybe "$sTargetHost/$command" "$( cat $tmpfilemqtt )"
 					[ "$command" = "statistics" ] && {
 						# node_id=$( jq -r .node_id $tmpfilemqtt )
@@ -824,7 +862,7 @@ done
 	}
 }
 
-set +o noglob
+set +o noglob # globbing needed for * to work
 mv "$tmpdir"/* "$cachedir" ; rmdir "$tmpdir"
 find "$cachedir" -maxdepth 1 -path "$cachedir/[0-9]*" -type d -mtime +0 -exec rm -r '{}' \; # remove old debug files
 
