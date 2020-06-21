@@ -76,14 +76,14 @@ Supported commands for the -c option are - names might change during refactoring
 * *ffup*: Return status of the public Freifunk wifi interface, or switch it down or up
 * *ffotherssid*: Change name of public Wifi interface (within community boundaries)
 * *ffgluonreconfigure*: Reset interface name back to original
-* *gluon-data*
+* *gluon-data*: Lots of Gluon configuration data
 * *machine-data*: Version and CPU info of the node
 * *status*: Load and uptime of the node
 * *localclients*: Amount and fingerprints of clients attached to the node
 * *nodeinfo* ...
 * *neighbours* ...
 * *statistics*: JSON results from the invocation of `gluon-neighbour-info` with these commands as the resp. option.
-* *gluon-show-site*: JSON info from command `gluon-show-site`
+* *showsite*: JSON info from command `gluon-show-site`
 * *reboot*: Reboot the node (limited to A,B)
 
 ### Example invocations
@@ -94,5 +94,5 @@ You might want to try the following examples on the command line first before pu
 
 ### Notes / Comments
 
-* [ ] Script needs heavy refactoring
+* [ ] Script needs more refactoring
 * [ ] Handle more and different Gluon versions gracefully.
