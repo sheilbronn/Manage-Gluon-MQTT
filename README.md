@@ -35,16 +35,16 @@ Other aspects:
 
 * [Home assistant](https://www.home-assistant.io/docs/mqtt/discovery/) and [Homie](https://homieiot.github.io/specification/) auto-discovery for important topics.
 * MQTT discovery is tested with the [OpenHAB MQTT binding](https://www.openhab.org/addons/bindings/mqtt/) and [HoDD](https://github.com/rroemhild/hodd)
-* Script runs on [bash](https://de.wikipedia.org/wiki/Bash_(Shell)) as well as [ash](https://en.wikipedia.org/wiki/Almquist_shell) (ash is used in [OpenWrt](https://openwrt.org/) as the default shell).
+* Script should run on [bash](https://de.wikipedia.org/wiki/Bash_(Shell)) as well as [ash](https://en.wikipedia.org/wiki/Almquist_shell) (ash is used in [OpenWrt](https://openwrt.org/) as the default shell). Dash is used to trigger script verification in Visual Studio Code (VSC).
 * If the Freifunk node has very limited memory, e.g. on [4/32 devices](https://openwrt.org/supported_devices/openwrt_on_432_devices), B might be preferred over C or D.
-* In order to install the Mosquitto packages, the package installation opkg is needed on Freifunk (Gluon) devices. opkg might not be available on [devices with limited memory](https://openwrt.org/supported_devices/openwrt_on_432_devices): Use case A and B as a workaround.
+* In order to install the Mosquitto packages, the package installation tool [opkg](https://openwrt.org/docs/guide-user/additional-software/opkg) is needed on Freifunk (Gluon) devices. opkg might not be available on [devices with limited memory](https://openwrt.org/supported_devices/openwrt_on_432_devices): Use case A and B as a workaround.
 * Remote management via a Freifunk "edge" node acting as a SSH proxy to other Freifunk nodes works well, e.g. use the [ProxyJump directive](https://www.redhat.com/sysadmin/ssh-proxy-bastion-proxyjump) in your `.ssh/config`.
 
 ### Prerequisites
 
 Depending on the use case to be supported, some prequisites have to be fulfilled in order the the script work:
 
-* Installation of the [Mosquitto](https://mosquitto.org) packages mosquitto_pub and mosquitto_sub. They should be in every Linux repository, including OpenWrt.
+* Installation of the [Mosquitto](https://mosquitto.org) packages mosquitto_pub and mosquitto_sub. They should be in every Linux repository, including OpenWrt, e.g. ``opkg update; opkg install mosquitto_pub mosquitto_sub`` or ``apt install mosquitto_pub mosquitto_sub`` on the host on which the script is run.
 * For use case A, B, and C as well as debugging purposes: 
   Enable Automatic [remote invocation via SSH using public key authentication](https://openwrt.org/docs/guide-user/security/dropbear.public-key.auth)
 * If you want to use the script remotely: Install ash from a package repository or replace ash by bash in the first line.
