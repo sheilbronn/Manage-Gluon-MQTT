@@ -24,16 +24,17 @@ scriptname="${0##*/}"
 userconfigdir="$HOME/.${scriptname%.sh}"
 areaid="$( { cat /proc/sys/kernel/hostname 2>/dev/null || hostname || echo "unknown" ; } )"
 [ "$areaid" = "openHABianPi" -o "$areaid" = "unknown" ] && areaid="${areaid}$( tr -d ":"  < /sys/class/net/eth0/address )"
-areaid="$(echo $areaid | tr "A-Z" "a-z")" # lowercase only
+areaid="$( echo "$areaid" | awk -- '{ print tolower($0) }' )" # lowercase only
 
 # ssid_len=9
 ifipv6="bat0"
 ffssid=".*"
 uci_opt_ssid="$uci_opt_ssid1"
-ff_if_pub="$ff_if_pub1"
+ff_if_pub="$ff_if_pub1" # DEFECT: needs to be made specific for each host...
 ff_if_priv="$ff_if_priv1"
 
 umask -S u=rwx,g=rx,o= # no rights for others
+alias noxxing="local - ; set +x"
 
 # Notes for future enhancements:
 # ping Alt-Solln and up/down own public if accordingly
@@ -52,15 +53,15 @@ EOF
 }
 
 sort_and_tail_file() {
-	local -
-	set +x
+	noxxing
 	local __tmpfile="$tmpdir/tailfile"
 	local __fn="$1"
 	local __tailcnt=${2:-20}
 	local __colno=${3:-1}
 
 	[ -r "$__fn" ] && [ -w "$__fn" ] && sort -k "$(( $__colno + 1 ))" "$__fn" | uniq -f "$__colno" | tail -"$__tailcnt" | sort  -k "$(( $__colno + 1 ))" > $__tmpfile \
-		&& cat "$__tmpfile" > "$__fn" && rm -f "$__tmpfile"	
+		&& cat "$__tmpfile" > "$__fn" && rm -f "$__tmpfile"
+	[ "$verbose" ] && echo_if_verbose "sort_and_tail_file($1,$2,$3): lines: $( wc -l < "$1" )"
 	}
 
 tail_file() {
@@ -132,8 +133,7 @@ storage_cache_write() { # write a key/value pair to be cached across script invo
 	fi
 	}
 storage_cache_read() { # read a key/value pair to be cached across script invocations from the same user; empty cache after n day(s)
-	local -
-	set +x
+	noxxing
 	local __file="$cachedir/$1.cached"
 	local __maxcachedays="${2:-2}"
 	local __fresult=""
@@ -191,24 +191,23 @@ storage_user_read() { # read a key/value pair across script invocations
 	}
 
 error_and_exit() {
-	echo "$scriptname: ERROR: $*... Exiting." 1>&2
-	exit 1
+		echo "$scriptname: ERROR: $*... Exiting." 1>&2
+		exit 1
 	}
 
 echo_if_not_quiet() {
-	[ "$quiet" ] || echo "$*"
+		[ "$quiet" ] || echo "$*"
  }
 
 echo_if_verbose() {
-	[ "$verbose" ] && echo "$*"
+		[ "$verbose" ] && echo "$*"
  }
 
 jsonfilter_func() {
-	local -
-	set +x
+	noxxing
  
 	if [ "$jsonfilter" = "jsonfilter" ] ; then
-		jsonfilter -e "@$1" $2  # $2 is unquoted to avoid complaint when missing
+		jsonfilter -e "@$1" $2       # $2 is unquoted to avoid complaint when missing
 	elif [ "$jsonfilter" = "jq" ] ; then
 		jq         -r  "$1" $2 
 	else
@@ -216,13 +215,13 @@ jsonfilter_func() {
 	fi
 }
 shorten_ethernet_addr_in_json() { # remove some bytes für anonymization
-	sed -e 's/:\("[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]:\)[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]\(:[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]"\)/:\1...\2/g' "$@"	
+	[ "$1" = "skip" ] && cat && return 0
+	sed -e 's/\([*"][a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]:\)[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]\(:[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9][*"]\)/\1...\2/g' "$@"	
 	}
 
 publish_to_mqtt() {
-	local -
-	set +x
-	echo_if_verbose "publish_to_mqtt: TOPIC=$1  MSG=$2 ${3:+ OPTIONS=$3}"
+	noxxing
+	echo_if_verbose "publish_to_mqtt: TOPIC=$1  MSG=$2 ${3:+ OPTIONS=$3}  ($cmd_mospub)"
 	[ "$cmd_mospub" != "true" ] && $cmd_mospub $mqtthost -t "$1" -m "$2" $3  #  $3 is passed without quotes on purpose
 	}
 
@@ -248,17 +247,17 @@ homie_state_is_ready() {
 	}
 
 homie_line() {
-	[ "$homie" ] || return
-	sThisPrefix="homie/$1"
-	publish_to_mqtt "homie/$1" "$2"
+		[ "$homie" ] || return
+		sThisPrefix="homie/$1"
+		publish_to_mqtt "homie/$1" "$2"
 	}
 alias homie_line="true skipped homie_line"
 
 homie_meta() {
-	sThisPrefix="homie/$1"
-	msg="$3"
-	[ "$4" = "-d" ] && msg=""
-	publish_to_mqtt "$sThisPrefix/\$$2" "$msg" -r
+		sThisPrefix="homie/$1"
+		msg="$3"
+		[ "$4" = "-d" ] && msg=""
+		publish_to_mqtt "$sThisPrefix/\$$2" "$msg" -r
 	}
 homie_init() {
 	# $sTargetHost must be set!
@@ -273,7 +272,6 @@ homie_init() {
 			echo_if_verbose "homie_init(): skipping, state is ready..." # announce only if restart or new day or necessary 
 			return 0
 		fi
-
 		os_data="$( get_os_data_semi_starred_cached "$sTargetHost" 1 )" # refresh data from host if old or no data available
 		ad_devname="$( echo "$1" | awk -- '{ print toupper(substr($i,1,1)) substr($i,2) }' )"
 		ad_fwname="$( storage_cache_read "$sTargetHost.os_name" 9999 )"
@@ -283,6 +281,18 @@ homie_init() {
 	else
 		echo_if_verbose "homie_init($1,$2): deleting advertisements"
 	fi
+
+		msg="{*device_class*:*illuminance*, *name*: *$ad_devname*, *device*: { *name*:*${ad_devname}*, *model*:*Gluon Freifunk Node*, 
+	     *manufacturer*:*Freifunk*, *identifiers*: [ *gluon_ffmuc_${ad_devname}* ] }, 
+		 *state_topic*: *ffmuc/$1/publicwifi/localclients*, *value_template*: *{{ value_json.count }}*, *icon*:*mdi:mdi-numeric*, 
+		 *friendly_name*:*Friendly $ad_devname*, *~*:*ffmuc/$1/publicwifi/localclients*  }"
+	[ "$2" = "-d" ] && msg=""
+	# publish_to_mqtt_starred "homeassistant/sensor/${1}clients/config" "$msg"
+	homie_meta "homeassistant/sensor/${1}clients/config" something "$msg"
+
+	publish_to_mqtt "eumel/eumel" "huhu" 
+
+	return 0
 
 	homie_meta $1 "homie" "3.0.1"      $2
 	homie_meta $1 "name" "$ad_devname" $2
@@ -356,13 +366,17 @@ homie_init() {
 
 	# ffmuc/alt-solln/publicwifi/localclients {"count":"3","localclients":[ {"addr":"3c:cd:...:7f:8a","name":"3c:cd:...:7f:8a"}, {"addr":"6c:c7:...:7e:de","name":"6c:c7:...:7e:de"}, {"addr":"b4:9c:...:25:5e","name":"b4:9c:...:25:5e"}],"host":"alt-solln"}
 	# skipping:   *device* ... *sw_version*:*Gluon YYYY.N*, before model
+	set -x
 	msg="{*device_class*:*illuminance*, *name*: *$ad_devname*, 
 	  	 *device*: { *name*:*${ad_devname}*, *model*:*Gluon Freifunk Node*, 
 	     *manufacturer*:*Freifunk*, *identifiers*: [ *gluon_ffmuc_${ad_devname}* ] },
 		 *state_topic*: *ffmuc/$1/publicwifi/localclients*, *value_template*: *{{ value_json.count }}*, 
 		 *icon*:*mdi:mdi-numeric*, *friendly_name*:*Friendly $ad_devname*, *~*:*ffmuc/$1/publicwifi/localclients*  }"
 	[ "$2" = "-d" ] && msg=""
-	publish_to_mqtt_starred "homeassistant/sensor/${1}clients/config" "$msg"
+	# publish_to_mqtt_starred "homeassistant/sensor/${1}clients/config" "$msg"
+	homie_meta "homeassistant/sensor/${1}clients/config" something "$msg"
+
+	publish_to_mqtt "eumel/eumel" "huhu" 
 
 	storage_cache_write "$sTargetHost.homie_init_day" "$( date "+%j" )"
 	}
@@ -489,8 +503,7 @@ do
 			[ "$myhostcollection" ] || myhostcollection="$( storage_user_read myhosts )"
 			[ "$myhostcollection" ] || error_and_exit "config for collection of hosts is missing ($userconfigdir/myhosts.persisted)"
 			ffhosts="$( echo "$ffhosts" | sed -e "s/[+*]/$myhostcollection/g" |	tr -d -c "a-zA-Z.,-" )" # replace and sanitize
-			collectedsumofclients=0 # start collecting only if + or * appeared
-			collectedclients="" # redundant
+			workonallclients="yes"
 		fi
 	    ffssid="$ffssid1"
         ;;
@@ -640,7 +653,7 @@ do
 			homie-update)
 				commandsToDo="localclients,ffstatus,gluon-data,machine-data,$commandsToDo"
 				
-				uptimecmd="cat /proc/uptime" && [ $ffhost "!=" localhost ] && uptimecmd="$0 -h $ffhost $uptimecmd" 
+				uptimecmd="cat /proc/uptime" && [ "$ffhost" != localhost ] && uptimecmd="$0 -h $ffhost $uptimecmd" 
 				homieuptime=$( $uptimecmd ) && homie_line "$homie/\$stats/uptime" "$( echo "$homieuptime" | cut -f 1 -d . )"
 				;;
 			homie-delete)
@@ -783,7 +796,7 @@ do
 					/^machine|^Hardware/ { FS=": " ; printf "{*linuxversion*:*%s*,*machine*:*%s*,%s}", linuxversion ,$2, os_data ; exit 0 }
 					' ) 
 				echo_if_not_quiet "$newval"
-				publish_to_mqtt_maybe "$sTargetHost/$command" "$newval"
+				publish_to_mqtt_starred "ffmuc/$sTargetHost/$command" "$newval"
 				;;
 			status)
 				newval=$( $ssh_cmd "cat /proc/uptime /proc/loadavg" | awk '
@@ -812,24 +825,23 @@ do
 					# xargs -r -L1 bash -c 'date "+%Y-%m-%d_%T.%3N $0 '$sTargetHost'"' < $localclientsfile >> $clientcollection
 					awk -- "{ print strftime(\"%Y-%m-%d_%H:%M:%S \") \$0 \" $sTargetHost\" ; fflush() ; next }" $localclientsfile >> $clientcollection
 					
-					sort_and_tail_file "$clientcollection" 18 1
-					command -v join >/dev/null && sort -k 2 $clientcollection | join -1 2 -2 1 -a 1 - $phonefile | sort -r -k 1 | uniq -w 17 | sort -k 2 > "$clientcollection"_with_names
+					if command -v join >/dev/null && [ -r $phonefile ] ; then
+						{ sort -k 1 $localclientsfile | join -1 1 -2 1 -a 1 - $phonefile | sort | uniq -w 17 > "$localclientsfile"_with_names ; } &&
+						mv "$localclientsfile"_with_names "$localclientsfile"
+					fi
+
+					[ "$verbose" ] && echo $localclientsfile: && cat "$localclientsfile"
 					_lcount=$( wc -l < $localclientsfile )
 					homie_line "$homie/publicwifi/clientscount" "$_lcount"
-					# echo $_lcount
 					
-					localclients=$( tr " " "," < $localclientsfile |  
-						awk -F, -v lcount="$_lcount" -v hname="$sTargetHost" 'BEGIN { printf "{*count*:*%s*,*localclients*:[", lcount } { printf comma " {*addr*:*%s*,*name*:*%s*}", $1, ($2=="")?$1:$2 ; comma="," } END { printf "],*host*:*%s*}",hname }' | 
-						  if [ "$bDoAllOfIt" ] ; then cat ; else  shorten_ethernet_addr_in_json ; fi )
+					localclients=$( cat "$localclientsfile" | tr " " ","  |  
+						awk -F, -v lcount="$_lcount" -v hname="$sTargetHost" 'BEGIN { printf "{*count*:*%s*,*localclients*:[", lcount } { printf comma " {*addr*:*%s*,*name*:*%s*}", $1, ($2=="")? $1 : $2 $3 $4 $5 ; comma="," } END { printf "],*host*:*%s*}",hname }' | 
+						  shorten_ethernet_addr_in_json ${bDoAllOfIt:+skip} )
 					echo_if_not_quiet "$localclients"
 					publish_to_mqtt_starred "ffmuc/$sTargetHost/publicwifi/localclients" "$localclients"
-					[ "$collectedsumofclients" ] && collectedsumofclients=$(( collectedsumofclients + _lcount ))
+					[ "$workonallclients" ] && collectedsumofclients=$( expr ${collectedsumofclients:-0} + ${_lcount} )
 					collectedclients="$collectedclients $( xargs < $localclientsfile )" 
 					collectedclients="${collectedclients% }" # trim leading spaces
-
-					# "$( sort -u $clientcollection.$sTargetHost  | jq -R . | jq -c -s . )"
-					# sort -u $clientcollection.tmp $clientcollection | jq -R . | jq -c -s . | tee $clientcollection.json | $cmd_mospub $mqtthost -t "ffmuc/ALL/localclients" -s
-					# cat $clientcollection.tmp >> $clientcollection
 				else
 					echo "$$scriptname: Connection to $sSshUser failed. Stopping for this node..." 1>&2
 				fi
@@ -840,14 +852,16 @@ do
 				cachedrouterip="$( storage_cache_read "$sTargetHost.routerip" 10 )"
 				# exit 0
 				# if [ "$cachedrouterip" = "##NOTFOUND##" -o "$cachedrouterip" = "##EMPTY##" ]
+				__gni_cmd="gluon-neighbour-info -i br-client -p 1001 -r $command -d  " # ipaddr will be appended below
 				if [ -z "$cachedrouterip" ]
 				then
 					ffrouterip=$( $ssh_cmd "ip -f inet6 -o addr show dev $ifipv6" | awk -e '{ print gensub("/.*", "", "1", $4) ; exit 0 }'  ) && \
-						$ssh_cmd "gluon-neighbour-info -i br-client -p 1001 -r $command -d $ffrouterip" | tee "$tmpfilemqtt"
+						$ssh_cmd "$__gni_cmd $ffrouterip" | tee "$tmpfilemqtt"
 				else
 					ffrouterip="$cachedrouterip" && \
-						$ssh_cmd "gluon-neighbour-info -i br-client -p 1001 -r $command -d $ffrouterip" | tee "$tmpfilemqtt"
+						$ssh_cmd "$__gni_cmd $ffrouterip" | tee "$tmpfilemqtt"
 				fi
+				echo_if_verbose "Had called $__gni_cmd $ffrouterip"
 				returnsize=$( wc -l < "$tmpfilemqtt" )
 				# find "$tmpdir" -name "$( basename "$tmpfile_routerip" )" -size -26c -exec rm '{}' \; # delete file if it is too small...
 
@@ -873,7 +887,7 @@ do
 						clients=$( jsonfilter_func ".clients.wifi" < $tmpfilemqtt )
 						# cat $tmpfilemqtt
 						publish_to_mqtt_maybe "$sTargetHost/clients" "$clients"
-						[ "$collectedsumofclients" ] && collectedsumofclients=$(( collectedsumofclients + clients ))
+						[ "$workonallclients" ] && collectedsumofclients=$( expr ${collectedsumofclients:-0} + $clients )
 						# publish_to_mqtt_maybe "ffmuc/$node_id/clients" "$clients"
 					fi
 
@@ -939,12 +953,31 @@ if [ -n "$collectedsumofclients" ] ; then
 	{ [ "$verbose" -o "$bGiveHost" ] ; } && echo "######  ALL CLIENTS " "$@" "######"
 	publish_to_mqtt_maybe "$areaid/publicwifi/allclientscount" "$collectedsumofclients"
 
-	[ -n "$collectedclients" ] && {
-		# echo :::$collectedclients::: 
-		string="$( echo "$collectedclients" | xargs -n 1 | sort | awk -F, -v id="$areaid" -v lcount="$collectedsumofclients" 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lcount, id } { printf "{*addr*:*%s*}%s", $1 , ( NR<=(lcount-1) ) ? "," : "" } END { printf "]}" }' )"
-		echo_if_not_quiet "$( echo "$string" | tr \* \" | json_pp )"
-		publish_to_mqtt_starred "ffmuc/$areaid/alllocalclients" "$string"
-	}
+	# # kaputt:
+	#[ -n "$collectedclients" ] && {
+	#	set -x
+	#	string="$( echo "$collectedclients" | xargs -n 1 | sort | awk -F, -v id="$areaid" -v lcount="$collectedsumofclients" 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lcount, id } { printf "{*addr*:*%s*}%s", $1 , ( NR<=(lcount-1) ) ? "," : "" } END { printf "]}" }' )"
+	#	echo_if_verbose string: "$string"
+	#	echo_if_not_quiet "$( echo "$string" | tr \* \" | json_pp )"
+	#	publish_to_mqtt_starred "ffmuc/$areaid/alllocalclients" "$string"
+	#}
+
+	if [ "$clientcollection" ] ; then
+		sort_and_tail_file "$clientcollection" 18 1
+		[ "$verbose" ] && echo $clientcollection: && cat "$clientcollection"
+		if command -v join >/dev/null && [ -r $phonefile ]; then
+			_ccwn_fn="${clientcollection}_with_names"
+			 { sort -k 2 "$clientcollection" | join -1 2 -2 1 -a 1 - $phonefile | sort -r -k 1 | 
+			uniq -w 17 | sort -k 2 > "$_ccwn_fn" ; } && [ "$verbose" ] && echo "$_ccwn_fn":  && cat "$_ccwn_fn"
+			mv "$_ccwn_fn" "$clientcollection"
+		fi
+		#        awk -F, -v lcount="$_lcount" -v hname="$sTargetHost" 'BEGIN { printf "{*count*:*%s*,*localclients*:[", lcount } { printf comma " {*addr*:*%s*,*name*:*%s*}", $1, ($2=="")?$1:$2 ; comma="," } END { printf "],*host*:*%s*}",hname }' | 
+		#	shorten_ethernet_addr_in_json ${bDoAllOfIt:+skip} )
+		string2="$( awk -F" " -v id="$areaid" -v lcount="$collectedsumofclients" 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lcount, id } { printf comma "{*addr*:*%s*,*name*:*%s*}", $1 , ($4=="")? $1 : $4 $5 $6 $7 ; comma="," } END { printf "]}" }' < "$clientcollection" |
+			shorten_ethernet_addr_in_json ${bDoAllOfIt:+skip} )"
+		echo_if_not_quiet "$( echo "$string2 " | tr \* \" | json_pp )"
+		publish_to_mqtt_starred "ffmuc/$areaid/alllocalclients" "$string2"		
+	fi
 fi
 
 set +o noglob # globbing needed for * to work

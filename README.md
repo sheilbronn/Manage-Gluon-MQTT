@@ -44,10 +44,11 @@ Other aspects:
 
 Depending on the use case to be supported, some prequisites have to be fulfilled in order the the script work:
 
-* Installation of the [Mosquitto](https://mosquitto.org) packages mosquitto_pub and mosquitto_sub. They should be in every Linux repository, including OpenWrt, e.g. ``opkg update; opkg install mosquitto_pub mosquitto_sub`` or ``apt install mosquitto_pub mosquitto_sub`` on the host on which the script is run.
+* Installation of the [Mosquitto](https://mosquitto.org) packages mosquitto_pub and mosquitto_sub. They should be in every Linux repository, including OpenWrt, e.g. ``opkg update; opkg install mosquitto-client-nossl`` or ``apt install mosquitto-clients`` on the host on which the script (and therefore the MQTT clients) are to be run.
+N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluon image updates
 * For use case A, B, and C as well as debugging purposes: 
-  Enable Automatic [remote invocation via SSH using public key authentication](https://openwrt.org/docs/guide-user/security/dropbear.public-key.auth)
-* If you want to use the script remotely: Install ash from a package repository or replace ash by bash in the first line.
+  Enable [automatic remote invocation via SSH using public key authentication](https://openwrt.org/docs/guide-user/security/dropbear.public-key.auth)
+* If you want to use the script remotely: Install ash from a package repository (or manually replace ash by bash in the first line), e.g. on a Raspberry: ``apt install ash``. The script is written to be compatible to both ash and bash.
 * Freifunk relies on some version of Gluon or at least OpenWRT: So far, this script has only been tested on [Freifunk Munich](https://ffmuc.net) nodes with [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*. Please let me know or open a GitHub issue if you have success or problems with other versions
 * In case of MQTT connection problems: Ensure that incoming or outgoing MQTT connections are not blocked by a firewall - consider my [mqtt-grep-color](https://github.com/sheilbronn/mqtt-grep-color) to verify and debug your MQTT setup more easily.
 
@@ -97,3 +98,4 @@ You might want to try the following examples on the command line first before pu
 
 * [ ] Script needs more refactoring
 * [ ] Handle more and different Gluon versions gracefully.
+* [ ] To reinstall after OS or Gluon upgrade:
