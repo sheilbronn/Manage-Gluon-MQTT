@@ -83,7 +83,7 @@ extract_uci_values() {
 	}
 
 query_uci_on_host() { # query (show) possibly many UCI values from a host and return them all
-	local __lines="$( $ssh_cmd "uci show $1" )"
+	local __lines="$( $ssh_cmd "uci show $1" )"s
 	# echo "lines: $__lines" 1>&2
 	echo "$__lines"
 	}
@@ -566,7 +566,8 @@ do
 	fi
 	tmpfilemqtt="$tmpdir/mqtt.$ffhost"
 
-	{ [ "$bVerbose" -o "$bGiveHost" ] ; } && echo "######  $sSshUser / $sTargetHost / $commands / " "$@" "######"
+	[ "$bVerbose" -a "$bGiveHost" ] && echo "######"
+	[ "$bVerbose" -o "$bGiveHost" ] && echo "######  $sSshUser / $sTargetHost / $commands / " "$@" "######"
 
 	if [ -n "$option_to_query" ]
 	then
@@ -637,7 +638,22 @@ do
 				;;
 			install)
 				[ "$commandsToDo" = "mqtt" ] && echo_if_not_quiet "Mqtt $command ignored." && continue
+				targetuser="$( $ssh_cmd "id -nu" )"
+				if [ -z "$targetuser" ] ; then
+					echo_if_not_quiet "targetuser on targethost could not be determined remotely: Pls debug your SSH setup..."
+					continue # abort case
+				fi
 
+				if [ "$ssh_cmd" != "exec_locally" ] && [ "$targetuser" = "root" ] ; then
+					echo_if_not_quiet "Remote targetuser is $targetuser: Shall copy this script to /sbin later..."
+					commandsToDo="filecopy${commandsToDo:+,$commandsToDo}"
+					filetocopy="$0"
+				fi
+
+				os_data="$( get_os_data_semi_starred_cached "$sTargetHost" 1 )"
+				echo_if_verbose "$os_data"
+
+				# ... try to install mosquitto if not there yet
 				if [ "$( $ssh_cmd "command -v mosquitto_pub" 2>/dev/null )" ] ; then
 					echo_if_not_quiet "mosquitto_pub is already installed on $ffhost..."
 				else
@@ -655,9 +671,17 @@ do
 						;;
 					esac
 				fi
-				
-				if [ "$( $ssh_cmd "command -v uci" 2>/dev/null )" ] ; then
-					echo_if_not_quiet "uci found... assuming gluon... adding firewall rules for MQTT..."
+				# from here on, it gets Freifunk-specific
+				autoupdater_branch="$( get_uci_on_host "autoupdater.settings.branch" )"
+				echo_if_verbose "autoupdater_branch=$autoupdater_branch"
+				if [ -z "$autoupdater_branch" ] ; then
+					# Probably Non-Freifunk 
+					echo_if_not_quiet "Stopping for target $sTargetHost (no autoupdater_branch uci setting)..." 
+					continue
+				else
+					storage_cache_write "$sTargetHost.autoupdater_branch" "$autoupdater_branch"
+					echo_if_not_quiet "autoupdater config found... assuming freifunk router... adding firewall rules for MQTT..."
+					# works for Ulmer Software w/o Gluon, too...
 					$ssh_cmd "xargs ${bVerbose:+-t} -n 1 uci set ; uci commit" << EOF
 						firewall.local_client_mqtt=rule
 						firewall.local_client_mqtt.dest_port='1883'
@@ -666,17 +690,15 @@ do
 						firewall.local_client_mqtt.target='ACCEPT'
 						firewall.local_client_mqtt.proto='tcp'
 EOF
+					$ssh_cmd "gluon-reconfigure" || echo "Running gluon-reconfigure failed..." 1>&2
 				fi
+
 				if $ssh_cmd "crontab -l" | grep "$scriptname" ; then
 					echo_if_verbose "crontab entry containing $scriptname had been found..."
 				else
 					echo_if_not_quiet "crontab entry with $scriptname not found... adding a simple one... modify later!"
 					cronentry="*/30 * * * * sleep 15 ; $scriptname -c machine-data -m test.mosquitto.org"
 					$ssh_cmd "{ crontab -l ; echo \"$cronentry\" ; } | crontab - ; ${bVerbose:+echo crontab is now: ; crontab -l}"
-				fi
-				if [ "§ssh_cmd" != "exec_locally"] ; then
-					commandsToDo="filecopy${commandsToDo:+,$commandsToDo}"
-					filetocopy="$0"
 				fi
 				# still missing: make it run as an MQTT daemon!
 				;;
@@ -746,23 +768,31 @@ EOF
 			ffotherssid|ffotherssid1|ffotherssid2|ffotherssid_*)
 				# ["freising", "gauting", "muc_cty", "muc_nord", "muc_ost", "muc_sued", "muc_west", "uml_nord", "uml_ost", "uml_sued", "uml_west", "welt"]
 				# $ssh_cmd "ip link set $ff_if_pub up" # start Freifunk public interface
+				# $ssh_cmd "true" || { echo_if_not_quiet "target not reachable, aborting this command...." ; continue ; }
 				otherssid="muenchen.freifunk.net/welt"
-
 				case "$command" in
 					ffotherssid1)  otherssid="muenchen.freifunk.net/uml_nord" 	;;
 					ffotherssid2)  otherssid="muenchen.freifunk.net/uml_west"	;;
 					ffotherssid_*) otherssid="muenchen.freifunk.net/${command#ffotherssid_}"	;;
 				esac
 				result=$( $ssh_cmd "iwinfo $ff_if_pub info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; uci set wireless.client_radio0.ssid=$otherssid ; wifi up ; sleep $wifiupsleep ; iwinfo $ff_if_pub info | sed -e 's/: /:/' -e '1q' " 2>&1 )
+				retcode=$?
 				#### uci set wireless.client_radio0.ssid=$otherkey ; uci set wireless.client_radio0.encryption=psk2 ; 
 				#### while true ; do sleep 1 ; date ; iwinfo client0 info | grep SSID ; done
 				### result=$( ssh -i ~/.ssh/id_rsa4096_ff -o ProxyCommand="ssh -v -W [2001:608:a01:103:ee08:6bff:fe33:6940]:%p alt-solln" root@[2001:608:a01:103:ee08:6bff:fe33:6940] uname -a )
-				# echo done
 				echo "$result" >> $debugfile
-				prev_ssid=$( printf "$result" | grep SSIDPREV: | cut -d : -f 2 )
-				new_ssid=$( printf "$result" | grep ESSID: | cut -d : -f 2 )
-				echo_if_not_quiet "%s: Set ssid=%s, then wifi up. Then $new_ssid. // id=$(id -nu)/$(id -u)\n" "$sTargetHost" "$otherssid"
-				commandsToDo="ffstatus${commandsToDo:+,$commandsToDo}" # ... implicitly followed by a ffstatus
+				if [ "$retcode" = 255 ] ; then
+					echo_if_not_quiet "target not reachable (ssh return code 255), aborting ffotherssid command...." 
+					continue
+				elif [ -z "$result" ] ; then
+					echo_if_not_quiet "ffotherssid commands on remote host returned empty string..." 
+					continue
+				else
+					prev_ssid=$( printf "$result" | grep SSIDPREV: | cut -d : -f 2 )
+					new_ssid=$(  printf "$result" | grep ESSID:    | cut -d : -f 2 )
+					echo_if_not_quiet "%s: Set ssid=%s, then wifi up. Now $new_ssid. // id=$(id -nu)/$(id -u)\n" "$sTargetHost" "$otherssid"
+					commandsToDo="ffstatus${commandsToDo:+,$commandsToDo}" # ... implicitly followed by a ffstatus
+				fi
 				;;
 			ffgluonreconfigure)
 				[ "$commandsToDo" = "mqtt" ] && echo "Mqtt $command ignored." && continue
@@ -986,7 +1016,8 @@ EOF
 done
 
 if [ -n "$collectedsumofclients" ] ; then
-	{ [ "$bVerbose" -o "$bGiveHost" ] ; } && echo "######  ALL CLIENTS " "$@" "######"
+	[ "$bVerbose" -a "$bGiveHost" ] && echo "######"
+	[ "$bVerbose" -o "$bGiveHost" ] && echo "######  ALL CLIENTS " "$@" "######"
 	publish_to_mqtt_maybe "$areaid/publicwifi/allclientscount" "$collectedsumofclients"
 
 	# # kaputt:
