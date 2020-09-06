@@ -281,8 +281,7 @@ homie_init() {
 	homie_meta "homeassistant/sensor/${1}clients/config" something "$msg"
 
 	publish_to_mqtt "eumel/eumel" "huhu" 
-# exit
-
+	# exit
 	# return 0
 
 	homie_meta $1 "homie" "3.0.1"      $2
@@ -565,6 +564,7 @@ do
 		sTargetHost=$( echo "$ffhost" | tr "A-Z" "a-z" | sed -e 's/\..*//' -e 's/-e$//' ) # remove any trailing "-e" and domain name
 	fi
 	tmpfilemqtt="$tmpdir/mqtt.$ffhost"
+	new_ssid=""
 
 	[ "$bVerbose" -a "$bGiveHost" ] && echo "######"
 	[ "$bVerbose" -o "$bGiveHost" ] && echo "######  $sSshUser / $sTargetHost / $commands / " "$@" "######"
@@ -730,25 +730,28 @@ EOF
 				commandsToDo="ffstatus${commandsToDo:+,$commandsToDo}"
 				;;
 			ffup|ffstatus)
+				echo_if_verbose "Now doing $command on host..."
+				retcode=0
 				# $ssh_cmd "ip link set $ff_if_pub up" # start Freifunk public interface
 				if [ "$command" = "ffup" ] ; then
-					new_ssid=$( $ssh_cmd "wifi up && sleep $wifiupsleep && iwinfo $ff_if_pub info" | sed -e '/ESSID/s/[^:]*: //'  -e '1q' ) # start all wifi interfaces
-				elif [ -z "$new_ssid" ] ; then
-					new_ssid=$( $ssh_cmd "                               iwinfo $ff_if_pub info" | sed -e '/ESSID/s/[^:]*: //'  -e '1q' )
-				else
+					tempstr=$( $ssh_cmd "wifi up && sleep $wifiupsleep && iwinfo $ff_if_pub info" ) && new_ssid=$( echo "$tempstr" | sed -e '/ESSID/s/[^:]*: //'  -e '1q' )
+				elif [ "$new_ssid" ] ; then
 					echo_if_not_quiet "Recycling new_ssid=$new_ssid..."
-				fi				
-				echo_if_not_quiet "$sTargetHost: Executed $command - result: *$new_ssid*. id=$(id -nu)/$(id -u)" 
-					homie_line "$homie/publicwifi/lastdate" "$( date )"
-				if [ -z "$new_ssid" ] || echo "$new_ssid" | grep -q -E "open failed|connect failed|No such |GONE" ; then
-					homie_line "$homie/publicwifi/status" "false" 
-					homie_line "$homie/publicwifi/ssidshort" "NONE"
 				else
-					homie_line "$homie/publicwifi/status" "true"
-					new_ssid_short="$( printf "$new_ssid" | sed -e 's/\"//g' -e 's,.*/,,')"
-					homie_line "$homie/publicwifi/ssidshort" "$new_ssid_short"
-					publish_to_mqtt_maybe "$sTargetHost/publicwifi/ssidshort" "$new_ssid_short"
+					tempstr=$( $ssh_cmd "iwinfo $ff_if_pub info" 2>&1 ) && new_ssid=$( echo "$tempstr" | sed -e '/ESSID/s/[^:]*: //'  -e '1q' )
 				fi
+				retcode=$?			
+				echo_if_not_quiet "$sTargetHost: Executed $command (retcode=$retcode) - result: *$new_ssid*." 
+					homie_line "$homie/publicwifi/lastdate" "$( date )"
+				if [ "$retcode" != 0 -o -z "$new_ssid" ] || echo "$new_ssid" | grep -w -q -E "open failed|connect failed|No such" ; then
+					new_ssid_short=""
+					homie_line "$homie/publicwifi/status" "false" 
+				else
+					new_ssid_short="$( printf "$new_ssid" | sed -e 's/\"//g' -e 's,.*/,,')"
+					homie_line "$homie/publicwifi/status" "true"
+				fi
+				homie_line "$homie/publicwifi/ssidshort" "$new_ssid_short"
+				publish_to_mqtt_maybe "$sTargetHost/publicwifi/ssidshort" "$new_ssid_short"
 				;;
 			ffcond)
 				result=$( $ssh_cmd '{ for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | tee /tmp/wifis ; echo ++++++++++++ ; iwinfo | fgrep client0 '  )
