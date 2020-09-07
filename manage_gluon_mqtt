@@ -208,6 +208,12 @@ shorten_ethernet_addr_in_json() { # remove some bytes für anonymization
 	sed -e 's/\([*"][a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]:\)[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]\(:[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9][*"]\)/\1...\2/g' "$@"	
 	}
 
+deny_if_mqtt() {
+	noxxing
+	[ "$commandsToDo" = "mqtt" ] && echo_if_not_quiet "Mqtt $command ignored." && return 0
+	return 1
+}
+
 publish_to_mqtt() {
 	noxxing
 	echo_if_verbose "publish_to_mqtt: TOPIC=$1  MSG=$2 ${3:+ OPTIONS=$3}  ($cmd_mospub)"
@@ -219,6 +225,14 @@ publish_to_mqtt() {
 publish_to_mqtt_maybe() {
 	[ -n "$mqtthost" -o "$homie" ] && publish_to_mqtt "ffmuc/$1" "$2" "$3"
 	}
+
+reply_to_mqtt(){
+	[ -n "$mqtthost" -o "$homie" ] && publish_to_mqtt_maybe "$command" "$1"
+}
+
+reply_to_mqtt_status(){
+	[ "$1" ] && [ -n "$mqtthost" -o "$homie" ] && publish_to_mqtt_starred "ffmuc/$sTargetHost/$command/STATUS" "{ *status*:*$1* ${2:+,*details*=*$2* } }"
+}
 
 publish_to_mqtt_starred() {
 	[ -n "$mqtthost" -o "$homie" ] && publish_to_mqtt       "$1" "$( echo "$2" | tr "*" \" )" "$3"
@@ -569,7 +583,7 @@ do
 	[ "$bVerbose" -a "$bGiveHost" ] && echo "######"
 	[ "$bVerbose" -o "$bGiveHost" ] && echo "######  $sSshUser / $sTargetHost / $commands / " "$@" "######"
 
-	if [ -n "$option_to_query" ]
+	if [ "$option_to_query" ]
 	then
 		uci_val="$( query_uci_on_host "$option_to_query" )"
 
@@ -580,8 +594,7 @@ do
 		
 		uci_val="$(extract_uci_values "$uci_val")"
 
-		if [ -z "$write_uci_val" ]
-		then
+		if [ -z "$write_uci_val" ]  ; 		then
 			echo "$uci_val" # it was a query only = no writes
 		elif [ "$( echo "$uci_val" | wc -l )" -gt 1 ] ; then
 			error_and_exit "key :$option_to_query: had returned more than one line!"
@@ -597,12 +610,12 @@ do
 			# spawn a subprocess that will wait for a MQTT message....
 			sSysMqqtDummyTopic='$SYS/broker/uptime'
 			readonly fPipe="$tmpdir/f" 
-			mkfifo $fPipe || error_and_exit "Could not create $fPipe (retcode=$?)." 
-			set -x
+			mkfifo "$fPipe" || error_and_exit "Could not create $fPipe (retcode=$?)." 
+			# set -x
 			mosquitto_sub -v -R $mqtthost -t "ffmuc/$sTargetHost/+/GET" -t "$sSysMqqtDummyTopic/maximum" | awk -e '{ print strftime("MQTT ") $0 ; fflush() } ' > $fPipe  &  #  pipe non-stale commands from MQTT broker 
-			set +x
+			# set +x
 			readonly nMosquittoPid=$!
-			while sleep 30 ; do echo PERIODIC noop ; done  > $fPipe  &  #  pipe periodic stuff into the pipe to make it wakeup
+			while sleep 60 ; do echo PERIODIC noop ; done  > $fPipe  &  #  pipe periodic stuff into the pipe to make it wakeup
 			readonly nPeriodicPid=$!
 			trap "kill $nMosquittoPid $nPeriodicPid ; rm -f $fPipe" INT QUIT EXIT  # variables are set now for cleaning up
 		fi
@@ -629,22 +642,27 @@ do
 
 			case "$command" in
 			mqtt|noop)
-				echo_if_not_quiet "Noop: $command  $commandoptions"
+				echo_if_verbose "Noop: $command  $commandoptions"
+				;;
+			echo)
+				publish_to_mqtt_maybe "$sTargetHost/$command" "$commandoptions"
+				reply_to_mqtt_status "OK"
 				;;
 			loop)
 				for i in $( seq 1 20 ) ; do
 					echo_if_not_quiet "$i " "$( $ssh_cmd "/bin/date" > /dev/null )"
 				done
+				reply_to_mqtt_status "OK"
 				;;
 			install)
-				[ "$commandsToDo" = "mqtt" ] && echo_if_not_quiet "Mqtt $command ignored." && continue
+				deny_if_mqtt && continue
 				targetuser="$( $ssh_cmd "id -nu" )"
 				if [ -z "$targetuser" ] ; then
 					echo_if_not_quiet "targetuser on targethost could not be determined remotely: Pls debug your SSH setup..."
 					continue # abort case
 				fi
 
-				if [ "$ssh_cmd" != "exec_locally" ] && [ "$targetuser" = "root" ] ; then
+				if [ "$ssh_cmd" != "exec_locally" ] || [ "$targetuser" = "root" ] ; then
 					echo_if_not_quiet "Remote targetuser is $targetuser: Shall copy this script to /sbin later..."
 					commandsToDo="filecopy${commandsToDo:+,$commandsToDo}"
 					filetocopy="$0"
@@ -703,11 +721,12 @@ EOF
 				# still missing: make it run as an MQTT daemon!
 				;;
 			filecopy)
-				[ "$commandsToDo" = "mqtt" ] && echo_if_not_quiet "Mqtt $command ignored." && continue
+				deny_if_mqtt && continue
 				[ "$filetocopy" ] && scp -p "$filetocopy" "$sSshUser":/sbin && echo_if_verbose "$filetocopy copied to $sSshUser:/sbin"
 				;;
 			sh)
-				[ "$commandsToDo" = "mqtt" ] && echo_if_not_quiet "Mqtt $command ignored." && continue
+				# [ "$commandsToDo" = "mqtt" ] && echo_if_not_quiet "Mqtt $command ignored." && continue
+				deny_if_mqtt && continue
 				ssh "$sSshUser" # start a shell
 				;;
 			homie-update)
@@ -717,16 +736,17 @@ EOF
 				homieuptime=$( $uptimecmd ) && homie_line "$homie/\$stats/uptime" "$( echo "$homieuptime" | cut -f 1 -d . )"
 				;;
 			homie-delete)
-				[ "$commandsToDo" = "mqtt" ] && echo "Mqtt $command ignored." && continue
+				deny_if_mqtt && continue
 				homie="$( echo "$sTargetHost" | awk -- '{ print tolower(substr($i,1,1)) substr($i,2) }' )" # duplicate code...
 				homie_init "$homie" "-d"
 				;;
 			ffdown)
-				[ "$commandsToDo" = "mqtt" ] && echo "Mqtt $command ignored." && continue
-				new_ssid=$( $ssh_cmd "iw dev $ff_if_pub del" 2>&1 && echo $? ) # stop Freifunk public interface
-				echo "$new_ssid" | grep -q 'No such.* device' && new_ssid=""  
+				# deny_if_mqtt && continue
+				new_ssid=$( $ssh_cmd "iw dev $ff_if_pub del" 2>&1 ) # stop Freifunk public interface
+				echo "$new_ssid" | grep -q 'No such.* device' && reply_to_mqtt_status "ERROR" "$new_ssid" && new_ssid=""
 				echo_if_not_quiet "$sTargetHost: Ran wifi down on $ff_if_pub (new_ssid=$new_ssid)"
 				homie_line "$homie/publicwifi/clientscount" "-1"
+				[ "$new_ssid" ] && reply_to_mqtt_status "OK"
 				commandsToDo="ffstatus${commandsToDo:+,$commandsToDo}"
 				;;
 			ffup|ffstatus)
@@ -741,7 +761,7 @@ EOF
 					tempstr=$( $ssh_cmd "iwinfo $ff_if_pub info" 2>&1 ) && new_ssid=$( echo "$tempstr" | sed -e '/ESSID/s/[^:]*: //'  -e '1q' )
 				fi
 				retcode=$?			
-				echo_if_not_quiet "$sTargetHost: Executed $command (retcode=$retcode) - result: *$new_ssid*." 
+				echo_if_not_quiet "Executed $command (retcode=$retcode) - ssid=*$new_ssid*" 
 					homie_line "$homie/publicwifi/lastdate" "$( date )"
 				if [ "$retcode" != 0 -o -z "$new_ssid" ] || echo "$new_ssid" | grep -w -q -E "open failed|connect failed|No such" ; then
 					new_ssid_short=""
@@ -785,20 +805,25 @@ EOF
 				### result=$( ssh -i ~/.ssh/id_rsa4096_ff -o ProxyCommand="ssh -v -W [2001:608:a01:103:ee08:6bff:fe33:6940]:%p alt-solln" root@[2001:608:a01:103:ee08:6bff:fe33:6940] uname -a )
 				echo "$result" >> $debugfile
 				if [ "$retcode" = 255 ] ; then
-					echo_if_not_quiet "target not reachable (ssh return code 255), aborting ffotherssid command...." 
+					_logmsg="target not reachable (ssh return code 255), aborting ffotherssid command...." 
+					echo_if_not_quiet "$_logmsg" 
+					reply_to_mqtt_status "ERROR" "$_logmsg"
 					continue
 				elif [ -z "$result" ] ; then
-					echo_if_not_quiet "ffotherssid commands on remote host returned empty string..." 
+					_logmsg="ffotherssid commands on remote host returned empty string..." 
+					echo_if_not_quiet "$_logmsg" 
+					reply_to_mqtt_status "ERROR" "$_logmsg"
 					continue
 				else
 					prev_ssid=$( printf "$result" | grep SSIDPREV: | cut -d : -f 2 )
 					new_ssid=$(  printf "$result" | grep ESSID:    | cut -d : -f 2 )
 					echo_if_not_quiet "%s: Set ssid=%s, then wifi up. Now $new_ssid. // id=$(id -nu)/$(id -u)\n" "$sTargetHost" "$otherssid"
+					# reply_to_mqtt_status "ERROR" "$_logmsg"
 					commandsToDo="ffstatus${commandsToDo:+,$commandsToDo}" # ... implicitly followed by a ffstatus
 				fi
 				;;
 			ffgluonreconfigure)
-				[ "$commandsToDo" = "mqtt" ] && echo "Mqtt $command ignored." && continue
+				deny_if_mqtt && continue
 				# $ssh_cmd "ip link set $ff_if_pub up" # start Freifunk public interface
 				# 6 seconds needed for interface!
 				result=$( $ssh_cmd "iwinfo $ff_if_pub info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; gluon-reconfigure | tail -3 ; wifi up  ; sleep $wifiupsleep ; iwinfo $ff_if_pub info | sed -e 's/: /:/' -e '1q' " )
@@ -812,7 +837,9 @@ EOF
 				;;
 			gluon-data)
 			  os_data="$( get_os_data_semi_starred_cached "$sTargetHost" 1 )"
-			  if [ -n "$os_data" ] ; then
+			  if [ -z "$os_data" ] ; then
+			  	reply_to_mqtt_status "ERROR"
+			  else
 				output="$( $ssh_cmd "uci get autoupdater.settings.branch 2>&1 ; uci get autoupdater.settings.enabled 2>&1 ; uci get gluon.core.domain 2>&1 ; lua -e 'print(require(\"platform_info\").get_model())' 2>&1 ; cat /lib/gluon/gluon-version 2>&1 ; cat /lib/gluon/release 2>&1 ; ls /lib/gluon/domains 2>&1" )"
 				autoupdaterbranch="$( echo "$output" | sed -n -e "1p" )"
 				autoupdaterenabled="$( echo "$output" | sed -n -e 2s/0/false/  -e 2s/1/true/ -e "2p" )"
@@ -857,6 +884,7 @@ EOF
 				echo_if_not_quiet "$gluondomains"
 				publish_to_mqtt_starred "ffmuc/$sTargetHost/gluondata/gluon-domains" "$gluondomains"
 				homie_line                          "$homie/gluondata/gluon-domains" "$gluondomains"
+			  	reply_to_mqtt_status "OK"
 			  fi
 			  ;;
 			machine-data)
@@ -915,6 +943,7 @@ EOF
 					collectedclients="${collectedclients% }" # trim leading spaces
 				else
 					echo "$scriptname: Connection to $sSshUser failed. Stopping for this node..." 1>&2
+				  	reply_to_mqtt_status "ERROR"
 				fi
 				;;
 			nodeinfo|neighbours|statistics)  
@@ -937,10 +966,12 @@ EOF
 				if [ -z "$ffrouterip" ]
 				then
 					echo "$scriptname: router IP :$ffrouterip: empty. Command $command failed..." 1>&2
+				  	reply_to_mqtt_status "ERROR" "router IP undetermined"
 					# rm -f "$tmpfile_routerip"
 				elif [ $returnsize -eq 0 ] 
 				then
 					echo "$scriptname: Connection to $sSshUser or gluon-neighbour-info failed. Command $command on node ip $ffrouterip failed..." 1>&2
+				  	reply_to_mqtt_status "ERROR" "remote result empty"
 					# rm -f $tmpfile_routerip
 				else
 					[ "$ffrouterip" != "$cachedrouterip" ] && storage_cache_write "$sTargetHost.routerip" "$ffrouterip"
@@ -987,11 +1018,11 @@ EOF
 				# 53 * * * * /srv/openhab2-conf/manage-gluon-mqtt/manage_gluon_mqtt -c nodeinfo
 				;;
 			reboot)  
-				[ "$commandsToDo" = "mqtt" ] && echo_if_not_quiet "Mqtt $command ignored." && continue
+				deny_if_mqtt && continue
 				$ssh_cmd "/sbin/reboot"
 				;;
 			scandirty)  
-				[ "$commandsToDo" = "mqtt" ] && echo_if_not_quiet "Mqtt $command ignored." && continue
+				deny_if_mqtt && continue
 				# relies on the following entry in root's crontab, since only root is allowed to do a full wifi scan
 				# SHELL=/bin/bash
 				# * * * * * { /sbin/iw dev wlan0 scan ; sleep 2 ; /sbin/iw dev wlan0 scan ; sleep 2 ; /sbin/iw dev wlan0 scan ; } | fgrep SSID  | cut -d ":" -f 2 | xargs -n 1 | sort -u > /tmp/wifis.txt
