@@ -15,6 +15,7 @@ Supported functions/return information:
 * Query amount and fingerprint of locally connected Freifunk Wifi clients
 * Query static and dynamic [Gluon](https://gluon.readthedocs.io/en/latest/) data (returned as [JSON](https://de.wikipedia.org/wiki/JavaScript_Object_Notation)): nodeinfo, neighbours,statistics as well as the output from `gluon-show-site`.
 * Query static and dynamic [OpenWrt](https://openwrt.org) config data
+* Run a simple speed test
 * Invoke a reboot on the Freifunk node.
 
 IMPORTANT: The script needs quite some refactoring, the code is provided as is. Yes, I know, it's ugly ;)
@@ -83,6 +84,7 @@ Supported commands for the -c option are - names might change during refactoring
 * *ffgluonreconfigure*: Reset interface name back to original
 * *gluon-data*: Lots of Gluon configuration data
 * *machine-data*: Version and CPU info of the node
+* *speedtest*: Get a larger file, measure the time it takes, calculate download speed
 * *status*: Load and uptime of the node
 * *localclients*: Amount and fingerprints of clients attached to the node
 * *nodeinfo* ...
