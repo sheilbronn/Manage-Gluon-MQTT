@@ -164,6 +164,7 @@ storage_read() { # read a key/value pair from cache or user storage
 	echo_if_verbose "storage_read($1,$2,$3,$4)=\"$__value\" ($__fresult)" 1>&2
 	echo "${__value}" # __fresult values are ignored for now
 	[ -z "$__value" ] && return 1
+	return 0
 	}
 
 storage_cache_read() { # read a key/value pair to be cached across script invocations from the same user; empty cache after n day(s)
@@ -216,7 +217,7 @@ deny_if_mqtt() {
 
 publish_to_mqtt() {
 	noxxing
-	echo_if_verbose "publish_to_mqtt: TOPIC=$1  MSG=$2 ${3:+ OPTIONS=$3}  ($cmd_mospub)"
+	echo_if_verbose "publish_to_mqtt: TOPIC=$1  MSG=$2 ${3:+ OPTIONS=$3}"
 	if [ "$cmd_mospub" != "true" ] ; then
 		 $cmd_mospub $mqtthost -t "$1" -m "$2" $3  || echo_if_verbose "$cmd_mospub failed..." #  $3  passed without quotes on purpose
 	fi
@@ -231,7 +232,8 @@ reply_to_mqtt(){
 }
 
 reply_to_mqtt_status(){
-	[ "$1" ] && [ -n "$mqtthost" -o "$homie" ] && publish_to_mqtt_starred "ffmuc/$sTargetHost/$command/STATUS" "{ *status*:*$1* ${2:+,*details*=*$2* } }"
+	[ "$1" ] && [ -n "$mqtthost" -o "$homie" ] && publish_to_mqtt_starred "ffmuc/$sTargetHost/$command/STATUS" "{ *status*:*$1* ${2:+,*details*:*$2* }}"
+	[ "$1" = "ERROR" ] && logger -p daemon -t error "$2"
 }
 
 publish_to_mqtt_starred() {
@@ -611,13 +613,22 @@ do
 			sSysMqqtDummyTopic='$SYS/broker/uptime'
 			readonly fPipe="$tmpdir/f" 
 			mkfifo "$fPipe" || error_and_exit "Could not create $fPipe (retcode=$?)." 
+			echo_if_verbose "Subscribing to MQTT Broker: $mqtthost, Topic: "ffmuc/$sTargetHost/+/GET""
 			# set -x
 			mosquitto_sub -v -R $mqtthost -t "ffmuc/$sTargetHost/+/GET" -t "$sSysMqqtDummyTopic/maximum" | awk -e '{ print strftime("MQTT ") $0 ; fflush() } ' > $fPipe  &  #  pipe non-stale commands from MQTT broker 
 			# set +x
-			readonly nMosquittoPid=$!
+			readonly nPidMosquitto=$!
+			command="mqtt" && reply_to_mqtt_status "OK" "started subprocess with PID $nPidMosquitto"
 			while sleep 60 ; do echo PERIODIC noop ; done  > $fPipe  &  #  pipe periodic stuff into the pipe to make it wakeup
-			readonly nPeriodicPid=$!
-			trap "kill $nMosquittoPid $nPeriodicPid ; rm -f $fPipe" INT QUIT EXIT  # variables are set now for cleaning up
+			readonly nPidPeriodic=$!
+			trap_function() { 
+					rm -f $fPipe
+					kill $nPidMosquitto $nPidPeriodic
+					echo_if_verbose "$scriptname stopping at $( date )" 
+					command="mqtt" && reply_to_mqtt_status "OK" "ending"
+ 				}			
+			trap 'trap_function' INT QUIT TERM
+			# trap "kill $nPidMosquitto $nPidPeriodic ; rm -f $fPipe" INT QUIT EXIT  # variables are set now for cleaning up
 		fi
 
 		# OpenHab Homie autodiscovery doesn't like uppercase characters at the beginning...
@@ -634,6 +645,7 @@ do
 
 				if [ "$sPipeType" = "MQTT" ] ;then 
 					command="$( echo "$command" | awk -v FS=/ 'NF && NF-1 { print ( $(NF-1) ) }' )" # extract last part of topic, must have at least one /
+					echo_if_verbose "Received MQTT command: $command"
 				fi
 			else
 				     command="$( echo "$commandsToDo" | cut -d "," -f 1  )"
@@ -642,17 +654,16 @@ do
 
 			case "$command" in
 			mqtt|noop)
-				echo_if_verbose "Noop: $command  $commandoptions"
+				echo_if_verbose "Noop: $command $commandoptions"
 				;;
 			echo)
-				publish_to_mqtt_maybe "$sTargetHost/$command" "$commandoptions"
-				reply_to_mqtt_status "OK"
+				reply_to_mqtt_status "OK" "$commandoptions"
 				;;
 			loop)
-				for i in $( seq 1 20 ) ; do
+				for i in $( seq 1 10 ) ; do
 					echo_if_not_quiet "$i " "$( $ssh_cmd "/bin/date" > /dev/null )"
 				done
-				reply_to_mqtt_status "OK"
+				reply_to_mqtt_status "OK" "performed 10 * /bin/date"
 				;;
 			install)
 				deny_if_mqtt && continue
@@ -730,7 +741,7 @@ EOF
 				ssh "$sSshUser" # start a shell
 				;;
 			homie-update)
-				commandsToDo="localclients,ffstatus,gluon-data,machine-data,$commandsToDo"
+				commandsToDo="localclients,ffstatus,gluondata,machine-data,$commandsToDo"
 				
 				uptimecmd="cat /proc/uptime" && [ "$ffhost" != localhost ] && uptimecmd="$0 -h $ffhost $uptimecmd" 
 				homieuptime=$( $uptimecmd ) && homie_line "$homie/\$stats/uptime" "$( echo "$homieuptime" | cut -f 1 -d . )"
@@ -746,7 +757,7 @@ EOF
 				echo "$new_ssid" | grep -q 'No such.* device' && reply_to_mqtt_status "ERROR" "$new_ssid" && new_ssid=""
 				echo_if_not_quiet "$sTargetHost: Ran wifi down on $ff_if_pub (new_ssid=$new_ssid)"
 				homie_line "$homie/publicwifi/clientscount" "-1"
-				[ "$new_ssid" ] && reply_to_mqtt_status "OK"
+				[ "$new_ssid" ] && reply_to_mqtt_status "OK" "new_ssid=$new_ssid"
 				commandsToDo="ffstatus${commandsToDo:+,$commandsToDo}"
 				;;
 			ffup|ffstatus)
@@ -756,7 +767,7 @@ EOF
 				if [ "$command" = "ffup" ] ; then
 					tempstr=$( $ssh_cmd "wifi up && sleep $wifiupsleep && iwinfo $ff_if_pub info" ) && new_ssid=$( echo "$tempstr" | sed -e '/ESSID/s/[^:]*: //'  -e '1q' )
 				elif [ "$new_ssid" ] ; then
-					echo_if_not_quiet "Recycling new_ssid=$new_ssid..."
+					echo_if_not_quiet "Reused new_ssid=$new_ssid..."
 				else
 					tempstr=$( $ssh_cmd "iwinfo $ff_if_pub info" 2>&1 ) && new_ssid=$( echo "$tempstr" | sed -e '/ESSID/s/[^:]*: //'  -e '1q' )
 				fi
@@ -766,9 +777,11 @@ EOF
 				if [ "$retcode" != 0 -o -z "$new_ssid" ] || echo "$new_ssid" | grep -w -q -E "open failed|connect failed|No such" ; then
 					new_ssid_short=""
 					homie_line "$homie/publicwifi/status" "false" 
+					reply_to_mqtt_status "ERROR" "retcode=$retcode  new_ssid=$new_ssid"
 				else
 					new_ssid_short="$( printf "$new_ssid" | sed -e 's/\"//g' -e 's,.*/,,')"
 					homie_line "$homie/publicwifi/status" "true"
+					reply_to_mqtt_status "OK" "ssid_short=$new_ssid_short"
 				fi
 				homie_line "$homie/publicwifi/ssidshort" "$new_ssid_short"
 				publish_to_mqtt_maybe "$sTargetHost/publicwifi/ssidshort" "$new_ssid_short"
@@ -835,7 +848,7 @@ EOF
 				fi
 				commandsToDo="ffstatus${commandsToDo:+,$commandsToDo}" # ... implicitly followed by a ffstatus
 				;;
-			gluon-data)
+			gluondata)
 			  os_data="$( get_os_data_semi_starred_cached "$sTargetHost" 1 )"
 			  if [ -z "$os_data" ] ; then
 			  	reply_to_mqtt_status "ERROR"
@@ -896,6 +909,39 @@ EOF
 					' ) 
 				echo_if_not_quiet "$newval"
 				publish_to_mqtt_starred "ffmuc/$sTargetHost/$command" "$newval"
+				;;
+			speedtest|speedtest0|speedtest00)
+				speedtestparam="" ; [ "$bVerbose" ] || speedtestparam="-q"   ;    speedtestparam="-q"
+				lastspeedtestString=$( storage_cache_read "$sTargetHost.lastspeedtest" 1 ) && lastspeedtestString=",*lastspeedtest*:*$lastspeedtestString*"
+				speedtestcmd=$( storage_cache_read "$sTargetHost.speedtestmincommand" 1 ) # prefer the previous one
+				# [ "$speedtestcmd" ] && command="$speedtestcmd"
+				case "${speedtestcmd:-$command}" in
+					speedtest)   speedtestfile="http://speedtest.tele2.net/1MB.zip"   ;;
+					speedtest0)  speedtestfile="http://speedtest.tele2.net/10MB.zip"  ;;
+					speedtest00) speedtestfile="http://speedtest.tele2.net/100MB.zip" ;;
+				esac
+				echo_if_verbose "speedtest: fetching $speedtestfile..." 
+				newval=$( $ssh_cmd "date -u +%s; wget $speedtestparam -O - $speedtestfile | wc -c ; date -u +%s"  )
+				retval=$?
+				if [ $retval = 0 ] ; then
+					starttime=$( echo "$newval" | sed -n -e "1 p" )
+					filesize=$(  echo "$newval" | sed -n -e "2 p" )
+					endtime=$(   echo "$newval" | sed -n -e "3 p" )
+					newval=$(( endtime - starttime ))
+					if [ "$newval" -lt 10 ] ; then
+						echo_if_verbose "$newval is too fast, redoing: ${command}0"
+						commandsToDo="${command}0${commandsToDo:+,$commandsToDo}" # try 10-times larger
+					else
+						speedMB=$( echo $speedKB | awk "{ printf \"%.1f\" ,  $filesize / $newval / 1024 / 1024 }" )
+						echo_if_not_quiet "$speedMB"
+						publish_to_mqtt_starred "ffmuc/$sTargetHost/speedtest" "{*speedMB*:*$speedMB*,*size*:*$filesize*,*elapsedtime*:*$newval*${lastspeedtestString}}"
+						storage_cache_write "$sTargetHost.speedtestmincommand" "$command"
+						storage_cache_write "$sTargetHost.lastspeedtest" "$speedMB"
+					fi
+				else
+					echo_if_not_quiet "ERROR: $retval"
+					publish_to_mqtt_starred "ffmuc/$sTargetHost/$command" "{*ERROR*:*$retval*,*file*:*$speedtestfile*${lastspeedtestString}}"
+				fi
 				;;
 			status)
 				newval=$( $ssh_cmd "cat /proc/uptime /proc/loadavg" | awk '
