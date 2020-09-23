@@ -17,6 +17,8 @@ ff_if_pub1="client0"
 ff_if_priv1="wlan0-1"
 ff_if_pub2="wlan0-1"
 ff_if_priv2="wlan0-2"
+gluondomaindir="/lib/gluon/domains"
+ssidbase="muenchen.freifunk.net"
 macidsfile="/srv/openhab2-conf/phones" # file is not necessary for the beginning
 
 set -o noglob  # "noglob"" will limit security and escaping problems:
@@ -77,9 +79,9 @@ exec_locally() { # tried to avoid cost of running "sh -c", no success so far
 		sh -c "$1"
 	}
 extract_uci_values() {
-	local __fresult="$( echo "$@" | xargs -r -n 1 | sed 's/.*=//g' )"
-	# echo "extract_uci_values returns: <$__fresult>" 1>&2
-	echo "$__fresult"
+	local _fresult="$( echo "$@" | xargs -r -n 1 | sed 's/.*=//g' )"
+	# echo "extract_uci_values returns: <$_fresult>" 1>&2
+	echo "$_fresult"
 	}
 
 query_uci_on_host() { # query (show) possibly many UCI values from a host and return them all
@@ -94,35 +96,51 @@ get_uci_on_host() {
 	}
 
 query_and_extract_uci_on_host() { # query the FIRST of possibly many UCI values from a host and return its value
-	local __fresult="$($ssh_cmd "uci show $1" | xargs -r -n 1 | sed 's/.*=//g' )"
-	# echo "extract_uci_values returns: <$__fresult>" 1>&2
-	echo "$__fresult"
+	local _fresult="$($ssh_cmd "uci show $1" | xargs -r -n 1 | sed 's/.*=//g' )"
+	# echo "extract_uci_values returns: <$_fresult>" 1>&2
+	echo "$_fresult"
 	}
 
 get_os_data_semi_starred_cached() {
-	local __fresult="$( storage_cache_read "$1.os_data" 1 )"
+	local _fresult="$( storage_cache_read "$1.os_data" 1 )"
 	local __os_data_fn="/usr/lib/os-release" # standard on Unix by now
-	local __os_data=""
+	local _data=""
 	local __os_pretty_name
 	local __os_id
 
-	if [ -z "$__fresult" ] ; then
-		__os_data="$( $ssh_cmd "cat $__os_data_fn" )" || {	__ret=$? ; return $__ret ; } # cancel func
-		if [ -n "$__os_data" ] ; then
-			storage_cache_write "$1.os_data_lined" "$__os_data" # keep it for now, dont need it yet
-			__fresult="$( echo "$__os_data" | awk -F= 'BEGIN { printf  "{*os*:{" 
+	if [ -z "$_fresult" ] ; then
+		_data="$( $ssh_cmd "cat $__os_data_fn" )" || {	__ret=$? ; return $__ret ; } # cancel func
+		if [ -n "$_data" ] ; then
+			storage_cache_write "$1.os_data_lined" "$_data" # keep it for now, dont need it yet
+			_fresult="$( echo "$_data" | awk -F= 'BEGIN { printf  "{*os*:{" 
 				} { printf comma "*" tolower($1) "*:" $2 $3 $4 $5 $6 ; comma="," } END { printf "}}" }' )" # generate new value
-			 storage_cache_write "$1.os_data" "$__fresult"  # cache if new values successfulhy obtained
-			__os_pretty_name="$( echo "$__os_data" |  awk -F=  '/^PRETTY_NAME=/ { print gensub("\"", "", "g", $2) }' )"
+			 storage_cache_write "$1.os_data" "$_fresult"  # cache if new values successfulhy obtained
+			__os_pretty_name="$( echo "$_data" |  awk -F=  '/^PRETTY_NAME=/ { print gensub("\"", "", "g", $2) }' )"
 			 storage_cache_write "$1.os_pretty_name" "$__os_pretty_name" 
-			__os_name="$( echo "$__os_data" |  awk -F=  '/^NAME=/ { print gensub("\"", "", "g", $2) }' )"
+			__os_name="$( echo "$_data" |  awk -F=  '/^NAME=/ { print gensub("\"", "", "g", $2) }' )"
 			 storage_cache_write "$1.os_name" "$__os_name" 
-			__os_id="$( echo "$__os_data" |  awk -F=  '/^ID=/ { print gensub("\"", "", "g", $2) }' )"
+			__os_id="$( echo "$_data" |  awk -F=  '/^ID=/ { print gensub("\"", "", "g", $2) }' )"
 			 storage_cache_write "$1.os_id" "$__os_id" 
 		fi
 	fi	
-	printf "%s" "$__fresult"
+	printf "%s" "$_fresult"
 	}
+
+get_gluon_domains_starred_cached() {
+	local _data="$( storage_cache_read "$1.gluondomains" 1 )"
+
+	if [ -z "$_data" ] ; then
+		_data="$( $ssh_cmd "ls -1 $gluondomaindir 2>&1" )" || {	__ret=$? ; return $__ret ; } # cancel func
+		if [ -n "$_data" ] ; then
+			_data=$( echo "$_data" | sed -e 's/[^_]*_//' -e 's/.json//' )
+			storage_cache_write "$1.gluondomains" "$_data"
+		fi
+	fi
+	_data=$( echo "$_data" | awk 'BEGIN { printf "[" } { printf comma "*" $0 "*" ; comma="," } END { printf "]" }' )
+	echo_if_verbose "Gluon domains for $1: $_data"
+	printf "%s" "$_data"
+}
+
 storage_write() { # write a key/value pair to a dir 
 	noxxing
 	if [ -z "$1" ] ; then
@@ -140,29 +158,29 @@ storage_cache_write() { # write a key/value pair to be cached across script invo
 	storage_write "$1" "$2" "$cachedir"      "cached"
 	}
 storage_read() { # read a key/value pair from cache or user storage
-	# noxxing
+	noxxing
 	local __file="$3/$1.$4"
 	local __maxcachedays="${2:-2}"
-	local __fresult=""
+	local _fresult=""
 	local __value=""
 	local __deloutput=""
 
 	if [ -z "$1" ] ; then
-		__fresult="##INVALIDPARAM##"
-		error_and_exit "storage_read($1,...) with $__fresult"
+		_fresult="##INVALIDPARAM##"
+		error_and_exit "storage_read($1,...) with $_fresult"
 	elif [ ! -r "$__file" ] ; then
-		__fresult="##NOTFOUND##"
+		_fresult="##NOTFOUND##"
 	else
 		[ "$4" = "cached" ] && __deloutput="$( find "$__file" -mtime +"$__maxcachedays" | head -1 | xargs -r -t rm 2>&1 )" # cache invalidated after n days and remove file
 		if [ -n "$__deloutput" ] ; then
-			__fresult="##NOTFOUND##" # cache is invalid
+			_fresult="##NOTFOUND##" # cache is invalid
 		else
-			__value="$( cat "$__file" )" && __fresult="##FOUND##"  # read value from cache file
-			[ "$__value" ] || __fresult="##EMPTY##"
+			__value="$( cat "$__file" )" && _fresult="##FOUND##"  # read value from cache file
+			[ "$__value" ] || _fresult="##EMPTY##"
 		fi
 	fi
-	echo_if_verbose "storage_read($1,$2,$3,$4)=\"$__value\" ($__fresult)" 1>&2
-	echo "${__value}" # __fresult values are ignored for now
+	echo_if_verbose "storage_read($1,$2,$3,$4)=\"$__value\" ($_fresult)" 1>&2
+	echo "${__value}" # _fresult values are ignored for now
 	[ -z "$__value" ] && return 1
 	return 0
 	}
@@ -216,8 +234,9 @@ deny_if_mqtt() {
 }
 
 publish_to_mqtt() {
-	# noxxing
-	echo_if_verbose "publish_to_mqtt: TOPIC=$1  MSG=$2 ${3:+ OPTIONS=$3}"
+	noxxing
+	# local - ; set -x
+	echo_if_verbose "publish_to_mqtt: TOPIC=$1  MSG=$2 ${3:+ OPTIONS=$3} (\$mqtthost=$mqtthost)"
 	if [ "$cmd_mospub" != "true" ] ; then
 		 $cmd_mospub $mqtthost -t "$1" -m "$2" $3  || echo_if_verbose "$cmd_mospub failed..." #  $3  passed without quotes on purpose
 	fi
@@ -545,7 +564,7 @@ do
 		case "$OPTARG" in
 		test)    mqtthost="-h test.mosquitto.org" ;;
 		eclipse) mqtthost="-h mqtt.eclipse.org"   ;;
-		*)       mqtthost="-h $( echo $mqtthost | remove_unwanted_chars )" ;; # clean up for sec purposes
+		*)       mqtthost="-h $( echo "$OPTARG" | tr -c -d '0-9a-z_.' )" ;; # clean up for sec purposes
 		esac
 		;;
 	p)  homie="yes" # implies MQTT
@@ -853,9 +872,10 @@ EOF
 				# exit 
 				;;
 			ffcond)
+				deny_if_mqtt && continue
 				result=$( $ssh_cmd '{ for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | tee /tmp/wifis ; echo ++++++++++++ ; iwinfo | fgrep client0 '  )
 				ifresult=$( echo "$result" | grep -A 3 '++++++++++' | grep -m 2 "client0 *ESSID:" )
-				if echo "$result" | grep -A 9 -w '6e:a3:09:ea:31:e00' | grep -w "SSID:.muenchen.freifunk.net"
+				if echo "$result" | grep -A 9 -w '6e:a3:09:ea:31:e00' | grep -w "SSID:.$ssidbase"
 				then
 					# client0   ESSID: "muenchen.freifunk.net/welt"
 					echo_if_not_quiet "To be upped..."
@@ -871,16 +891,21 @@ EOF
 				# ["freising", "gauting", "muc_cty", "muc_nord", "muc_ost", "muc_sued", "muc_west", "uml_nord", "uml_ost", "uml_sued", "uml_west", "welt"]
 				# $ssh_cmd "ip link set $ff_if_pub up" # start Freifunk public interface
 				# $ssh_cmd "true" || { echo_if_not_quiet "target not reachable, aborting this command...." ; continue ; }
-				otherssid="muenchen.freifunk.net/welt"
+				otherssid="welt"
 				case "$command" in
-					ffotherssid1)  otherssid="muenchen.freifunk.net/uml_nord" 	;;
-					ffotherssid2)  otherssid="muenchen.freifunk.net/uml_west"	;;
-					ffotherssid_*) 
-							_shortssid="$( echo ${command#ffotherssid_} | tr -d '}{)( ,.' )"
-							# further checks for allowed and lawful SSID values among gluon domains necessary here ....
-							[ -z "$_shortssid" ] && echo_if_not_quit "Illegal shortssid: $_shortssid" && continue
-							otherssid="muenchen.freifunk.net/$_shortssid"	;;
+					ffotherssid1)  otherssid="uml_nord" 	;;
+					ffotherssid2)  otherssid="uml_west"	;;
+					ffotherssid_*) _shortssid="$( echo ${command#ffotherssid_} | tr -d '}{)( ,.' )"
+						[ -z "$_shortssid" ] && echo_if_not_quiet "Empty shortssid: ${command#ffotherssid_}" && continue
+						;;
 				esac
+				# further checks for allowed and lawful SSID values among gluon domains ....
+				if expr match "$( get_gluon_domains_starred_cached $sTargetHost )" ".*\*${_shortssid}[*]" > /dev/null ; then
+					otherssid="$ssidbase/$_shortssid"	
+				else
+					reply_to_mqtt_status "ERROR" "Illegal shortssid: $_shortssid"
+					echo_if_not_quiet "Illegal shortssid: $_shortssid" && continue
+				fi
 				result=$( $ssh_cmd "iwinfo $ff_if_pub info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; uci set wireless.client_radio0.ssid=$otherssid ; wifi up ; sleep $wifiupsleep ; iwinfo $ff_if_pub info | sed -e 's/: /:/' -e '1q' " 2>&1 )
 				retcode=$?
 				#### uci set wireless.client_radio0.ssid=$otherkey ; uci set wireless.client_radio0.encryption=psk2 ; 
@@ -901,7 +926,6 @@ EOF
 					prev_ssid=$( printf "$result" | grep SSIDPREV: | cut -d : -f 2 )
 					new_ssid=$(  printf "$result" | grep ESSID:    | cut -d : -f 2 )
 					echo_if_not_quiet "%s: Set ssid=%s, then wifi up. Now $new_ssid. // id=$(id -nu)/$(id -u)\n" "$sTargetHost" "$otherssid"
-					# reply_to_mqtt_status "ERROR" "$_logmsg"
 					commandsToDo="ffstatus${commandsToDo:+,$commandsToDo}" # ... implicitly followed by a ffstatus
 				fi
 				;;
@@ -923,15 +947,13 @@ EOF
 			  if [ -z "$os_data" ] ; then
 			  	reply_to_mqtt_status "ERROR"
 			  else
-				output="$( $ssh_cmd "uci get autoupdater.settings.branch 2>&1 ; uci get autoupdater.settings.enabled 2>&1 ; uci get gluon.core.domain 2>&1 ; lua -e 'print(require(\"platform_info\").get_model())' 2>&1 ; cat /lib/gluon/gluon-version 2>&1 ; cat /lib/gluon/release 2>&1 ; ls /lib/gluon/domains 2>&1" )"
+				output="$( $ssh_cmd "uci get autoupdater.settings.branch 2>&1 ; uci get autoupdater.settings.enabled 2>&1 ; uci get gluon.core.domain 2>&1 ; lua -e 'print(require(\"platform_info\").get_model())' 2>&1 ; cat /lib/gluon/gluon-version 2>&1 ; cat /lib/gluon/release 2>&1" )"
 				autoupdaterbranch="$( echo "$output" | sed -n -e "1p" )"
 				autoupdaterenabled="$( echo "$output" | sed -n -e 2s/0/false/  -e 2s/1/true/ -e "2p" )"
 				gluoncoredomain="$( echo "$output" | sed -n -e "3p" )"
 				routermodel="$(     echo "$output" | sed -n -e "4p" )"
 				gluonversion="$(    echo "$output" | sed -n -e "5p" )"
 				gluonrelease="$(    echo "$output" | sed -n -e "6p" )"
-				gluondomains="$(    echo "$output" | sed -n -e '7,$s/[^_]*_//' -e 's/.json//' -e '7,$p' | awk 'BEGIN { printf "[" } { printf comma "*" $0 "*" ; comma="," } END { printf "]" }' )"
-				storage_cache_write "$sTargetHost.gluondomains" "$gluondomains" # save them, e.g. for homie announcement
 
 				echo_if_not_quiet "$os_data"
 				publish_to_mqtt_starred "ffmuc/$sTargetHost/gluondata/os-data" "$os_data"
@@ -965,9 +987,11 @@ EOF
 				publish_to_mqtt_maybe "$sTargetHost/gluondata/release" "${gluonrelease##v}"
 				homie_line                  "$homie/gluondata/release" "${gluonrelease##v}"
 
+				gluondomains="$( get_gluon_domains_starred_cached $sTargetHost )"
 				echo_if_not_quiet "$gluondomains"
 				publish_to_mqtt_starred "ffmuc/$sTargetHost/gluondata/gluon-domains" "$gluondomains"
 				homie_line                          "$homie/gluondata/gluon-domains" "$gluondomains"
+
 			  	reply_to_mqtt_status "OK"
 			  fi
 			  ;;
