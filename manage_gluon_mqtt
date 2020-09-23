@@ -137,7 +137,6 @@ get_gluon_domains_starred_cached() {
 		fi
 	fi
 	_data=$( echo "$_data" | awk 'BEGIN { printf "[" } { printf comma "*" $0 "*" ; comma="," } END { printf "]" }' )
-	echo_if_verbose "Gluon domains for $1: $_data"
 	printf "%s" "$_data"
 }
 
@@ -231,7 +230,7 @@ deny_if_mqtt() {
 	noxxing
 	[ "$commandsToDo" = "mqtt" ] && echo_if_not_quiet "Mqtt $command ignored." && return 0
 	return 1
-}
+	}
 
 publish_to_mqtt() {
 	noxxing
@@ -243,12 +242,12 @@ publish_to_mqtt() {
 	}
 
 publish_to_mqtt_maybe() {
-	[ -n "$mqtthost" -o "$homie" ] && publish_to_mqtt "ffmuc/$1" "$2" "$3"
+		[ -n "$mqtthost" -o "$homie" ] && publish_to_mqtt "ffmuc/$1" "$2" "$3"
 	}
 
 reply_to_mqtt(){
-	[ -n "$mqtthost" -o "$homie" ] && publish_to_mqtt_maybe "$command" "$1"
-}
+		[ -n "$mqtthost" -o "$homie" ] && publish_to_mqtt_maybe "$command" "$1"
+	}
 
 reply_to_mqtt_status(){
 	[ "$1" ] && [ -n "$mqtthost" -o "$homie" ] && publish_to_mqtt_starred "ffmuc/$sTargetHost/$command/STATUS" "{ *status*:*$1* ${2:+,*details*:*$2* }}"
@@ -904,6 +903,7 @@ EOF
 					otherssid="$ssidbase/$_shortssid"	
 				else
 					reply_to_mqtt_status "ERROR" "Illegal shortssid: $_shortssid"
+					publish_to_mqtt_starred "ffmuc/$sTargetHost/gluondata/gluon-domains" "$( get_gluon_domains_starred_cached $sTargetHost )"
 					echo_if_not_quiet "Illegal shortssid: $_shortssid" && continue
 				fi
 				result=$( $ssh_cmd "iwinfo $ff_if_pub info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; uci set wireless.client_radio0.ssid=$otherssid ; wifi up ; sleep $wifiupsleep ; iwinfo $ff_if_pub info | sed -e 's/: /:/' -e '1q' " 2>&1 )
