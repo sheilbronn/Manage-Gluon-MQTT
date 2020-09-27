@@ -12,11 +12,11 @@ Supported functions/return information:
 * Query and possibly set [UCI](https://openwrt.org/docs/guide-user/base-system/uci) values
 * Query, stop and start the Freifunk public Wifi interface
 * Temporarely modify the Freifunk SSID (within the limits of the local Freifunk community)
-* Query amount and fingerprint of locally connected Freifunk Wifi clients
+* Query locally connected Freifunk clients (Wifi)
 * Query static and dynamic [Gluon](https://gluon.readthedocs.io/en/latest/) data (returned as [JSON](https://de.wikipedia.org/wiki/JavaScript_Object_Notation)): nodeinfo, neighbours,statistics as well as the output from `gluon-show-site`.
 * Query static and dynamic [OpenWrt](https://openwrt.org) config data
 * Run a simple speed test
-* Invoke a reboot on the Freifunk node.
+* Reboot the Freifunk node.
 
 IMPORTANT: The script needs quite some refactoring, the code is provided as is. Yes, I know, it's ugly ;)
 
