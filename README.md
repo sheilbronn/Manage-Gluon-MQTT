@@ -26,11 +26,11 @@ The following 4 main different use cases are supported:
 
 A. Management of an (untouched) Freifunk node by **remote SSH** commands (public/private key authentication): Command results are returned as **terminal output** (stdout).
 
-B. Management of an (untouched) Freifunk node by **remote SSH** commands (public/private key authentication): Command results are returned as **MQTT messages**. B and A are handled simultaneously.
+B. Management of an (untouched) Freifunk node by **remote SSH** commands (public/private key authentication): Command results are returned as **MQTT messages**. (B and A are handled simultaneously.)
 
 C. Monitoring by **MQTT messages**: Invoked by an explicit SSH call or by cron, this script runs locally on the Freifunk node, returning its output as **MQTT messages**.
 
-D. Local management like a daemon: This script listens to **MQTT messages** and returns results a MQTT messages, too. (D does not exclude C, also the script can run as a daemon invoking commands on pre-configured Freifunk hosts as in A or B).
+D. Local management as a daemon on the node: This script listens to **MQTT messages** and returns results a MQTT messages, too. (D does not exclude C, also the script can run as a daemon invoking commands on pre-configured Freifunk hosts as in A or B).
 
 Other aspects:
 
@@ -40,11 +40,11 @@ Other aspects:
 * If the Freifunk node has very limited memory, e.g. on [4/32 devices](https://openwrt.org/supported_devices/openwrt_on_432_devices), B might be preferred over C or D.
 * In order to install the Mosquitto packages, the package installation tool [opkg](https://openwrt.org/docs/guide-user/additional-software/opkg) is needed on Freifunk (Gluon) devices. opkg might not be available on [devices with limited memory](https://openwrt.org/supported_devices/openwrt_on_432_devices): Use use case A and B as a workaround.
 * Remote management via a Freifunk "edge" node acting as a SSH proxy to other Freifunk nodes works well, e.g. use the [ProxyJump directive](https://www.redhat.com/sysadmin/ssh-proxy-bastion-proxyjump) in your `.ssh/config`.
-* The script van install itself plus some prerequisites. See below.
+* The script can install itself plus some other prerequisites. See below.
 
 ### Prerequisites
 
-Depending on the use case to be supported, some prequisites have to be fulfilled in order the the script work:
+Depending on the use case to be supported, some prequisites have to be fulfilled in order for the script to work:
 
 * Installation of the [Mosquitto](https://mosquitto.org) packages mosquitto_pub and mosquitto_sub. They should be in every Linux repository, including OpenWrt, e.g. ``opkg update; opkg install mosquitto-client-nossl`` or ``apt install mosquitto-clients`` on the host on which the script (and therefore the MQTT clients) are to be run.
 See command ```install´´´ for more details.
@@ -52,7 +52,8 @@ N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluo
 * For use case A, B, and C as well as debugging purposes: 
   Enable [automatic remote invocation via SSH using public key authentication](https://openwrt.org/docs/guide-user/security/dropbear.public-key.auth)
 * If you want to use the script remotely: Install ash from a package repository (or manually replace ash by bash in the first line), e.g. on a Raspberry: ``apt install ash``. The script is written to be compatible to both ash and bash.
-* Freifunk relies on some version of Gluon or at least OpenWRT: So far, this script has only been tested on [Freifunk Munich](https://ffmuc.net) nodes with [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*. Please let me know or open a GitHub issue if you have success or problems with other versions
+* Freifunk relies on some version of Gluon or at least OpenWRT: So far, this script has only been tested on [Freifunk Munich](https://ffmuc.net) nodes with [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.* and 2020.1.*. 
+   Please let me know or open a GitHub issue if you have success or problems with other versions.
 * In case of MQTT connection problems: Ensure that incoming or outgoing MQTT connections are not blocked by a firewall - consider my [mqtt-grep-color](https://github.com/sheilbronn/mqtt-grep-color) to verify and debug your MQTT setup more easily. See command ```install´´´ for more details.
 
 ### Command-line options / Invocation
@@ -60,11 +61,11 @@ N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluo
 * -c (commands): One or more management commands to be executed (comma-separated), see below for details.
 * -s (server): If the script is not run locally on the Freifunk node itself (localhost), the SSH names of one or more other Freifunk nodes maybe passed with -s (comma-seperated)
 * -g (give): In the output add an informative line with host and command (useful für multiple commands and hosts)
-* -v (verbose): more, verbose output from the script as well as intermediate steps
+* -v (verbose): more, verbose output from the script as well as intermediate steps. Additional -v's add more verbosity.
 * -x (execute): each shell command is echoed to stdout before execution (for debugging)
 * -q (quit): no output on stdout
 * -h (host): name or IP adress of the MQTT broker (momentarily still -m).
-    The public test broker test.mosquitto.org may be abbreviated as -h test.
+    The public test broker test.mosquitto.org may be abbreviated as -h test. iot.eclipse.ors as -h eclipse.
     If no broker is given, mosquitto_pub and mosquitto_sub will use their defaults (see their manual pages)
 * -m (mqtt): use MQTT or not (currently only implied by -p)
 * -p : support Homie or Home-Assistant auto-discovery (not fully verified yet)
@@ -84,7 +85,7 @@ Supported commands for the -c option are - names might change during refactoring
 * *ffgluonreconfigure*: Reset interface name back to original
 * *gluon-data*: Lots of Gluon configuration data
 * *machine-data*: Version and CPU info of the node
-* *speedtest*: Get a larger file, measure the time it takes, calculate download speed
+* *speedtest*: Get a larger file, measure the time it takes and calculate download speed im MB/s
 * *status*: Load and uptime of the node
 * *localclients*: Amount and fingerprints of clients attached to the node
 * *nodeinfo* ...
