@@ -62,7 +62,7 @@ sort_and_tail_file() {
 	local __tailcnt=${2:-20}
 	local __colno=${3:-1}
 
-	[ -r "$__fn" ] && [ -w "$__fn" ] && sort -k "$(( $__colno + 1 ))" "$__fn" | uniq -f "$__colno" | tail -"$__tailcnt" | sort  -k "$(( $__colno + 1 ))" > $__tmpfile \
+	[ -r "$__fn" ] && [ -w "$__fn" ] && sort -k "$(( __colno + 1 ))" "$__fn" | uniq -f "$__colno" | tail -"$__tailcnt" | sort  -k "$(( __colno + 1 ))" > $__tmpfile \
 		&& cat "$__tmpfile" > "$__fn" && rm -f "$__tmpfile"
 	[ "$bVerbose" ] && debug_if_verbose "sort_and_tail_file($1,$2,$3): lines: $( wc -l < "$1" )"
 	}
@@ -621,7 +621,7 @@ done
 shift "$((OPTIND-1))"   # Discard the options parsed so far and leave the rest of the cmd line...
 
 if [ "$homie" -o "$mqtthost" ] ; then # enable MQTT
-	true debug_if_verbose "MQTT commands not aliased."
+	: debug_if_verbose "MQTT commands not aliased."
 else
 	debug_if_verbose "MQTT commands are aliased."
 	alias publish_to_mqtt_starred="true skipped publish_to_mqtt_starred"
@@ -680,7 +680,7 @@ do
 			[ "$homie" ] && _subscriptions="$_subscriptions -t homie/$sTargetHost/+/+/set" 
 			debug_if_verbose "Subscribing MQTT Broker: $mqtthost, Topics: $_subscriptions, homie=$homie"
 			# set -x
-			_last_will_options="--will-topic $sitecode/$sTargetHost/mqtt/STATUS --will-payload 'OFF'"
+			_last_will_options="--will-topic $sitecode/$sTargetHost/mqtt/STATUS --will-payload OFF"
 			mosquitto_sub -v -R $mqtthost $_subscriptions -t "$sSysMqqtDummyTopic/maximum" $_last_will_options | awk -e '{ print strftime("MQTT ") $0 ; fflush() } ' > $fPipe  &  #  pipe non-stale commands from MQTT broker 
 			# set +x
 			readonly nPidMosquitto=$!
@@ -708,18 +708,19 @@ do
 			if [ "$commandsToDo" = "mqtt" ]  ;  then
 				# set -x
 				read -r sPipeType command commandoptions < "$fPipe" ; nReadCode=$? 
-				[ "$nReadCode" -ne 0 ] && sleep 1 && error_and_exit "Read error from pipe $fPipe (retval=$nReadCode)." 
+				[ "$nReadCode" -ne 0 ] && sleep 1 && reply_to_mqtt_status "ERROR" "Read error from pipe $fPipe (retval=$nReadCode)" && 
+						error_and_exit "Read error from pipe $fPipe (retval=$nReadCode)." 
 
 				if [ "$sPipeType" = "MQTT" ] ; then 
 					# set -x
 					_prefix="$( echo "$command" | awk -v FS=/ '{ print $1 }' )"
 					_msg="$( echo "$commandoptions" | awk '{ print $1 }' )"
-					debug_if_verbose "Raw MQTT command: $command  $_msg  ($_prefix)"
+					debug_if_verbose "Read raw MQTT command: $command  $_msg  ($_prefix)"
 					case "$_prefix" in
 					homie) 
 						command="$( echo "$command" | awk -v FS=/ 'NF && NF-1 { print ( $3 "/" $4 ) }' )-$_msg" 
 						case "$command" in
-						publicwifi/state-true) command="ffup" ;;
+						publicwifi/state-true)  command="ffup" ;;
 						publicwifi/state-false) command="ffdown" ;;
 						publicwifi/ssidshort-*) command="ffotherssid_$_msg"
 						esac
@@ -730,22 +731,29 @@ do
 					debug_if_verbose "Mapped MQTT command: $command"
 				fi
 			else
-				     command="$( echo "$commandsToDo" | cut -d "," -f 1  )"
-				commandsToDo="$( echo "$commandsToDo" | cut -s -d "," -f 2- )"
+				     command="$( echo "$commandsToDo" | cut -d "," -f 1    )"
+				commandsToDo="$( echo "$commandsToDo" | cut -d "," -f 2- -s)"
+			  commandoptions="$( echo "$command"      | cut -d "+" -f 2-   )" # split further...
+				     command="$( echo "$command"      | cut -d "+" -f 1    )"
 			fi			
 
 			case "$command" in
-			mqtt|noop)
-				debug_if_verbose "Noop: $command $commandoptions"
-				;;
-			echo)
-				reply_to_mqtt_status "OK" "$commandoptions"
+			mqtt|noop|echo)
+				debug_if_verbose "Command $command $commandoptions"
+				[ "$command" = "echo" ] && reply_to_mqtt_status "OK" "Command $command $commandoptions"
 				;;
 			loop)
-				for i in $( seq 1 10 ) ; do
-					echo_if_not_quiet "$i " "$( $ssh_cmd "/bin/date" > /dev/null )"
-				done
-				reply_to_mqtt_status "OK" "performed 10-times /bin/date"
+				commandoptions="${commandoptions:-10}"
+				if [ 1 -lt "$commandoptions" -a "$commandoptions" -lt 11 ]  ; then
+					startval="$( $ssh_cmd "date -u +%s" )" && echo_if_not_quiet "$startval" 
+						for i in $( seq 2 "$(( commandoptions - 1 ))" ) ; do
+							echo_if_not_quiet "$( $ssh_cmd "date -u +%s" )"
+						done && 
+						endval="$( $ssh_cmd "date -u +%s" )" && echo_if_not_quiet "$endval"
+					reply_to_mqtt_status "OK" "Command $command: Performed $commandoptions-times /bin/date in $(( endval - startval)) seconds: $startval-$endval"
+				else
+					reply_to_mqtt_status "ERROR" "Command $command: Invalid parameter '$commandoptions'"
+				fi
 				;;
 			install)
 				deny_if_mqtt && continue
