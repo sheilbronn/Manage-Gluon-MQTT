@@ -9,16 +9,17 @@ Monitor and control Freifunk Nodes (Gluon) by MQTT
 Supported functions/return information:
 
 * Data about software versions and the auto-updater on the node
-* Query and possibly set [UCI](https://openwrt.org/docs/guide-user/base-system/uci) values
+* Query and possibly set [UCI](https://openwrt.org/docs/guide-user/base-system/uci) values (works on any OpenWrt router)
 * Query, stop and start the Freifunk public Wifi interface
-* Temporarely modify the Freifunk SSID (within the limits of the local Freifunk community)
-* Query locally connected Freifunk clients (Wifi)
+* Temporarely modify the Freifunk SSID (but within the limits of the local Freifunk community)
+* Query fingerprints and number of locally connected Freifunk clients (Wifi)
 * Query static and dynamic [Gluon](https://gluon.readthedocs.io/en/latest/) data (returned as [JSON](https://de.wikipedia.org/wiki/JavaScript_Object_Notation)): nodeinfo, neighbours,statistics as well as the output from `gluon-show-site`.
 * Query static and dynamic [OpenWrt](https://openwrt.org) config data
 * Run a simple speed test
 * Reboot the Freifunk node.
 
-IMPORTANT: The script needs quite some refactoring, the code is provided as is. Yes, I know, it's ugly ;)
+IMPORTANT: This script would be benefit from quite some refactoring, the code is provided as is. 
+(Yes, I know, large bash scripts get ugly and Lua is preferred.... ;) )
 
 ### More Details
 
@@ -28,9 +29,9 @@ A. Management of an (untouched) Freifunk node by **remote SSH** commands (public
 
 B. Management of an (untouched) Freifunk node by **remote SSH** commands (public/private key authentication): Command results are returned as **MQTT messages**. (B and A are handled simultaneously.)
 
-C. Monitoring by **MQTT messages**: Invoked by an explicit SSH call or by cron, this script runs locally on the Freifunk node, returning its output as **MQTT messages**.
+C. Monitoring by **MQTT messages**: Invoked by an explicit SSH call, init or by cron, this script runs locally on the Freifunk node, returning its output as **MQTT messages**.
 
-D. Local management as a daemon on the node: This script listens to **MQTT messages** and returns results a MQTT messages, too. (D does not exclude C, also the script can run as a daemon invoking commands on pre-configured Freifunk hosts as in A or B).
+D. Local management as a daemon on the node: This script listens to **MQTT messages** and returns results a MQTT messages, too. (D does not exclude C, also the script can run as a daemon invoking commands on other, pre-configured Freifunk hosts as in A or B).
 
 Other aspects:
 
@@ -52,7 +53,7 @@ N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluo
 * For use case A, B, and C as well as debugging purposes: 
   Enable [automatic remote invocation via SSH using public key authentication](https://openwrt.org/docs/guide-user/security/dropbear.public-key.auth)
 * If you want to use the script remotely: Install ash from a package repository (or manually replace ash by bash in the first line), e.g. on a Raspberry: ``apt install ash``. The script is written to be compatible to both ash and bash.
-* Freifunk relies on some version of Gluon or at least OpenWRT: So far, this script has only been tested on [Freifunk Munich](https://ffmuc.net) nodes with [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.* and 2020.1.*. 
+* Freifunk relies on some version of Gluon or at least OpenWRT: So far, this script has only been tested on [Freifunk Munich](https://ffmuc.net) nodes with [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*, 2020.1.* and 2020.2.*. 
    Please let me know or open a GitHub issue if you have success or problems with other versions.
 * In case of MQTT connection problems: Ensure that incoming or outgoing MQTT connections are not blocked by a firewall - consider my [mqtt-grep-color](https://github.com/sheilbronn/mqtt-grep-color) to verify and debug your MQTT setup more easily. See command ```install´´´ for more details.
 
