@@ -549,7 +549,7 @@ determine_cmd_mospub
 
 jsonfilter=$( command -v jq 2>/dev/null ) || jsonfilter=$( command -v jsonfilter 2>/dev/null ) || error_and_exit "jsonfilter or jq must be available."
 jsonfilter=$( basename $jsonfilter )
-json_pp="cat" && command -v json_pp >/dev/null && json_pp="json_pp"
+command -v json_pp >/dev/null || alias json_pp cat
 
 if [ -d $gluondir ] ; then   # I'm running on Gluon (which itself is based on OpenWrt)
 	# mqtthost="-h test.mosquitto.org"
@@ -693,7 +693,7 @@ do
 			# spawn a subprocess that will wait for a MQTT message....
 			sSysMqqtDummyTopic='$SYS/broker/uptime'
 			readonly fPipe="$tmpdir/f" 
-			mkfifo "$fPipe" || error_and_exit "Could not create $fPipe (retval=$?)."
+			mkfifo "$fPipe" || error_and_exit "Could not create $fPipe (rc=$?)."
 			_prefix="-t $sitecode/$sTargetHost"
 			_subscriptions="$_prefix/+/get $_prefix/+/+/get $_prefix/+/set $_prefix/+/+/set"
 			[ "$homie" ] && _subscriptions="$_subscriptions -t homie/$sTargetHost/+/+/set" 
@@ -723,8 +723,8 @@ do
 			if [ "$commandsToDo" = "mqtt" ]  ;  then
 				# set -x
 				read -r sPipeType command commandopts < "$fPipe" ; nReadCode=$? 
-				[ "$nReadCode" -ne 0 ] && sleep 1 && reply_to_mqtt_status "ERROR" "Read error from pipe $fPipe (retval=$nReadCode)" && 
-						error_and_exit "Read error from pipe $fPipe (retval=$nReadCode)." 
+				[ "$nReadCode" -ne 0 ] && sleep 1 && reply_to_mqtt_status "ERROR" "Read error from pipe $fPipe (rc=$nReadCode)" && 
+						error_and_exit "Read error from pipe $fPipe (rc=$nReadCode)." 
 
 				if [ "$sPipeType" = "MQTT" ] ; then 
 					# set -x
@@ -939,16 +939,16 @@ EOF
 				if [ "$retval" != 0 -o -z "$tempstr" ] || echo "$tempstr" | grep -w -q -E "open failed|connect failed|No such" ; then
 					# something went wrong...
 					tempstr="$( echo "$tempstr" | xargs echo )"
-					error "retval=$retval for executing $command - $tempstr" 
+					error "rc=$retval for executing $command - $tempstr" 
 					homie_line "$homie/publicwifi/state" "false" 
 					if [ "$retval" = 1 ] ; then
-						reply_to_mqtt_status "OFF" "retval=$retval"
+						reply_to_mqtt_status "OFF" "rc=$retval"
 						publish_to_mqtt_starred "/publicwifi/state"     "OFF"
 					elif [ "$retval" = 255 ] ; then
-						reply_to_mqtt_status "OFF" "retval=$retval (unreachable?)"
+						reply_to_mqtt_status "OFF" "rc=$retval (unreachable?)"
 						publish_to_mqtt_starred "/publicwifi/state"     "OFF" # better: ERROR ?
 					else
-						reply_to_mqtt_status "ERROR" "retval=$retval // $tempstr"
+						reply_to_mqtt_status "ERROR" "rc=$retval // $tempstr"
 						publish_to_mqtt_starred "/publicwifi/state"     "OFF"  # better: ERROR ?
 					fi
 				else # ... went ok.
@@ -1008,12 +1008,12 @@ EOF
 				fi
 				result=$( $ssh_cmd "iwinfo $ff_if_pub info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; uci set wireless.client_radio0.ssid=$otherssid ; 
 				              wifi up ; sleep $wifiupsleep ; iwinfo $ff_if_pub info | sed -e 's/: /:/' -e '1q' " 2>&1 )
-				retval=$?
+				_rc=$?
 				#### uci set wireless.client_radio0.ssid=$otherkey ; uci set wireless.client_radio0.encryption=psk2 ; 
 				#### while true ; do sleep 1 ; date ; iwinfo $ff_if_pub info | grep SSID ; done
 				### result=$( ssh -i ~/.ssh/id_rsa4096_ff -o ProxyCommand="ssh -v -W [2001:608:a01:103:ee08:6bff:fe33:6940]:%p alt-solln" root@[2001:608:a01:103:ee08:6bff:fe33:6940] uname -a )
 				# echo "$result" >> $debugfile
-				if [ "$retval" = 255 ] ; then
+				if [ "$_rc" = 255 ] ; then
 					_logmsg="target not reachable (SSH return code 255), aborting ffotherssid command...." 
 					echo_if_not_quiet "$_logmsg" 
 					reply_to_mqtt_status "ERROR" "$_logmsg"
@@ -1159,7 +1159,7 @@ EOF
 				publish_to_mqtt_starred "/$command" "$newval"
 				;;
 			printmap)  
-				$ssh_cmd "print_map.sh" | $json_pp # Freifunk node info as JSON for non-Gluon systems, e.g. from Ulm
+				$ssh_cmd "print_map.sh" | json_pp # Freifunk node info as JSON for non-Gluon systems, e.g. from Ulm
 				;;
 			localclients)  
 				clientcollectionfile="$tmpdir/clientcollection"
@@ -1170,8 +1170,8 @@ EOF
 				_batctl_output="$( $ssh_cmd -q "batctl translocal" )"
 				retval=$?
 				if [ $retval != 0 ] ;  then
-					error "Connection $sSshUser failed (retval=$retval). Stopping for this node..."
-				  	reply_to_mqtt_status "ERROR" "Connection $sSshUser failed (retval=$retval)"
+					error "Connection $sSshUser failed (rc=$retval). Stopping for this node..."
+				  	reply_to_mqtt_status "ERROR" "Connection $sSshUser failed (rc=$retval)"
 				else
 					echo "$_batctl_output" | awk '$3 == "[....W.]" { printf "%s\n", $1 }' | sort > $localclientsfile # | join -a 1 - "$macidsfile" 
 				
@@ -1203,86 +1203,88 @@ EOF
 					collectedclients="${collectedclients% }" # trim leading spaces
 				fi
 				;;
-			nodeinfo|neighbours|statistics)  
+			nodeinfo|neighbours|statistics)
+				_rc=""
 				tmpfilejson="$tmpdir/$sTargetHost.$command.tmp"
-				cachednodeip="$( storage_cache_read "$sTargetHost.nodeip" 10 )"
-				# if [ "$cachednodeip" = "##NOTFOUND##" -o "$cachednodeip" = "##EMPTY##" ]
-				__gni_cmd="gluon-neighbour-info -i br-client -p 1001 -r $command -d  " # ipaddr will be appended below
-				if [ -z "$cachednodeip" ]  ;  then
-					ffnodeip=$( $ssh_cmd "ip -f inet6 -o addr show dev $ifipv6" | awk -e '{ print gensub("/.*", "", "1", $4) ; exit 0 }'  ) && \
-						$ssh_cmd "$__gni_cmd $ffnodeip" | tee "$tmpfilemqtt"
-				else
-					ffnodeip="$cachednodeip" && \
-						$ssh_cmd "$__gni_cmd $ffnodeip" | tee "$tmpfilemqtt"
+				ffnodeip="$( storage_cache_read "$sTargetHost.nodeip" 10 )"
+				if [ -z "$ffnodeip" ]  ;  then
+					ffnodeip=$( $ssh_cmd "ip -f inet6 -o addr show dev $ifipv6" | awk -e '{ print gensub("/.*", "", "1", $4) ; exit 0 }'  ) 
+					_rc=$?
+					[ "$ffnodeip" ] && storage_cache_write "$sTargetHost.nodeip" "$ffnodeip" # new value > cache it
 				fi
-				debug_if_verbose "Had called $__gni_cmd $ffnodeip"
-				returnsize=$( wc -l < "$tmpfilemqtt" )
-				# find "$tmpdir" -name "$( basename "$tmpfile_nodeip" )" -size -26c -exec rm '{}' \; # delete file if it is too small...
-
-				if [ -z "$ffnodeip" ] ; then
-					error "Remote node IP :$ffnodeip: is empty. Command $command failed..."
-				  	reply_to_mqtt_status "ERROR" "Remote node IP undetermined"
-					# rm -f "$tmpfile_nodeip"
-				elif [ "$returnsize" -eq 0 ]  ;  then
-					error "Connection to $sSshUser or gluon-neighbour-info failed. Command $command on node ip $ffnodeip failed..."
-				  	reply_to_mqtt_status "ERROR" "remote result empty"
-					# rm -f $tmpfile_nodeip
+				if [ -z "$ffnodeip" ] ; then # ... was still not determinable > abort
+					error "Remote node IP :$ffnodeip: is empty. Command $command aborted..."
+				  	reply_to_mqtt_status "ERROR" "Remote node IP undeterminable"
 				else
-					[ "$ffnodeip" != "$cachednodeip" ] && storage_cache_write "$sTargetHost.nodeip" "$ffnodeip"
-					storage_cache_write "$sTargetHost.$command" "$( cat $tmpfilemqtt )" # write all types to support change detection some time
-					publish_to_mqtt "$sitecode/$sTargetHost/$command" "$( cat $tmpfilemqtt )"
-					if [ "$command" = "statistics" ] ; then
-						# node_id=$( jq -r .node_id $tmpfilemqtt )
-						# publish_to_mqtt "$sitecode/$sTargetHost/nodeid" "$node_id" "-r"
-						### publish_to_mqtt "$sitecode/$node_id/$command"  "$( cat $tmpfilemqtt )"  "-r"
-						# publish_to_mqtt "$sitecode/$sTargetHost/ipv6" "$ffnodeip" "-r"
-						### publish_to_mqtt "$sitecode/$node_id/ipv6"      "$ffnodeip" "-r"
-						clients="$( jsonfilter_func ".clients.wifi" < $tmpfilemqtt )"
-						# cat $tmpfilemqtt
-						publish_to_mqtt_starred "/clients" "$clients"
-						[ "$workonallclients" ] && nCollectedSumOfClients=$(( nCollectedSumOfClients + clients ))
-						# publish_to_mqtt "$sitecode/$node_id/clients" "$clients"
-					fi
+					__gni_cmd="gluon-neighbour-info -i br-client -p 1001 -r $command -d " # ipaddr will be appended ...
+					$ssh_cmd "$__gni_cmd $ffnodeip" | tee "$tmpfilemqtt"
+					_rc=$?
+					debug_if_verbose "Had called $__gni_cmd > $ffnodeip (rc=$_rc)"
+					returnsize=$( wc -l < "$tmpfilemqtt" )
+					if [ "$returnsize" -eq 0 ]  ;  then
+						error "Connection to $sSshUser or gluon-neighbour-info failed. Command $command on node ip $ffnodeip failed..."
+						reply_to_mqtt_status "ERROR" "remote result empty"
+					else
+						storage_cache_write "$sTargetHost.$command" "$( cat $tmpfilemqtt )" # write all types to support change detection some time
+						publish_to_mqtt "$sitecode/$sTargetHost/$command" "$( cat "$tmpfilemqtt" )"
+						if [ "$command" = "statistics" ] ; then
+							# node_id=$( jq -r .node_id $tmpfilemqtt )
+							# publish_to_mqtt "$sitecode/$sTargetHost/nodeid" "$node_id" "-r"
+							### publish_to_mqtt "$sitecode/$node_id/$command"  "$( cat $tmpfilemqtt )"  "-r"
+							# publish_to_mqtt "$sitecode/$sTargetHost/ipv6" "$ffnodeip" "-r"
+							### publish_to_mqtt "$sitecode/$node_id/ipv6"      "$ffnodeip" "-r"
+							clients="$( jsonfilter_func ".clients.wifi" < "$tmpfilemqtt" )"
+							# cat $tmpfilemqtt
+							publish_to_mqtt_starred "/clients" "$clients"
+							[ "$workonallclients" ] && nCollectedSumOfClients=$(( nCollectedSumOfClients + clients ))
+							# publish_to_mqtt "$sitecode/$node_id/clients" "$clients"
+						fi
 
-					[ -f $tmpfilejson.prev ] && mv -f $tmpfilejson.prev $tmpfilejson.old
-					[ -f $tmpfilejson      ] && mv -f $tmpfilejson $tmpfilejson.prev
-					$json_pp < $tmpfilemqtt > $tmpfilejson
-					chmod g+w $tmpfilejson
+						[ -f $tmpfilejson.prev ] && mv -f $tmpfilejson.prev $tmpfilejson.old
+						[ -f $tmpfilejson      ] && mv -f $tmpfilejson $tmpfilejson.prev
+						json_pp < "$tmpfilemqtt" > $tmpfilejson
+						chmod g+w $tmpfilejson
+					fi
 				fi
 				;;
-			showsite)  
-				tmpfilejson="$tmpdir/$sTargetHost.$command.old"
-					
-				if [ -n "$( $ssh_cmd gluon-show-site | tee $tmpfilemqtt )" ]
-				then
-					node_id="$( jq -r .node_id $tmpfilemqtt )"
-					publish_to_mqtt "$sitecode/$sTargetHost/$command" "$( tr -d '\n' < $tmpfilemqtt )"
-					publish_to_mqtt "$sitecode/$node_id/$command"     "$( tr -d '\n' < $tmpfilemqtt )"
-					$json_pp < $tmpfilemqtt | tee $tmpfilejson
+			showsite)
+				_content="$( $ssh_cmd gluon-show-site | tee $tmpfilemqtt | tr -d '\n' )"
+				if [ "$_content" ] ; then
+					publish_to_mqtt "$sitecode/$sTargetHost/$command" "$_content"
+					[ -z "$bQuiet" ] && json_pp < $tmpfilemqtt
 				else
-					error_and_exit "$scriptname: ssh to $sSshUser failed. Stopping..."
+					reply_to_mqtt_status "ERROR" "remote result empty"
+					error "ssh to $sSshUser failed."
 				fi
-				# 33 * * * * /srv/openhab2-conf/manage-gluon-mqtt/manage_gluon_mqtt -c statistics
-				# 43 * * * * /srv/openhab2-conf/manage-gluon-mqtt/manage_gluon_mqtt -c neighbours
-				# 53 * * * * /srv/openhab2-conf/manage-gluon-mqtt/manage_gluon_mqtt -c nodeinfo
 				;;
 			mountsizes)
-				deny_if_mqtt && continue
-				_mountsizes="$( $ssh_cmd "df -Ph" | sed -e 's/\([0-9]\)\.0K/\1K/g' | jq -R -s '
-					[ split("\n")  |  .[]  |
-					  if test("^/") then
-						gsub(" +"; " ") | split(" ") | {mountpoint:.[5], filesystem:.[0], spaceavail:.[3], spaceused:.[2], percentused:.[4], spacetotal:.[1]}
-					  else
-						empty
-					  end ]' )"
-				echo_if_not_quiet "$_mountsizes"
-				# set -x
-				publish_to_mqtt "${sitecode:-UNSET}/$sTargetHost/$command" "${_mountsizes}"
-				set +x
+				# deny_if_mqtt && continue 
+				_content="$( $ssh_cmd "df -Ph -T" | sed -e 's/\([0-9]\)\.0K/\1K/g' )"
+				if [ "$_content" ] ; then
+					_content="$( echo "$_content" | jq -R -s '
+						[ split("\n")  |  .[]  |
+						if test("^/") or test("overlay") then
+							gsub(" +"; " ") | split(" ") | {mountpoint:.[6], filesystem:.[0], type:.[1], spaceavail:.[4], spaceused:.[3], percentused:.[5], spacetotal:.[2]}
+						else
+							empty
+						end ]' )"
+					echo_if_not_quiet "$_content"
+					publish_to_mqtt "${sitecode:-UNSET}/$sTargetHost/$command" "${_content}"
+				else
+					reply_to_mqtt_status "ERROR" "remote result empty"
+					error "ssh to $sSshUser failed."
+				fi
 				;;
 			reboot)  
 				deny_if_mqtt && continue
-				$ssh_cmd "/sbin/reboot"
+				if $ssh_cmd "/sbin/reboot" ; then
+					reply_to_mqtt_status "OK" # might not even get here if run locally ...
+				else 
+					_rc=$? 
+					error "reboot for $sSshUser failed (rc=$_rc)"
+					reply_to_mqtt_status "ERROR" "call failed (rc=$_rc)"
+				fi
+
 				;;
 			scandirty)  
 				deny_if_mqtt && continue
@@ -1330,7 +1332,7 @@ if [ -n "$nCollectedSumOfClients" ] ; then
 		fi
 		string2="$( awk -F" " -v id="$areaid" -v lcount="$nCollectedSumOfClients" 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lcount, id } { printf comma "{*addr*:*%s*,*name*:*%s*}", $1 , ($4=="")? $1 : $4 $5 $6 $7 ; comma="," } END { printf "]}" }' < "$clientcollectionfile" |
 			shorten_ethernet_addr_in_json ${bDoAllOfIt:+skip} )"
-		echo_if_not_quiet "$( echo "$string2 " | tr \* \" | $json_pp )"
+		echo_if_not_quiet "$( echo "$string2 " | tr \* \" | json_pp )"
 		publish_to_mqtt_starred "$sitecode/$areaid/alllocalclients" "$string2"		
 	fi
 fi
