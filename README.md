@@ -59,7 +59,7 @@ N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluo
 
 ### Command-line options / Invocation
 
-* -c (commands): One or more management commands to be executed (comma-separated), see below for details.
+* -c (commands): One or more management commands to be executed (comma-separated), see below for the details.
 * -s (server): If the script is not run locally on the Freifunk node itself (localhost), the SSH names of one or more other Freifunk nodes maybe passed with -s (comma-seperated)
 * -g (give): In the output add an informative line with host and command (useful für multiple commands and hosts)
 * -v (verbose): more, verbose output from the script as well as intermediate steps. Additional -v's add more verbosity.

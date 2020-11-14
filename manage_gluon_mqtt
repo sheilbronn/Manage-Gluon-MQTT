@@ -129,7 +129,7 @@ get_os_data_semi_starred_cached() {
 	}
 
 get_sitecode_cached() { # $1=host $2=cachetimeout
-	local _data="$( storage_cache_read "$1.sitecode" "${2:-1}" )"
+	local _data="$( storage_cache_read "$1.sitecode" "${2:-10}" )" # the site code should be stable...
 	if [ -z "$_data" ] ; then
 		_data="$( $ssh_cmd "[ -d $gluondir ] && cat $gluondir/site.json"  )" || { _ret=$? ; return $_ret ; }
 		if [ -n "$_data" ] ; then
@@ -549,7 +549,7 @@ determine_cmd_mospub
 
 jsonfilter=$( command -v jq 2>/dev/null ) || jsonfilter=$( command -v jsonfilter 2>/dev/null ) || error_and_exit "jsonfilter or jq must be available."
 jsonfilter=$( basename $jsonfilter )
-command -v json_pp >/dev/null || alias json_pp cat
+command -v json_pp >/dev/null || alias json_pp=cat
 
 if [ -d $gluondir ] ; then   # I'm running on Gluon (which itself is based on OpenWrt)
 	# mqtthost="-h test.mosquitto.org"
@@ -610,7 +610,7 @@ do
 		test)    mqtthost="-h test.mosquitto.org" ;;
 		eclipse) mqtthost="-h mqtt.eclipse.org"   ;;
         hivemq)  mqtthost="-h broker.hivemq.com"   ;;
-		*)       mqtthost="-h $( echo "$OPTARG" | tr -c -d '0-9a-z_.' )" ;; # clean up for sec purposes
+		*)       mqtthost="-h $( echo "$OPTARG" | tr -c -d '0-9a-zA-Z_.' )" ;; # clean up for sec purposes
 		esac
 		;;
 	p)  homie="yes"
@@ -660,7 +660,7 @@ do
 		sTargetHost=$( echo "$ffhost" | tr "A-Z" "a-z" | sed -e 's/\..*//' -e 's/-e$//' ) # remove any trailing "-e" and domain name
 	fi
 	
-	[ -z "$sitecode" ] && sitecode="$( get_sitecode_cached "$sTargetHost" || get_most_frequent_sitecode )" # Cant do it earlier: Need a $sTargetHost to determine a default...
+	[ -z "$sitecode" ] && sitecode="$( get_sitecode_cached "$sTargetHost" || get_most_frequent_sitecode )" # cant do it earlier: Need a $sTargetHost to determine a default...
 
 	tmpfilemqtt="$tmpdir/mqtt.$ffhost"
 	new_ssid=""
@@ -795,8 +795,8 @@ do
 					continue # abort case
 				fi
 
-				if [ "$ssh_cmd" != "exec_locally" ] || [ "$targetuser" = "root" ] ; then
-					echo_if_not_quiet "Remote targetuser is $targetuser: Shall copy this script to /sbin later..."
+				if [ "$ssh_cmd" != "exec_locally" ] && [ "$targetuser" = "root" ] ; then
+					echo_if_not_quiet "Remote targetuser is $targetuser: Will try to copy this script to /sbin later..."
 					commandsToDo="filecopy${commandsToDo:+,$commandsToDo}"
 					filetocopy="$0"
 				fi
@@ -863,25 +863,22 @@ do
 EOF
 					{ $ssh_cmd "[ -d $gluondir ] && gluon-reconfigure" ; } || debug_if_verbose "Trying to find $gluondir or gluon-reconfigure failed..."
 				fi
-				# sending out a "MQTT test message" to test whether its working
 				_pubcmd="$cmd_mospub -h test.mosquitto.org" # caution: Freifunk/Gluon seems to need IPV6 connectivity, not all brokers have it!
-				_topic="\"$sitecode/\`tr A-Z a-z < /proc/sys/kernel/hostname\`/installation\""
+				_topic="\"$sitecode/\`tr A-Z a-z < /proc/sys/kernel/hostname\`/installation\"" # tr will run on remote host!
+				debug_if_verbose "Will send MQTT test message: $_pubcmd $_topic"
 				$ssh_cmd "$_pubcmd -t $_topic -r -m \"TEST\"" 
 				retval=$?
-				# set -x
 				if [ $retval = 0 ] ; then
-					debug_if_verbose "$_pubcmd $_topic succeeded on remote host."
-					# set -x
+					debug_if_verbose "$_pubcmd $_topic had succeeded, now removing the retained msg again ..."
 					$ssh_cmd "mosquitto_sub -h test.mosquitto.org -t $_topic -v -C 1 -W 5  --remove-retained"
-					# set +x
 				else
 					echo_if_not_quiet "$_pubcmd failed with $retval on remote host (might happen sometimes)"
 				fi
 
 				if $ssh_cmd "crontab -l" | grep "$scriptname" ; then
-					debug_if_verbose "A crontab entry containing $scriptname has been found... Not modifying crontab."
+					debug_if_verbose "This crontab entry containing '$scriptname' had been found... Leaving crontab unmodified."
 				else
-					echo_if_not_quiet "crontab entry with $scriptname not found... adding a simple one... pls modify later!"
+					echo_if_not_quiet "crontab entry with '$scriptname' not found... adding a simple one... pls modify it later!!"
 					cronentry="*/30 * * * * sleep 15 ; $scriptname -c machine-data -m test.mosquitto.org"
 					$ssh_cmd "{ crontab -l ; echo \"$cronentry\" ; } | crontab - ; ${bVerbose:+echo crontab is now: ; crontab -l}"
 				fi
@@ -1059,41 +1056,42 @@ EOF
 			  if [ -z "$os_data" ] ; then
 			  	reply_to_mqtt_status "ERROR"
 			  else
-				output="$( $ssh_cmd "uci get autoupdater.settings.branch 2>&1 ; uci get autoupdater.settings.enabled 2>&1 ; uci get gluon.core.domain 2>&1 ; lua -e 'print(require(\"platform_info\").get_model())' 2>&1 ; cat $gluondir/gluon-version 2>&1 ; cat $gluondir/release 2>&1" )"
-				autoupdaterbranch="$( echo "$output" | sed -n -e "1p" )"
-				autoupdaterenabled="$( echo "$output" | sed -n -e 2s/0/false/  -e 2s/1/true/ -e "2p" )"
-				gluoncoredomain="$( echo "$output" | sed -n -e "3p" )"
-				routermodel="$(     echo "$output" | sed -n -e "4p" )"
-				gluonversion="$(    echo "$output" | sed -n -e "5p" )"
-				gluonrelease="$(    echo "$output" | sed -n -e "6p" )"
+			    # get all infos in one call (line by line):
+				_output="$( $ssh_cmd "uci get autoupdater.settings.branch 2>&1 ; uci get autoupdater.settings.enabled 2>&1 ; uci get gluon.core.domain 2>&1 ; lua -e 'print(require(\"platform_info\").get_model())' 2>&1 ; cat $gluondir/gluon-version 2>&1 ; cat $gluondir/release 2>&1" )"
+				autoupdaterbranch="$(  echo "$_output" | sed -n -e 1p )"
+				autoupdaterenabled="$( echo "$_output" | sed -n -e 2s/0/false/  -e 2s/1/true/ -e "2p" )"
+				gluoncoredomain="$( echo "$_output" | sed -n -e 3p )"
+				routermodel="$(     echo "$_output" | sed -n -e 4p )"
+				gluonversion="$(    echo "$_output" | sed -n -e 5p )"
+				gluonrelease="$(    echo "$_output" | sed -n -e 6p )"
 
-				echo_if_not_quiet "$os_data"
-				publish_to_mqtt_starred "/gluondata/os-data" "$os_data"
+				echo_if_not_quiet		"$os_data"
+				publish_to_mqtt_starred	"/gluondata/os-data" "$os_data"
 				homie_line              "$homie/gluondata/os-data" "$os_data"
 
 				echo_if_not_quiet "$autoupdaterbranch"
 				publish_to_mqtt_starred "/gluondata/autoupdater-branch" "$autoupdaterbranch"
-				homie_line                  "$homie/gluondata/autoupdater-branch" "$autoupdaterbranch"
+				homie_line              "$homie/gluondata/autoupdater-branch" "$autoupdaterbranch"
 
 				echo_if_not_quiet "$autoupdaterenabled"
 				publish_to_mqtt_starred "/gluondata/autoupdater-enabled" "$autoupdaterenabled"
-				homie_line                  "$homie/gluondata/autoupdater-enabled" "$autoupdaterenabled"
+				homie_line              "$homie/gluondata/autoupdater-enabled" "$autoupdaterenabled"
 
 				echo_if_not_quiet "$gluoncoredomain"
 				publish_to_mqtt_starred "/gluondata/core-domain" "$gluoncoredomain"
-				homie_line                  "$homie/gluondata/core-domain" "$gluoncoredomain"
+				homie_line              "$homie/gluondata/core-domain" "$gluoncoredomain"
 
 				echo_if_not_quiet "$routermodel"
 				publish_to_mqtt_starred "/gluondata/model" "$routermodel"
-				homie_line                  "$homie/gluondata/model" "$routermodel"
+				homie_line              "$homie/gluondata/model" "$routermodel"
 
 				newval="TBD"
 				publish_to_mqtt_starred "/gluondata/site" "$newval"
-				homie_line                  "$homie/gluondata/site" "$newval"
+				homie_line              "$homie/gluondata/site" "$newval"
 
 				echo_if_not_quiet "$gluonversion"
 				publish_to_mqtt_starred "/gluondata/gluon-version" "${gluonversion##v}"
-				homie_line                  "$homie/gluondata/gluon-version" "${gluonversion##v}"
+				homie_line              "$homie/gluondata/gluon-version" "${gluonversion##v}"
 				
 				echo_if_not_quiet "$gluonrelease"
 				publish_to_mqtt_starred "/gluondata/release" "${gluonrelease##v}"
