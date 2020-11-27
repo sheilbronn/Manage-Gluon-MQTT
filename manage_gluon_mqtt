@@ -235,7 +235,7 @@ storage_read() { # read key/value pair from cache or user storage  (1:searchkey,
 	echo "${__value}" # _fresult values are ignored for now
 	[ -z "$__value" ] && return 1
 	return 0
-	}
+  }
 
 storage_cache_read() { # read a key/value pair to be cached across script invocations from the same user; empty cache after n day(s)
 	noxxing
@@ -266,7 +266,8 @@ echo_if_not_quiet() {
 
 debug_if_verbose() {
 	noxxing
-	[ "$bVerbose" ] && echo "$*" 1>&2
+	[ "$bVerbose" ] && echo "$*" 1>&2 && return 0
+	return 1
  }
 
 shorten_string() { # $1=string $2=maxlen
@@ -291,11 +292,15 @@ shorten_ethernet_addr_in_json() { # remove some bytes für anonymization
 	sed -e 's/\([*"][a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]:\)[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]\(:[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9][*"]\)/\1...\2/g' "$@"	
 	}
 
-deny_if_foreign_mqtt() {
-	noxxing
-	[ "$commandsToDo" = "mqtt" -a true ] && echo_if_not_quiet "Mqtt $command ignored." && return 0
-	return 1
+check_read_mqqt_broker() { ## for now: only trusting a broker on the same host...
+	noxxing 
+	[ "$commandsToDo" = "mqtt" -a "$mqtthost" != "localhost" ] && { echo_if_not_quiet "Mqtt $command ignored." ; return 1 ; }
+	return 0
 	}
+
+check_write_mqqt_broker() { ## for now: only trusting a broker on the same host...
+	check_read_mqqt_broker
+  }
 
 publish_to_mqtt() {
 	noxxing
@@ -305,10 +310,14 @@ publish_to_mqtt() {
 	fi
 	}
 
+make_json_from_starred() {
+	echo "$*" | tr \" \' | tr "*" \"
+}
+
 publish_to_mqtt_starred() {		# publish_to_mqtt_starred(expandableTopic,message,moreMsoquittoOptions)
 	if [ -n "$mqtthost" -o "$homie" ] && [ "$cmd_mospub" != "true" ] ; then
 		local _topic="$( echo $1 | sed -e "s,^/,$sitecode/$sTargetHost/," )"	# ... expand shortcuts starting with "/"
-		publish_to_mqtt  "$_topic" "$( echo "$2" | tr \" \' | tr "*" \" )" "$3" # ...  replace double quotes by single quotes and stars by double quotes
+		publish_to_mqtt  "$_topic" "$( make_json_from_starred "$2" )" "$3" # ...  replace double quotes by single quotes and stars by double quotes
 	fi
 	}
 
@@ -329,8 +338,7 @@ hass_announce() { # $sitecode "$nodename" "publicwifi/localclients" "Readable na
 		_msg="{*name*:*$( echo ${5:+$5-}$4 | tr " " "-" | tr -d "()" )*,*friendly_name*:*${5:+$5 }$_topicword*, ${_hassdevicestring:+$_hassdevicestring,}
 			*~*:*${1:+$1/}$2/$_topicpart*, *stat_t*:*~* ${6:+,*value_template*:*{{ $6 \}\}*} $_command_topic_string ${7:+,*icon*:*mdi:mdi-$7*} }"
 	publish_to_mqtt_starred "homeassistant/sensor/${2}$_topicword/config" "$_msg" "-r"
-	
-}
+  }
 	
 homie_state_is_ready() {
 	tmpfile="$tmpdir/homie_state"
@@ -556,9 +564,10 @@ determine_cmd_mospub() {
 	}
 determine_cmd_mospub
 
-jsonfilter=$( command -v jq 2>/dev/null ) || jsonfilter=$( command -v jsonfilter 2>/dev/null ) || error_and_exit "jsonfilter or jq must be available."
+jsonfilter=$( command -v jq ) || jsonfilter=$( command -v jsonfilter 2>/dev/null ) || error_and_exit "jsonfilter or jq must be available."
 jsonfilter=$( basename $jsonfilter )
 command -v json_pp >/dev/null || alias json_pp=cat
+alias _jqbeautify="jq -Sm" ; command -v jq >/dev/null || alias _jqbeautify="cat"
 
 if [ -d $gluondir ] ; then   # I'm running on Gluon (which is based on OpenWrt)
 	mqtthost="test.mosquitto.org"
@@ -585,12 +594,13 @@ while getopts "?h:gvxqas:pi:f:m:n:c:o:w:" opt   # https://wiki.bash-hackers.org/
 do
     case "$opt" in
     \?) show_help
+		[ "$cmd_mospub" = "true" ] && error_and_exit 'mosquitto_pub is not installed (consider running "-c install"!'
         exit 1
         ;;
     h|s)  ffhosts="$OPTARG" # one or more Freifunk node(s)
-		if expr index ."$ffhosts" "+*" > /dev/null # substitute a literal + or * for a set of predefined hosts
+		if expr index ."$ffhosts" "+*" > /dev/null # substituting a '+' or a '*'' for a set of predefined hosts
 		then
-			# the values used for + should be stored externally in the file $userconfigdir/myhosts.persisted:
+			# values used for + or * should be stored in the file $userconfigdir/myhosts.persisted:
 			# "host1,host2,host3" (without double quotes)
 
 			myhostcollection=""
@@ -675,7 +685,7 @@ do
 	new_ssid=""
 
 	_string="" && [ "$sSshUser" = "${sSshUser%${sTargetHost}-e}" -a "$sSshUser" = "${sSshUser%${sTargetHost}}" ] && _string="($sTargetHost) "
-	[ "$bVerbose" -o "$bGiveHost" ] && echo "\n##### ${sSshUser#root@} $_string// $commands //" "$@" "#####"
+	[ "$bVerbose" -o "$bGiveHost" ] && echo "\n###### ${sSshUser#root@} $_string//${commands:+ $commands //}" "$@" "######"
 
 	if [ "$option_to_query" ] ; 	then
 		uci_val="$( query_uci_on_host "$option_to_query" )"
@@ -783,6 +793,7 @@ do
 				[ "$command" = "echo" ] && reply_to_mqtt_status "OK" "Command $command $commandopts"
 				;;
 			loop)
+				check_read_mqqt_broker || continue
 				commandopts="${commandopts:-10}"
 				if [ 1 -lt "$commandopts" -a "$commandopts" -lt 11 ]  ; then
 					startval="$( $ssh_cmd "date -u +%s" )" && echo_if_not_quiet "$startval" 
@@ -796,7 +807,7 @@ do
 				fi
 				;;
 			install)
-				deny_if_foreign_mqtt && continue
+				check_read_mqqt_broker || continue
 				targetuser="$( $ssh_cmd "id -nu" )"
 				if [ -z "$targetuser" ] ; then
 					echo_if_not_quiet "targetuser on targethost could not be determined remotely. Pls debug/establish SSH setup..."
@@ -897,28 +908,29 @@ EOF
 				# ... still missing: installing it as an MQTT daemon on Gluon ...
 				;;
 			filecopy)
-				deny_if_foreign_mqtt && continue
+				check_read_mqqt_broker || continue
 				[ -z "$filetocopy" ] && filetocopy="$commandopts"
 				debug_if_verbose "Command $command: $filetocopy ($( pwd))"
 				[ "$filetocopy" ] && scp -p "$filetocopy" "$sSshUser":/sbin && debug_if_verbose "$filetocopy copied to $sSshUser:/sbin"
 				;;
 			sh)
-				deny_if_foreign_mqtt && continue
+				check_read_mqqt_broker || continue
 				ssh "$sSshUser" # start a remote shell
 				;;
 			homie-update|disco-update|discovery-update)
+				check_read_mqqt_broker || continue
 				commandsToDo="localclients,ffstatus,gluondata,machine-data,$commandsToDo"
 				
 				uptimecmd="cat /proc/uptime" && [ "$ffhost" != localhost ] && uptimecmd="$0 -h $ffhost $uptimecmd" 
 				homieuptime=$( $uptimecmd ) && homie_line "$homie/\$stats/uptime" "$( echo "$homieuptime" | cut -f 1 -d . )"
 				;;
 			homie-delete|disco-delete|discovery-delete)
-				deny_if_foreign_mqtt && continue
+				check_read_mqqt_broker || continue
 				homie="$( echo "$sTargetHost" | awk -- '{ print tolower(substr($i,1,1)) substr($i,2) }' )" # duplicated code...
 				announce_disco "$homie" "-d"
 				;;
 			ffdown)
-				# deny_if_foreign_mqtt && continue
+				check_read_mqqt_broker || continue
 				ff_if_pub="$( get_public_if_cached "$sTargetHost" )"
 				# [ -z "$ff_if_pub" ] && debug_if_verbose "defaulting to public interface $ff_if_pub1" &&  ff_if_pub="$ff_if_pub1"
 				new_ssid=$( $ssh_cmd "iw dev $ff_if_pub del" 2>&1 ) # stop Freifunk public interface
@@ -931,16 +943,15 @@ EOF
 			ffup|ffstatus)
 				ff_if_pub="$( get_public_if_cached "$sTargetHost" )"
 				# [ -z "$ff_if_pub" ] && debug_if_verbose "defaulting to public interface $ff_if_pub1" &&  ff_if_pub="$ff_if_pub1"
-				debug_if_verbose "Now doing $command on host $sTargetHost (if=$ff_if_pub) ..."
-				retval=0
+				debug_if_verbose "Now preparing $command on host $sTargetHost (if=$ff_if_pub) ..."
 				if [ "$command" = "ffup" ] ; then
+					check_read_mqqt_broker || continue
 					reply_to_mqtt_status "ONGOING" "Will run $command for $sTargetHost" 
 					tempstr="$( $ssh_cmd "wifi up && sleep $wifiupsleep && iwinfo $ff_if_pub info" )"
 				elif [ "$new_ssid" ] ; then
 					debug_if_verbose "Reused new_ssid=$new_ssid..."
 					tempstr="$new_ssid"
 				else
-					debug_if_verbose "$( $ssh_cmd "iwinfo $ff_if_pub info" 2>&1 )"
 					tempstr="$( $ssh_cmd "iwinfo $ff_if_pub info" 2>&1 )"
 				fi
 				retval="$?"			
@@ -972,7 +983,7 @@ EOF
 				fi
 				;;
 			ffcond)
-				deny_if_foreign_mqtt && continue
+				check_read_mqqt_broker || continue
 				result=$( $ssh_cmd '{ for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | tee /tmp/wifis ; echo ++++++++++++ ; iwinfo | fgrep client0 '  )
 				ifresult=$( echo "$result" | grep -A 3 '++++++++++' | grep -m 2 "client0 *ESSID:" )
 				if echo "$result" | grep -A 9 -w '6e:a3:09:ea:31:e00' | grep -w "SSID:.$ssidbase"
@@ -988,6 +999,7 @@ EOF
 				# ( ( iwinfo | fgrep client0 ) || ( wifi up ; echo wifi upped. ) )  ) || ( iwinfo | fgrep client0 && iw dev client0 del ; echo if downed )
 				;;
 			ffotherssid|ffotherssid1|ffotherssid2|ffotherssid_*|ffotherssid-*)
+				check_read_mqqt_broker || continue
 				ff_if_pub="$( get_public_if_cached "$sTargetHost" )"
 				# [ -z "$ff_if_pub" ] && debug_if_verbose "defaulting to public interface $ff_if_pub1" &&  ff_if_pub="$ff_if_pub1"
 
@@ -1040,7 +1052,7 @@ EOF
 				fi
 				;;
 			gluonreconfigure)
-				deny_if_foreign_mqtt && continue
+				check_read_mqqt_broker || continue
 				ff_if_pub="$( get_public_if_cached "$sTargetHost" )"
 				# [ -z "$ff_if_pub" ] && debug_if_verbose "defaulting to public interface $ff_if_pub1" &&  ff_if_pub="$ff_if_pub1"
 
@@ -1066,7 +1078,7 @@ EOF
 			gluondata)
 			  os_data="$( get_os_data_semi_starred_cached "$sTargetHost" 1 )"
 			  if [ -z "$os_data" ] ; then
-			  	reply_to_mqtt_status "ERROR"
+			  	reply_to_mqtt_status "ERROR" "Empty OS data"
 			  else
 			    # get all infos in one call (line by line):
 				_output="$( $ssh_cmd "uci get autoupdater.settings.branch 2>&1 ; uci get autoupdater.settings.enabled 2>&1 ; uci get gluon.core.domain 2>&1 ; lua -e 'print(require(\"platform_info\").get_model())' 2>&1 ; cat $gluondir/gluon-version 2>&1 ; cat $gluondir/release 2>&1" )"
@@ -1132,6 +1144,7 @@ EOF
 				fi
 				;;
 			speedtest|speedtest0*)
+				check_read_mqqt_broker || continue
 				_spparam="" ; [ "$bVerbose" ] || _spparam="-q"  ; _spparam="-q"
 				sLastspeedtest=$( storage_cache_read "$sTargetHost.lastspeedtest" 1 ) && sLastspeedtest=",*lastspeedtest*:*$sLastspeedtest*"
 				speedtestcmd=$( storage_cache_read "$sTargetHost.lastspeedtestcmd" 2 ) # prefer the previous one for 2 days
@@ -1168,9 +1181,9 @@ EOF
 						commandsToDo="${speedtestcmd}${commandsToDo:+,$commandsToDo}"
 						storage_cache_write "$sTargetHost.lastspeedtestcmd" "$speedtestcmd" # cache bigger file speedtest for next time
 					else
-						speedMB=$( awk "BEGIN { printf \"%.1f\" , $filesize / $newval / 1024 / 1024 }" )
+						speedMB=$( awk "BEGIN { printf \"%.1f\" , $filesize * 8 / $newval / 1024 / 1024 }" )
 						echo_if_not_quiet "$speedMB"
-						publish_to_mqtt_starred "/speedtest" "{*speedMB*:*$speedMB*,*size*:*$filesize*,*elapsedtime*:*$newval*,*unit*:*MB/s*${sLastspeedtest}}"
+						publish_to_mqtt_starred "/speedtest" "{*speedMb*:*$speedMB*,*filesize*:*$filesize*,*elapsedtime*:*$newval*,*unit*:*Mb/s*${sLastspeedtest}}"
 						storage_cache_write "$sTargetHost.lastspeedtest" "$speedMB"
 					fi
 				else
@@ -1187,6 +1200,7 @@ EOF
 				publish_to_mqtt_starred "/$command" "$newval"
 				;;
 			printmap)  
+				check_read_mqqt_broker || continue
 				$ssh_cmd "print_map.sh" | json_pp # Freifunk node info as JSON for non-Gluon systems, e.g. from Ulm
 				;;
 			localclients)  
@@ -1195,7 +1209,7 @@ EOF
 				localclientsfile="$clientcollectionfile.$sTargetHost"
 				[ -r $macidsfile ] || touch $macidsfile
 				
-				_batctl_output="$( $ssh_cmd -q "batctl translocal" )"
+				_batctl_output="$( $ssh_cmd -q "batctl tl" )"
 				retval="$?"
 				if [ $retval != 0 ] ;  then
 					error "Connection $sSshUser failed (rc=$retval). Stopping for this node..."
@@ -1212,21 +1226,21 @@ EOF
 					fi
 
 					[ "$bVerbose" ] && echo "****  \$localclientsfile=$localclientsfile: ****" && cat "$localclientsfile"
-					_lcount=$( wc -l < $localclientsfile )
-					homie_line "$homie/publicwifi/clientscount" "$_lcount"
-					## cp -p $localclientsfile /tmp/xx
-					localclients=$( tr " " "," <"$localclientsfile" |
-						awk -F, -v lcount="$_lcount" -v hname="$sTargetHost" 'BEGIN { printf "{*count*:*%s*,*localclients*:[", lcount } { printf comma " {*addr*:*%s*,*name*:*%s*}", $1, ($2=="")? $1 : $2 $3 $4 $5 ; comma="," } END { printf "],*host*:*%s*}",hname }' | 
+					_lccount=$( wc -l < $localclientsfile )
+					homie_line "$homie/publicwifi/clientscount" "$_lccount"
+					cp -p $localclientsfile /tmp/xx
+					localclients=$( tr " " "," < "$localclientsfile" |
+						awk -F, -v lccount="$_lccount" -v hname="$sTargetHost" 'BEGIN { printf "{*count*:*%s*,*localclients*:[", lcount } { printf comma " {*addr*:*%s*,*name*:*%s*,*detail*:*%s*}", $1, ($2=="") ? $1 : $2, gensub(/ *$/, "", 1, $3 " " $4 " " $5) ; comma="," } END { printf "],*host*:*%s*}",hname }' | 
 						  shorten_ethernet_addr_in_json ${bDoAllOfIt:+skip} )
-					echo_if_not_quiet "Local clients: $localclients"
-					while read _addr _what _who ; do 
-						echo "*$_addr* *$_what* *$_who*" 
-						_addr="$( echo $_addr | sed -e 's/://g' )"
-						_details="$_what$_who" ; [ "$_details" ] || _details="$_addr"
-						publish_to_mqtt_starred "$sitecode/$areaid/$_addr" "{*lasthost*:*$sTargetHost*, *details*:*$_details*}"
+					while read -r _ipaddr _what _who ; do 
+						debug_if_verbose "*$_ipaddr* *$_what* *$_who*" 
+						_ipaddr="$( echo $_ipaddr | sed -e 's/://g' )"
+						_details="${_what} $_who" && [ "$_details" ] || _details="$_ipaddr"
+						publish_to_mqtt_starred "$sitecode/$areaid/$_ipaddr" "{*lasthost*:*$sTargetHost*,*details*:*$_details*}"
 					done < "$localclientsfile"
+					echo_if_not_quiet "$( make_json_from_starred "$localclients" )" 
 					publish_to_mqtt_starred "$sitecode/$sTargetHost/publicwifi/localclients" "$localclients"
-					[ "$workonallclients" ] && nCollectedSumOfClients=$(( nCollectedSumOfClients + _lcount ))
+					[ "$workonallclients" ] && nCollectedSumOfClients=$(( nCollectedSumOfClients + _lccount ))
 					collectedclients="$collectedclients $( xargs < $localclientsfile )" 
 					collectedclients="${collectedclients% }" # trim leading spaces
 				fi
@@ -1286,7 +1300,7 @@ EOF
 				fi
 				;;
 			mountsizes)
-				# deny_if_foreign_mqtt && continue 
+				check_read_mqqt_broker || continue 
 				_content="$( $ssh_cmd "df -Ph -T" | sed -e 's/\([0-9]\)\.0K/\1K/g' )"
 				if [ "$_content" ] ; then
 					_content="$( echo "$_content" | jq -R -s '
@@ -1304,7 +1318,7 @@ EOF
 				fi
 				;;
 			reboot)  
-				deny_if_foreign_mqtt && continue
+				check_read_mqqt_broker || continue
 				if $ssh_cmd "/sbin/reboot" ; then
 					reply_to_mqtt_status "OK" # might not even get here if run locally ...
 				else 
@@ -1314,7 +1328,7 @@ EOF
 				fi
 				;;
 			wifiscan|scandirty)  
-				deny_if_foreign_mqtt && continue
+				check_read_mqqt_broker || continue
 				# relies on the following entry in root's crontab, since only root is allowed to do a full wifi scan
 				# SHELL=/bin/bash
 				# * * * * * { /sbin/iw dev wlan0 scan ; sleep 2 ; /sbin/iw dev wlan0 scan ; sleep 2 ; /sbin/iw dev wlan0 scan ; } | fgrep SSID  | cut -d ":" -f 2 | xargs -n 1 | sort -u > /tmp/wifis.txt
@@ -1349,7 +1363,7 @@ EOF
 				;;
 			*)
 				echo_if_not_quiet "Illegal command=$command"
-				deny_if_foreign_mqtt && continue
+				check_read_mqqt_broker || continue
 				error_and_exit "Unknown command: $command"
 			esac
 			sort_and_tail_file "$debugfile" 300
@@ -1373,14 +1387,14 @@ if [ -n "$nCollectedSumOfClients" ] ; then
 		[ "$bVerbose" ] && echo $clientcollectionfile: && cat "$clientcollectionfile"
 		if command -v join >/dev/null && [ -r $macidsfile ]; then
 			_ccwn_fn="${clientcollectionfile}_with_names"
-			 { sort -k 2 "$clientcollectionfile" | join -1 2 -2 1 -a 1 - $macidsfile | sort -r -k 1 | 
-			uniq -w 17 | sort -k 2 > "$_ccwn_fn" ; } && [ "$bVerbose" ] && echo "$_ccwn_fn":  && cat "$_ccwn_fn"
+			{ sort -k 2 "$clientcollectionfile" | join -1 2 -2 1 -a 1 - $macidsfile | sort -r -k 1 | 
+			uniq -w 17 | sort -k 2 > "$_ccwn_fn" ; } && debug_if_verbose "$_ccwn_fn:" && debug_if_verbose "$(cat "$_ccwn_fn")"
 			mv "$_ccwn_fn" "$clientcollectionfile"
 		fi
-		string2="$( awk -F" " -v id="$areaid" -v lcount="$nCollectedSumOfClients" 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lcount, id } { printf comma "{*addr*:*%s*,*name*:*%s*}", $1 , ($4=="")? $1 : $4 $5 $6 $7 ; comma="," } END { printf "]}" }' < "$clientcollectionfile" |
+		_string="$( awk -F" " -v id="$areaid" -v lccount="$nCollectedSumOfClients" 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lccount, id } { printf comma "{*addr*:*%s*,*name*:*%s*}", $1 , ($4=="")? $1 : $4 $5 $6 $7 ; comma="," } END { printf "]}" }' < "$clientcollectionfile" |
 			shorten_ethernet_addr_in_json ${bDoAllOfIt:+skip} )"
-		echo_if_not_quiet "$( echo "$string2 " | tr \* \" | json_pp )"
-		publish_to_mqtt_starred "$sitecode/$areaid/alllocalclients" "$string2"		
+		echo_if_not_quiet "$( make_json_from_starred "$_string" | json_pp )"
+		publish_to_mqtt_starred "$sitecode/$areaid/alllocalclients" "$_string"		
 	fi
 fi
 
