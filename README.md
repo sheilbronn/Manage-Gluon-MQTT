@@ -94,6 +94,7 @@ Supported commands for the -c option are - names might change during refactoring
 * *statistics*: JSON results from the invocation of `gluon-neighbour-info` with these commands as the resp. option.
 * *showsite*: JSON info from command `gluon-show-site`
 * *mountsizes*: show size, type and allocation of mounted partitions
+* *memory*: show output of "free -t" as JSON
 * *reboot*: Reboot the node (limited to A,B)
 
 ### Example invocations
