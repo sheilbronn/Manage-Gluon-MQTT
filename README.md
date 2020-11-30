@@ -57,7 +57,10 @@ N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluo
    Please let me know or open a GitHub issue if you have success or problems with other versions.
 * In case of MQTT connection problems: Ensure that incoming or outgoing MQTT connections are not blocked by a firewall - consider my [mqtt-grep-color](https://github.com/sheilbronn/mqtt-grep-color) to verify and debug your MQTT setup more easily. See command ```install´´´ for more details.
 * If order to profit from zram on Openhabian, consider adding the following line to root's crontab via ```crontab -e´´´:
-  ```@reboot mgm_dir=/var/log/manage_gluon_mqtt.openhabian ; mkdir -p $mgm_dir ; chown openhabian:openhab $mgm_dir ; chmod g+w $mgm_dir´´´
+
+  ```crontab
+  @reboot mgm_dir=/var/log/manage_gluon_mqtt.openhabian ; mkdir -p $mgm_dir ; chown openhabian:openhab $mgm_dir ; chmod g+w $mgm_dir
+  ´´´
 
 
 ### Command-line options / Invocation
