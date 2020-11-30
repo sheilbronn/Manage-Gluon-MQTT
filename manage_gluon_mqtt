@@ -225,29 +225,29 @@ storage_cache_write() { # write a key/value pair to be cached across script invo
 	}
 storage_read() { # read key/value pair from cache or user storage  (1:searchkey, 2:cachetime, 2: filesuffix, 3:dir)
 	nox
-	local __file="$3/$1.$4"
-	local __maxcachedays="${2:-2}"
+	local _fn="$3/$1.$4"
+	local _maxcachedays="${2:-2}"
 	local _fresult=""
-	local __value=""
-	local __deloutput=""
+	local _value=""
+	local _deloutput=""
 
 	if [ -z "$1" ] ; then
 		_fresult="##INVALIDPARAM##"
 		error_and_exit "STORAGE_READ($1,...) with $_fresult"
-	elif [ ! -r "$__file" ] ; then
+	elif [ ! -r "$_fn" ] ; then
 		_fresult="##NOTFOUND##"
 	else
-		[ "$4" = "cached" ] && __deloutput="$( find "$__file" -mtime +"$__maxcachedays" | head -1 | xargs -r -t rm 2>&1 )" # cache invalidated after n days and remove file
-		if [ -n "$__deloutput" ] ; then
+		[ "$4" = "cached" ] && _deloutput="$( find "$_fn" -mtime +"$_maxcachedays" | head -1 | xargs -r -t rm 2>&1 )" # cache invalidated after n days and remove file
+		if [ -n "$_deloutput" ] ; then
 			_fresult="##NOTFOUND##" # cache is invalid
 		else
-			__value="$( cat "$__file" )" && _fresult="##FOUND##"  # read value from cache file
-			[ "$__value" ] || _fresult="##EMPTY##"
+			_value="$( cat "$_fn" )" && _fresult="##FOUND##"  # read value from cache file
+			[ "$_value" ] || _fresult="##EMPTY##"
 		fi
 	fi
-	debug_if_verbose "STORAGE_READ($1,$2,$3,${4%ed})=\"$( shorten_string "$__value" 23 )\" ($_fresult)" 1>&2
-	e "${__value}" # _fresult values are ignored for now
-	[ -z "$__value" ] && return 1
+	debug_if_verbose "STORAGE_READ($1,$2,$3,${4%ed})=\"$( shorten_string "$_value" 23 )\" ($_fresult)" 1>&2
+	e "${_value}" # _fresult values are ignored for now
+	[ -z "$_value" ] && return 1
 	return 0
   }
 
@@ -349,7 +349,7 @@ hass_announce() { # $sitecode "$nodename" "publicwifi/localclients" "Readable na
 	# mdi icons from https://cdn.materialdesignicons.com/5.4.55/
 
 	[ "$bDeleteAnnouncement" != "yes" ] &&
-		_msg="{*name*:*$( echo ${5:+$5-}$4 | tr " " "-" | tr -d "()" )*,*friendly_name*:*${5:+$5 }$_topicword*, ${_hassdevicestring:+$_hassdevicestring,}
+		_msg="{*name*:*$( echo ${5:+$5-}$4 | tr " " "-" | tr -d "(" )*,*friendly_name*:*${5:+$5 }$_topicword*, ${_hassdevicestring:+$_hassdevicestring,}
 			*~*:*${1:+$1/}$2/$_topicpart*, *stat_t*:*~* ${6:+,*value_template*:*{{ $6 \}\}*} $_command_topic_string ${7:+,*icon*:*mdi:mdi-$7*} }"
 	publish_to_mqtt_starred "homeassistant/sensor/${2}$_topicword/config" "$_msg" "-r"
   }
@@ -596,15 +596,20 @@ else                                      # on rest-of-world (e.g. Raspi or some
 	macidsfile="/srv/openhab2-conf/phones"
 fi
 
-cachedir="/tmp/${sName%.sh}.$( id -nu )"
-tmpdir="$cachedir/$$" && mkdir -p "$tmpdir"
+for s in /var/log /tmp ; do # find a suitable writable dir. Prefer /var/log over /tmp on openhabian (because of zram).
+	cachedir="$s/${sName%.sh}.$( id -nu )"
+	tmpdir="$cachedir/$$" 
+	debug_if_verbose "Trying tmpdir=$tmpdir"
+	{ [ -d "$cachedir" ] || mkdir -p "$cachedir" 2> /dev/null ; } && mkdir "$tmpdir" && chmod o-rwx "$cachedir" "$tmpdir" && break
+done
+
 debugfile="$tmpdir/debugfile"
 clientcollectionfile=""
 echo "$0  "  "$@" > "$debugfile"
 
 [ $# -eq 0 ] && { show_help ; exit 1 ; } # at least one parameter on the command line is required
 
-while getopts "?h:gvxqas:pi:f:m:n:c:o:w:" opt   # https://wiki.bash-hackers.org/howto/getopts_tutorial
+while getopts "?h:gvxql:as:pi:f:m:n:c:o:w:" opt   # https://wiki.bash-hackers.org/howto/getopts_tutorial
 do
     case "$opt" in
     \?) show_help
@@ -635,7 +640,9 @@ do
         ;;
 	q) bQuiet="yes"
 		;;
-    a) bDoAllOfIt=yes
+    t) # option unused
+		;;
+	a) bDoAllOfIt=yes
 		bForceMQTTAnnounce="yes" # -a forces auto-discovery announcements even if retained before' ...
 		;;
 	m) [ "$cmd_mospub" = "true" ] && error "mosquitto_pub is missing!"
@@ -929,16 +936,16 @@ EOF
 			filecopy)
 				check_read_mqqt_broker || continue
 				[ -z "$filetocopy" ] && filetocopy="$commandopts"
-				_tmpfile="/tmp/$( basename "$filetocopy" ).$$"
+				_tmpfile="$cachedir/$( basename "$filetocopy" ).$$"
 				cp -Lpr "$filetocopy" $_tmpfile && 
-					sed -e 's/^[ \t]*//' -e 's/\(^[ \t]*\|  *\)#\($\|#* [^"].*$\)//g' -e 's/() *{/(){/' -e 's/[\t ]*\t[\t ]*/\t/g' -e '/^$/d' -e 's/   *"/ "/g' -e 's/"   */" /g' < "$filetocopy" > $_tmpfile
-					#      ^Whitespace      WhiteSpace # Comment                          () *{            Whitesp tab Whitespace   emptyline     WS bef Dou Qts  WS after DblQts
+					sed -e 's/^[ \t]*//' -e 's/\(^[ \t]*\|  *\)#\($\|#* [^"].*$\)//g' -e 's/() *{/(){/' -e 's/[\t ]*\t[\t ]*/\t/g' -e '/^$/d' -e 's/   *"/ "/g' -e 's/"   */" /g' -e 's/ *| */|/g' -e 's/\$( /$(/g' -e 's/\$(echo /$(e /g' < "$filetocopy" > $_tmpfile
+					#      ^Whitespace      WhiteSpace # Comment                          () *{            Whitesp tab Whitespace   emptyline     WS bef Dou Qts  WS after DblQts     sp pipe sp   spaceAfter$(      echo to e after $(
 				_rc=$?
 				debug_if_verbose "Command $command: $filetocopy ($( wc -c < $filetocopy )) trimmed in $_tmpfile ($( wc -c < $_tmpfile )) - rc=$_rc"
 
 				if scp -p ${bQuiet:+-q} "$_tmpfile" "$sSshUser:/sbin/$( basename "$filetocopy" )" ; then
 					debug_if_verbose "$filetocopy ($_tmpfile) copied to $sSshUser:/sbin"
-					cp -p $_tmpfile "/tmp/$( basename "$filetocopy" ).save" 2>/dev/null || true
+					cp -p $_tmpfile "$cachedir/$( basename "$filetocopy" ).save" 2>/dev/null || true
 					rm $_tmpfile
 				else
 					debug_if_verbose "scp $filetocopy ($_tmpfile) to /sbin failed - retrying to /tmp"
@@ -1016,7 +1023,7 @@ EOF
 				;;
 			ffcond)
 				check_read_mqqt_broker || continue
-				result=$( ssh_cmd '{ for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | tee /tmp/wifis ; echo ++++++++++++ ; iwinfo | fgrep client0 '  )
+				result=$( ssh_cmd '{ for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | tee $cachedir/wifis ; echo ++++++++++++ ; iwinfo | fgrep client0 '  )
 				ifresult=$( echo "$result" | grep -A 3 '++++++++++' | grep -m 2 "client0 *ESSID:" )
 				if echo "$result" | grep -A 9 -w '6e:a3:09:ea:31:e00' | grep -w "SSID:.$ssidbase"
 				then
@@ -1262,7 +1269,7 @@ EOF
 					[ "$bVerbose" ] && echo "****  \$localclientsfile=$localclientsfile: ****" && cat "$localclientsfile"
 					_lccount=$( wc -l < $localclientsfile )
 					homie_line "$homie/publicwifi/clientscount" "$_lccount"
-					cp -p $localclientsfile /tmp/xx
+					cp -p $localclientsfile $cachedir/xx
 					localclients=$( tr " " "," < "$localclientsfile" |
 						awk -F, -v lccount="$_lccount" -v hname="$sTargetHost" 'BEGIN { printf "{*count*:*%s*,*localclients*:[", lcount } { printf comma " {*addr*:*%s*,*name*:*%s*,*detail*:*%s*}", $1, ($2=="") ? $1 : $2, gensub(/ *$/, "", 1, $3 " " $4 " " $5) ; comma="," } END { printf "],*host*:*%s*}",hname }' |
 						  shorten_ethernet_addr_in_json ${bDoAllOfIt:+skip} )
@@ -1399,8 +1406,8 @@ EOF
 				continue
 
 				echo "$sName: command scandirty grepping for **$ffssid**" > "$debugfile"
-				grep -wi "${ffssid}"  /tmp/wifis.txt | tee "$debugfile"
-				rm -f /tmp/wifis.txt.hint
+				grep -wi "${ffssid}"  $cachedir/wifis.txt | tee "$debugfile"
+				rm -f $cachedir/wifis.txt.hint
 				exit 0
 				;;
 			*)
