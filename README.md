@@ -4,7 +4,7 @@ Monitor and control Freifunk Nodes (Gluon) by MQTT
 
 ## manage_gluon_mqtt
 
-**manage_gluon_mqtt** is a shell script supporting a simple integration of Freifunk nodes into a [MQTT](https://en.wikipedia.org/wiki/MQTT) network. The focus is on monitoring but maybe extended to control operations for a private MQTT network:
+**manage_gluon_mqtt** is a shell script supporting a simple integration of Freifunk nodes into a [MQTT](https://en.wikipedia.org/wiki/MQTT) network. The focus is on monitoring but allows for extension to control operations within a private MQTT network:
 
 Supported functions/return information:
 
@@ -13,12 +13,12 @@ Supported functions/return information:
 * Query, stop and start the Freifunk public Wifi interface
 * Temporarely modify the Freifunk SSID (but within the limits of the local Freifunk community)
 * Query fingerprints and number of locally connected Freifunk clients (Wifi)
-* Query static and dynamic [Gluon](https://gluon.readthedocs.io/en/latest/) data (returned as [JSON](https://de.wikipedia.org/wiki/JavaScript_Object_Notation)): nodeinfo, neighbours,statistics as well as the output from `gluon-show-site`.
+* Query static and dynamic [Gluon](https://gluon.readthedocs.io/en/latest/) data (returned as [JSON](https://de.wikipedia.org/wiki/JavaScript_Object_Notation)): _nodeinfo_, _neighbours_, _statistics_ as well as the output from `gluon-show-site`.
 * Query static and dynamic [OpenWrt](https://openwrt.org) config data
 * Run a simple speed test
 * Reboot the Freifunk node.
 
-IMPORTANT: This script would be benefit from quite some refactoring, the code is provided as is. 
+IMPORTANT: This script would be benefit from quite some refactoring, the code is provided as is.
 (Yes, I know, large bash scripts get ugly and Lua is preferred.... ;) )
 
 ### More Details
@@ -61,7 +61,6 @@ N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluo
   ```crontab
   @reboot mgm_dir=/var/log/manage_gluon_mqtt.openhabian ; mkdir -p $mgm_dir ; chown openhabian:openhab $mgm_dir ; chmod g+w $mgm_dir
   ```
-
 
 ### Command-line options / Invocation
 

@@ -872,12 +872,12 @@ do
 					esac
 				fi
 
-				# hare a quite Gluon-specific part. Trying to determine by checking for the UCI entry autoupdater_branch
+				# here a quite Gluon-specific part. Trying to determine this by checking for the UCI entry autoupdater_branch
 				autoupdater_branch="$( get_uci_on_host "autoupdater.settings.branch" )"
 				debug_if_verbose "autoupdater_branch=$autoupdater_branch"
-				if [ -z "$autoupdater_branch" ] ; then
+				if [ -z "$autoupdater_branch" -o -z "$bDoAllOfIt" ] ; then
 					# Probably Non-Freifunk
-					echo_if_not_quiet "Stopping for target $sTargetHost (no autoupdater_branch uci setting)..."
+					echo_if_not_quiet "Stopping for target $sTargetHost (autoupdater_branch=$autoupdater_branch,bDoAllOfIt=$bDoAllOfIt)..."
 					continue
 				else
 					storage_cache_write "$sTargetHost.autoupdater_branch" "$autoupdater_branch"
@@ -1121,7 +1121,7 @@ EOF
 			  	reply_to_mqtt_status "ERROR" "Empty OS data"
 			  else
 			    # get all infos in one call (line by line):
-				_output="$( ssh_cmd "uci get autoupdater.settings.branch 2>&1 ; uci get autoupdater.settings.enabled 2>&1 ; uci get gluon.core.domain 2>&1 ; lua -e 'print(require(\"platform_info\").get_model())' 2>&1 ; cat $gluondir/gluon-version 2>&1 ; cat $gluondir/release 2>&1" )"
+				_output="$( ssh_cmd "uci get autoupdater.settings.branch 2>&1 && uci get autoupdater.settings.enabled 2>&1 && uci get gluon.core.domain 2>&1 ; lua -e 'print(require(\"platform_info\").get_model())' 2>&1 ; cat $gluondir/gluon-version 2>&1 ; cat $gluondir/release 2>&1" )"
 				autoupdaterbranch="$(  echo "$_output" | sed -n -e 1p )"
 				autoupdaterenabled="$( echo "$_output" | sed -n -e 2s/0/false/  -e 2s/1/true/ -e "2p" )"
 				gluoncoredomain="$( echo "$_output" | sed -n -e 3p )"
