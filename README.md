@@ -109,7 +109,10 @@ Supported commands for the -c option are - names might change during refactoring
 You might want to try the following examples on the command line first before putting them into a cron job :
 
 * Remote on a linux box at home (gluonnode ist the FF node):
-  ```manage_gluon_mqtt -s gluonnode -c mountsizes
+
+  ```sh
+  $ manage_gluon_mqtt -s gluonnode -c mountsizes
+
  [
   {
     "mountpoint": "/rom",
@@ -122,8 +125,10 @@ You might want to try the following examples on the command line first before pu
   },
   ...
   ]```
-* On the FF node itself: 
-  ```manage_gluon_mqtt -m test.mosquitto.org -s gluonnode -c ffstatus```
+
+* On the FF node itself:
+
+  ``$ manage_gluon_mqtt -m test.mosquitto.org -s gluonnode -c ffstatus``
 
 ### Notes / Comments
 
