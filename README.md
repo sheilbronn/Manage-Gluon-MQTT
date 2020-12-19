@@ -18,8 +18,8 @@ Supported functions/return information:
 * Run a simple speed test
 * Reboot the Freifunk node.
 
-IMPORTANT: This script would be benefit from quite some refactoring, the code is provided as is.
-(Yes, I know, large bash scripts get ugly and Lua is preferred.... ;) )
+IMPORTANT: This script would be benefit from some refactoring, the code is provided as is.
+(Yes, I know: Large bash scripts tend to get ugly and Lua would have been preferred.... ;) )
 
 ### More Details
 
@@ -53,8 +53,9 @@ N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluo
 * For use case A, B, and C as well as debugging purposes: 
   Enable [automatic remote invocation via SSH using public key authentication](https://openwrt.org/docs/guide-user/security/dropbear.public-key.auth)
 * If you want to use the script remotely: Install ash from a package repository (or manually replace ash by bash in the first line), e.g. on a Raspberry: ``apt install ash``. The script is written to be compatible to both ash and bash.
-* Freifunk relies on some version of Gluon or at least OpenWRT: So far, this script has only been tested on [Freifunk Munich](https://ffmuc.net) nodes with [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*, 2020.1.* and 2020.2.*. 
-   Please let me know or open a GitHub issue if you have success or problems with other versions.
+* Freifunk relies on some version of Gluon or at least OpenWRT/Raspbian/Raspberry Pi OS: This script has been tested on [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*, 2020.1.* and 2020.2.* from these communities:
+  [Freifunk Munich](https://ffmuc.net), [Freifunk Frankfurt](https://ffm.freifunk.net)
+   Please let me know or open a GitHub issue if you have success or problems with other versions or other communities.
 * In case of MQTT connection problems: Ensure that incoming or outgoing MQTT connections are not blocked by a firewall - consider my [mqtt-grep-color](https://github.com/sheilbronn/mqtt-grep-color) to verify and debug your MQTT setup more easily. See command ```install´´´ for more details.
 * If order to profit from zram on Openhabian, consider adding the following line to root's crontab via ``crontab -e``:
 

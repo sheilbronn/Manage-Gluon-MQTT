@@ -117,7 +117,7 @@ get_os_data_semi_starred_cached() {
 		if [ -n "$_data" ] ; then
 			storage_cache_write "$1.os_data_lined" "$_data" # keep it for now, dont need it yet
 			_fresult="$( echo "$_data" | awk -F= 'BEGIN { printf  "{*os*:{"
-				} { printf comma "*" tolower($1) "*:" $2  ; comma="," } END { printf "}}" }' )" # generate new value
+				} { printf comma "*" tolower($1) "*:" gensub("\"", "*", "g", $2)  ; comma="," } END { printf "}}" }' )" # generate new value
 			 storage_cache_write "$1.os_data" "$_fresult"  # cache if new values successfulhy obtained
 			__os_pretty_name="$( echo "$_data" |  awk -F=  '/^PRETTY_NAME=/ { print gensub("\"", "", "g", $2) }' )"
 			 storage_cache_write "$1.os_pretty_name" "$__os_pretty_name"
@@ -336,7 +336,7 @@ publish_to_mqtt_starred() {		# publish_to_mqtt_starred(expandableTopic,message,m
 	}
 
 reply_to_mqtt_status() {
-	[ "$1" ] && [ "$mqtthost" -o "$homie" ] && publish_to_mqtt_starred "/$command/STATUS" "{*status*:*$1*${2:+,*details*:*$2* }}"
+	[ "$1" ] && [ "$mqtthost" -o "$homie" ] && publish_to_mqtt_starred "/$command/STATUS" "{*status*:*$1*${2:+,*details*:*$2*}${3:+,$3} }"
 	[ "$1" != "OK" -a "$1" != "ONGOING" ] && logger -p daemon.error -t "$sName $sTargetHost $1" "$2"
 }
 
@@ -1174,7 +1174,7 @@ EOF
 				debug_if_verbose "os_data=$os_data"
 				newval=$( ssh_cmd "cat /proc/version /proc/cpuinfo" |  awk -v os_data="$os_data" '
 					NR==1 { linuxversion=$3 ; FS=": " }
-					/^machine|^Hardware/ { FS=": " ; printf "{*linuxversion*:*%s*,*machine*:*%s*,%s}", linuxversion ,$2, os_data ; exit 0 }
+					/^machine|^Hardware/ { FS=": " ; printf "{*linuxversion*:*%s*,*machine*:*%s*,%s}", linuxversion ,$2, substr(os_data,2,length(os_data)-2) ; exit 0 }
 					' )
 				if [ "$newval" ] ; then
 					echo_if_not_quiet "$newval"
@@ -1214,14 +1214,14 @@ EOF
 					filesize=$(	echo "$newval" | sed -n -e "2 p" )
 					endtime=$(	echo "$newval" | sed -n -e "3 p" )
 					newval=$((	endtime - starttime ))
+					speedMB=$( awk "BEGIN { printf \"%.1f\" , $filesize * 8 / ( $newval + 0.000001 ) / 1024 / 1024 }" )
 					if [ "$newval" -lt 11 -o "$filesize" -lt 10000 ] ; then
 						speedtestcmd="${speedtestcmd}0" # try next bigger size
-						debug_if_verbose "Result time ${newval}s or file size ${filesize}B too small, redoing with $speedtestcmd"
-						reply_to_mqtt_status "ONGOING" "Result time ${newval}s or file size ${filesize}B too small. Rerun with larger file."
+						debug_if_verbose "Result time ${newval}s or file size ${filesize}B too small, redoing with $speedtestcmd" 
+						reply_to_mqtt_status "ONGOING" "Result time ${newval}s or file size ${filesize}B too small. Rerun with larger file." "*speedMb*:*$speedMB*"
 						commandsToDo="${speedtestcmd}${commandsToDo:+,$commandsToDo}"
 						storage_cache_write "$sTargetHost.lastspeedtestcmd" "$speedtestcmd" # cache bigger file speedtest for next time
 					else
-						speedMB=$( awk "BEGIN { printf \"%.1f\" , $filesize * 8 / $newval / 1024 / 1024 }" )
 						echo_if_not_quiet "$speedMB"
 						publish_to_mqtt_starred "/speedtest" "{*speedMb*:*$speedMB*,*filesize*:*$filesize*,*elapsedtime*:*$newval*,*unit*:*Mb/s*${sLastspeedtest}}"
 						storage_cache_write "$sTargetHost.lastspeedtest" "$speedMB"
@@ -1271,7 +1271,7 @@ EOF
 					homie_line "$homie/publicwifi/clientscount" "$_lccount"
 					cp -p $localclientsfile $cachedir/xx
 					localclients=$( tr " " "," < "$localclientsfile" |
-						awk -F, -v lccount="$_lccount" -v hname="$sTargetHost" 'BEGIN { printf "{*count*:*%s*,*localclients*:[", lcount } { printf comma " {*addr*:*%s*,*name*:*%s*,*detail*:*%s*}", $1, ($2=="") ? $1 : $2, gensub(/ *$/, "", 1, $3 " " $4 " " $5) ; comma="," } END { printf "],*host*:*%s*}",hname }' |
+						awk -F, -v lccount="$_lccount" -v hname="$sTargetHost" 'BEGIN { printf "{*count*:*%s*,*localclients*:[", lccount } { printf comma " {*addr*:*%s*,*name*:*%s*,*detail*:*%s*}", $1, ($2=="") ? $1 : $2, gensub(/ *$/, "", 1, $3 " " $4 " " $5) ; comma="," } END { printf "],*host*:*%s*}",hname }' |
 						  shorten_ethernet_addr_in_json ${bDoAllOfIt:+skip} )
 					while read -r _ipaddr _what _who ; do
 						debug_if_verbose "*$_ipaddr* *$_what* *$_who*"
