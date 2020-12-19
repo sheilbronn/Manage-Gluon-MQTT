@@ -53,11 +53,12 @@ N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluo
 * For use case A, B, and C as well as debugging purposes: 
   Enable [automatic remote invocation via SSH using public key authentication](https://openwrt.org/docs/guide-user/security/dropbear.public-key.auth)
 * If you want to use the script remotely: Install ash from a package repository (or manually replace ash by bash in the first line), e.g. on a Raspberry: ``apt install ash``. The script is written to be compatible to both ash and bash.
-* Freifunk relies on some version of Gluon or at least OpenWRT/Raspbian/Raspberry Pi OS: This script has been tested on [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*, 2020.1.* and 2020.2.* from these communities:
-  [Freifunk Munich](https://ffmuc.net), [Freifunk Frankfurt](https://ffm.freifunk.net)
+* This script relies on some version of Gluon or at least OpenWRT/Raspbian/Raspberry Pi OS: It has been tested on [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*, 2020.1.* and 2020.2.* from these communities:
+  [Freifunk Munich](https://ffmuc.net), [Freifunk Frankfurt](https://ffm.freifunk.net).
+
    Please let me know or open a GitHub issue if you have success or problems with other versions or other communities.
 * In case of MQTT connection problems: Ensure that incoming or outgoing MQTT connections are not blocked by a firewall - consider my [mqtt-grep-color](https://github.com/sheilbronn/mqtt-grep-color) to verify and debug your MQTT setup more easily. See command ```install´´´ for more details.
-* If order to profit from zram on Openhabian, consider adding the following line to root's crontab via ``crontab -e``:
+* Only in use case A and B: To profit from zram in /var/log on Openhabian, consider adding the following line to root's crontab via ``crontab -e``:
 
   ```crontab
   @reboot mgm_dir=/var/log/manage_gluon_mqtt.openhabian ; mkdir -p $mgm_dir ; chown openhabian:openhab $mgm_dir ; chmod g+w $mgm_dir
@@ -105,9 +106,10 @@ Supported commands for the -c option are - names might change during refactoring
 
 ### Example invocations
 
-You might want to try the following examples on the command line first before putting them into a cron job:
+You might want to try the following examples on the command line first before putting them into a cron job (gluonnode ist the FF node):
 
-* ...
+* ```manage_gluon_mqtt              -s gluonnode -c mountsizes```
+* ```manage_gluon_mqtt -m localhost -s gluonnode -c ffstatus```
 
 ### Notes / Comments
 
