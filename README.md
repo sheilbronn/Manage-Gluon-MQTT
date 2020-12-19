@@ -106,10 +106,24 @@ Supported commands for the -c option are - names might change during refactoring
 
 ### Example invocations
 
-You might want to try the following examples on the command line first before putting them into a cron job (gluonnode ist the FF node):
+You might want to try the following examples on the command line first before putting them into a cron job :
 
-* ```manage_gluon_mqtt              -s gluonnode -c mountsizes```
-* ```manage_gluon_mqtt -m localhost -s gluonnode -c ffstatus```
+* Remote on a linux box at home (gluonnode ist the FF node):
+  ```manage_gluon_mqtt -s gluonnode -c mountsizes
+ [
+  {
+    "mountpoint": "/rom",
+    "filesystem": "/dev/root",
+    "type": "squashfs",
+    "spaceavail": "0",
+    "spaceused": "2.3M",
+    "percentused": "100%",
+    "spacetotal": "2.3M"
+  },
+  ...
+  ]```
+* On the FF node itself: 
+  ```manage_gluon_mqtt -m test.mosquitto.org -s gluonnode -c ffstatus```
 
 ### Notes / Comments
 
