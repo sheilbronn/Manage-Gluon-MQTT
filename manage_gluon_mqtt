@@ -4,31 +4,36 @@
 #
 # manage_gluon_mqtt
 #
-# Monitor and control Freifunk nodes (Gluon) by MQTT
+# Monitor and control Freifunk nodes (Gluon) - by command line and MQTT
 #
 # Repo: https://github.com/sheilbronn/Manage-Gluon-MQTT
 #
 
-# Some fixed parameters and prelimenary (fixed) settings ....
+# Some fixed constants and prelimenary (fixed) settings ....
 
 wifiupsleep="7" # seconds to sleep after "wifi up"
 gluondir="/lib/gluon"
-ssidbase="muenchen.freifunk.net"
 sitecode="" #  will be set to something like "ffmuc".... but you could also freeze it here
 macidsfile="/srv/openhab2-conf/phones" # file is only for presence detection in mapping known phones to known people at....
 
-if command -v busybox > /dev/null ; then
+_cmv()     {  command -v "$@" > /dev/null ; } # find out whether a command exists
+_tolower() {  { [ "$*" ] && echo "$*" || cat ; } | awk -- '{ print tolower($0) }' ; }
+
+if _cmv busybox ; then
 	alias awk="busybox awk"
 	alias sed="busybox sed"
+	alias tr="busybox tr"
 fi
-	alias e=echo
+	alias e="echo"
+	alias l="local" # needed when compressing script
 
 set -o noglob  # noglob will limit security and escaping problems
 sName="${0##*/}"
 sUserConfigDir="$HOME/.${sName%.sh}"
-sArea="$( { cat /proc/sys/kernel/hostname 2>/dev/null || hostname || e "unknown" ; } )"
+sArea="$( cat /proc/sys/kernel/hostname 2>/dev/null || hostname || e "unknown" )"
 [ "$sArea" = "openHABianPi" -o "$sArea" = "unknown" ] && sArea="${sArea}-$( awk -F ":" -e '{ print $5$6 }' < /sys/class/net/eth0/address )"
-sArea="$( e "$sArea" | awk -- '{ print tolower($0) }' )" # lowercase only
+sArea="$( _tolower "$sArea" )" # lowercase only
+sSsidBase="UNKNOWN" # would be an an error
 
 uci_opt_ssid1="wireless.wan_radio0"
 ff_if_pub1="client0"
@@ -43,7 +48,7 @@ ff_if_pub="$ff_if_pub1" # DEFECT: needs to be made specific for each host...
 ff_if_priv="$ff_if_priv1"
 
 umask -S u=rwx,g=rx,o= # no rights for others
-alias nox="local - ; set +x"
+alias _nx="local - ; set +x"
 
 # Notes for future enhancements:
 # ping ff host and up/down own public if accordingly
@@ -54,32 +59,30 @@ alias nox="local - ; set +x"
 # ( { for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | egrep -A 9 -w '6e:a3:09:ea:31:e0' | grep SSID:.muenchen.freifunk.net/muc_sued && ( ( iwinfo | fgrep $ff_if_pub ) || ( wifi up ; echo wifi upped. ) ) ) || ( iwinfo | fgrep $ff_if_pub && iw dev $ff_if_pub del ; echo if downed )
 
 show_help() {
-	cat 1>&2 << EOF
-   Usage: $sName ... -v -c command ...
+	echo "Usage: $sName ... -v -c command ...
    Execute arbitrary as well as predefined commands on Freifunk nodes using uci and other commands. Return values on stdout or MQTT.
-   Either, automatic (e.g. key-based) access to the Freifunk node using SSH or local execution is possible.
-EOF
+   Either, automatic (e.g. key-based) access to the Freifunk node using SSH or _xecution is possible." 1>&2
 }
 
 sort_and_tail_file() {
-	nox
-	local _tmpfile="$tmpdir/tailfile"
-	local _fn="$1"
-	local _tailcnt=${2:-20}
-	local _colno=${3:-1}
+	_nx
+	l _tmpfile="$tmpdir/tailfile"
+	l _fn="$1"
+	l _tailcnt="${2:-20}"
+	l _colno="${3:-1}"
 
 	[ -r "$_fn" ] && [ -w "$_fn" ] && sort -k $(( _colno + 1 )) "$_fn" | uniq -f "$_colno" | tail -"$_tailcnt" | sort -k $(( _colno + 1 )) > $_tmpfile \
 		&& cat "$_tmpfile" > "$_fn" && rm -f "$_tmpfile"
-	[ "$bMoreVerbose" ] && debug_if_verbose "sort_and_tail_file($1,$2,$3): lines: $( wc -l < "$1" )"
+	[ "$bMoreVerbose" ] && debug "sort_and_tail_file($1,$2,$3): lines: $( wc -l < "$1" )"
 	}
 
 tail_file() {
-	nox
+	_nx
 	local _tmpfile="$tmpdir/tailfile"
 	local _fn="$1"
 	local _tailcnt=${2:-20}
 
-	[ -r "$_fn" ] && [ -w "$_fn" ] && tail -"$_tailcnt" "$_fn" > "$_tmpfile" && cat "$_tmpfile" > "$_fn" && rm -f "$_tmpfile"	
+	[ -r "$_fn" ] && [ -w "$_fn" ] && tail -"$_tailcnt" "$_fn" > "$_tmpfile" && cat "$_tmpfile" > "$_fn" && rm -f "$_tmpfile"
 	}
 
 extract_uci_values() {
@@ -108,25 +111,25 @@ query_and_extract_uci_on_host() { # query the FIRST of possibly many UCI values 
 get_os_data_semi_starred_cached() {
 	local _data=""
 	local _fresult="$( storage_cache_read "$1.os_data" 1 )"
-	local __os_data_fn="/usr/lib/os-release" # standard on Unix by now
-	local __os_pretty_name
-	local __os_id
+	local _os_data_fn="/usr/lib/os-release" # standard on Unix by now
+	local _os_pretty_name
+	local _os_id
 
 	if [ -z "$_fresult" ] ; then
-		_data="$( ssh_cmd "cat $__os_data_fn" )" || {	_rc="$?" ; return $_rc ; } # cancel func
+		_data="$( ssh_cmd "cat $_os_data_fn" )" || {	_rc="$?" ; return $_rc ; } # cancel func
 		if [ -n "$_data" ] ; then
 			storage_cache_write "$1.os_data_lined" "$_data" # keep it for now, dont need it yet
 			_fresult="$( echo "$_data" | awk -F= 'BEGIN { printf  "{*os*:{"
 				} { printf comma "*" tolower($1) "*:" gensub("\"", "*", "g", $2)  ; comma="," } END { printf "}}" }' )" # generate new value
 			 storage_cache_write "$1.os_data" "$_fresult"  # cache if new values successfulhy obtained
-			__os_pretty_name="$( echo "$_data" |  awk -F=  '/^PRETTY_NAME=/ { print gensub("\"", "", "g", $2) }' )"
-			 storage_cache_write "$1.os_pretty_name" "$__os_pretty_name"
-			__os_name="$( echo "$_data" |  awk -F=  '/^NAME=/ { print gensub("\"", "", "g", $2) }' )"
-			 storage_cache_write "$1.os_name" "$__os_name"
-			__os_id="$( echo "$_data" |  awk -F=  '/^ID=/ { print gensub("\"", "", "g", $2) }' )"
-			 storage_cache_write "$1.os_id" "$__os_id"
+			_os_pretty_name="$( echo "$_data" |  awk -F=  '/^PRETTY_NAME=/ { print gensub("\"", "", "g", $2) }' )"
+			 storage_cache_write "$1.os_pretty_name" "$_os_pretty_name"
+			_os_name="$( echo "$_data" |  awk -F=  '/^NAME=/ { print gensub("\"", "", "g", $2) }' )"
+			 storage_cache_write "$1.os_name" "$_os_name"
+			_os_id="$( echo "$_data" |  awk -F=  '/^ID=/ { print gensub("\"", "", "g", $2) }' )"
+			 storage_cache_write "$1.os_id" "$_os_id"
 		fi
-	fi	
+	fi
 	printf "%s" "$_fresult"
 	}
 
@@ -143,36 +146,41 @@ get_sitecode_cached() { # $1=host $2=cachetimeout
 	}
 
 get_most_frequent_sitecode() {
-		local - ; set +o noglob # needed here
+		_ ; set +o noglob # needed here
 		local _data="$( cat "$cachedir"/*.sitecode.cached 2>/dev/null | sort | uniq -c | awk 'NR==1 { print $2 }' )"
 		e "${_data:-LOCAL}"
 		[ "$_data" ] || return 1
 	}
 
 get_public_if_cached() { # $1=host $2=cachetimeout  ## TODO ## -1 for forced reloading
-	local -
-	local _data="$( storage_cache_read "$1.iwinfo" "${2:-99}" )"
-	if [ -z "$_data" ] ; then
+	_
+	local _key="${1:-$sTargetHost}.iwinfo"
+	local _dataall="$( storage_cache_read "$_key" "${2:-99}" )"
+	if [ -z "$_dataall" ] ; then
 		# should find a solution based on iw ...:
-		_data="$( ssh_cmd "command -v iwinfo >/dev/null && iwinfo" | sed -e 's/^  */;/' -e 's/   */;/' | awk '/^$/ { print l ; l = "" ; next } { l = l $0 ; next }' )" ||
+		_dataall="$( ssh_cmd "command -v iwinfo >/dev/null && iwinfo" | sed -e 's/^  */;/' -e 's/   */;/' | awk '/^$/ { print l ; l = "" ; next } { l = l $0 ; next }' )" ||
 				 {	_rc="$?" ; return $_rc ; }
-		if echo "$_data" | grep -q "Mode: Master;.*;Encryption: none" ; then #  .... cache result only if at least the public Freifunk if is up and running
-			_data="$( echo "$_data" | sed -e 's/;Type:.*//' )" # shorten uninteresting stuff
-			storage_cache_write "$1.iwinfo" "$_data"
+		if echo "$_dataall" | grep -q "Mode: Master;.*;Encryption: none" ; then #  .... cache result only if at least the public Freifunk if is up and running
+			## _dataall="$( echo "$_data" | sed 's/;Type:.*//' )" # shorten uninteresting stuff
+			storage_cache_write "$_key" "$_dataall"
 		fi
 	fi
-	_data="$( echo "$_data" | awk -F ";" '/;Mode: Master/ && /;Encryption: none/ { print $1 } ' )"
+	_data="$( echo "$_dataall" | awk -F ";" '/;Mode: Master/ && /;Encryption: none/ { print $1 } ' )"
 	if [ -z "$_data" ] ; then
-		debug_if_verbose "Using default for public interface: $ff_if_pub1" # use 'client0' as fallback
-		e "$ff_if_pub1"
+		debug "Using default for public interface: $ff_if_pub1" # use 'client0' as fallback
+		ff_if_pub="ERROR" #  ff_if_pub="$ff_if_pub1"
+		sSsidBase=""
+		return 1
 	else
-		[ "$_data" != "$ff_if_pub1" ] && debug_if_verbose "Unusual public interface: $_data ..."
-		e "$_data"
+		[ "$_data" != "$ff_if_pub1" ] && debug "Unusual public interface: $_data ..."
+		ff_if_pub="$_data"
+		sSsidBase="$( echo "$_dataall" | awk -F ";" '/;Mode: Master/ && /;Encryption: none/ { print $2 }' | tr -d \" | awk -F ": " '{ print gensub("/.*", "", "g", $2) }' )"
+		return 0
 	fi
 }
 
 make_json_from_table_with_headers() { # table is piped in
-	nox
+	_nx
 	awk -v missingHeaders="${1:-0}" 'BEGIN { OFS=""
 			getline
 			for (i=1; i<=NF; i++) names[i] = $i # read headers
@@ -189,7 +197,7 @@ make_json_from_table_with_headers() { # table is piped in
   }
 
 make_json_array_from_words () {
-	nox
+	_nx
 	awk 'BEGIN { printf "[" } { printf comma "*" $0 "*" ; comma="," } END { printf "]" }'
   }
 
@@ -199,7 +207,7 @@ get_gluon_domains_starred_cached() {
 	if [ -z "$_data" ] ; then
 		_data="$( ssh_cmd "ls -1 "$gluondir/domains" 2>&1" )" || {	_rc="$?" ; return $_rc ; } # cancel func
 		if [ -n "$_data" ] ; then
-			_data=$( echo "$_data" | sed -e 's/[^_]*_//' -e 's/.json//' )
+			_data="$( echo "$_data" | sed -e 's/[^_]*_//' -e 's/.json//' )"
 			storage_cache_write "$1.gluondomains" "$_data"
 		fi
 	fi
@@ -207,14 +215,14 @@ get_gluon_domains_starred_cached() {
 }
 
 storage_write() { # write a key/value pair to a dir
-	nox
+	_nx
 	if [ -z "$1" ] ; then
 		e "##INVALIDPARAM##"
 		error_and_exit "storage_write($1.$4, \"$2\", $3) with ##INVALIDPARAM##"
 	else
 		mkdir -p "$3" && echo "$2" > "$3/$1.$4"
 		_rc="$?"
-		debug_if_verbose "storage_write($1.$4, \"$2\", $3) => $_rc"
+		debug "storage_write($1.$4, \"$2\", $3) => $_rc"
 	fi
 	}
 storage_user_write() {  # write a key/value pair permanently across script invocations
@@ -224,7 +232,7 @@ storage_cache_write() { # write a key/value pair to be cached across script invo
 	storage_write "$1" "$2" "$cachedir" "cached"
 	}
 storage_read() { # read key/value pair from cache or user storage  (1:searchkey, 2:cachetime, 2: filesuffix, 3:dir)
-	nox
+	_nx
 	local _fn="$3/$1.$4"
 	local _maxcachedays="${2:-2}"
 	local _fresult=""
@@ -245,14 +253,14 @@ storage_read() { # read key/value pair from cache or user storage  (1:searchkey,
 			[ "$_value" ] || _fresult="##EMPTY##"
 		fi
 	fi
-	debug_if_verbose "STORAGE_READ($1,$2,$3,${4%ed})=\"$( shorten_string "$_value" 23 )\" ($_fresult)" 1>&2
+	debug "STORAGE_READ($1,$2,$3,${4%ed})=\"$( shorten_string "$_value" 23 )\" ($_fresult)" 1>&2
 	e "${_value}" # _fresult values are ignored for now
 	[ -z "$_value" ] && return 1
 	return 0
   }
 
 storage_cache_read() { # read a key/value pair to be cached across script invocations from the same user; empty cache after n day(s)
-	nox
+	_nx
 	storage_read "$1" "$2" "$cachedir" "cached"
 	return $?
   }
@@ -260,37 +268,37 @@ storage_cache_read() { # read a key/value pair to be cached across script invoca
 storage_user_read() { # read a key/value pair across script invocations
 	storage_read "$1" "$2" "$sUserConfigDir" "persisted"
 	return $?
-  }
+	}
 
-error() {
-	nox
-	e "$sName: ERROR: $1" 1>&2
+error()   {
+	_nx
+	echo "$sName: ERROR: $1" 1>&2
 	}
 
 error_and_exit() {
-	nox
+	_nx
 	error "$* ... Exiting."
 	exit 1
 	}
 
 echo_if_not_quiet() {
-	nox
+	_nx
 	[ "$bQuiet" ] || e "$*"
 	}
 
-debug_if_verbose() {
-	nox
+debug() { # output the args to stderror if option -v was set
+	_nx
 	[ "$bVerbose" ] && e "$*" 1>&2 && return 0
 	return 1
  }
 
 shorten_string() { # $1=string $2=maxlen
-	nox
+	_nx
 	printf "%.${2:-5}s%s" "$1" "$( [ ${#1} -gt "${2:-5}" ] && printf ... )"
 	}
 
 jsonfilter_func() {  #  jsonfilter_func(filterexpr,moreparam)=result
-	nox
+	_nx
 	local _data
 	if [ "$jsonfilter" = "jsonfilter" ] ; then
 		_data=$( jsonfilter -e "@$1" $2 ) # $2 is unquoted to avoid complaint when missing
@@ -303,40 +311,41 @@ jsonfilter_func() {  #  jsonfilter_func(filterexpr,moreparam)=result
 }
 shorten_ethernet_addr_in_json() { # remove some bytes für anonymization
 	[ "$1" = "skip" ] && cat && return 0
-	sed -e 's/\([*"][a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]:\)[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]\(:[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9][*"]\)/\1...\2/g' "$@"	
+	sed -e 's/\([*"][a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]:\)[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]\(:[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9][*"]\)/\1...\2/g' "$@"
 	}
 
 check_read_mqqt_broker() { ## for now: only trusting a broker on the same host...
-	nox
+	_nx
 	[ "$commandsToDo" = "mqtt" -a "$mqtthost" != "localhost" ] && { echo_if_not_quiet "Untrusted MQTT command ignored: $command" ; return 1 ; }
 	return 0
 	}
 
 check_write_mqqt_broker() { ## for now: only trusting a broker on the same host...
 	check_read_mqqt_broker
-  }
+	}
 
 publish_to_mqtt() {
-	nox
-	debug_if_verbose "PUBLISH_TO_MQTT: TOPIC=$1  MSG=$2 ${3:+ OPTIONS=$3} ${bMoreVerbose:+ (\$mqtthost=$mqtthost)}"
+	_nx
+	debug "PUBLISH_TO_MQTT: TOPIC=$1  MSG=$2 ${3:+ OPTIONS=$3} ${bMoreVerbose:+ (\$mqtthost=$mqtthost)}"
 	if [ "$cmd_mospub" != "true" ] ; then
-		 $cmd_mospub ${mqtthost:+-h $mqtthost}  -t "$1" -m "$2" -i "${sitecode}_$sTargetHost" $3  || debug_if_verbose "$cmd_mospub failed..." #  $3  passed without quotes on purpose
+		 $cmd_mospub ${mqtthost:+-h $mqtthost}  -t "$1" -m "$2" -i "${sitecode}_$sTargetHost" $3  || debug "$cmd_mospub failed..." #  $3  passed without quotes on purpose
 	fi
 	}
 
 make_json_from_starred() {
 	e "$*" | tr \" \' | tr "*" \"
-}
+	}
 
-publish_to_mqtt_starred() {		# publish_to_mqtt_starred(expandableTopic,message,moreMsoquittoOptions)
+publish_to_mqtt_starred() {		# _pms(expandableTopic,message,moreMsoquittoOptions)
 	if [ -n "$mqtthost" -o "$homie" ] && [ "$cmd_mospub" != "true" ] ; then
-		local _topic="$( echo $1 | sed -e "s,^/,$sitecode/$sTargetHost/," )"	# ... expand shortcuts starting with "/"
+		local _topic="$( echo $1 | sed "s,^/,$sitecode/$sTargetHost/," )"	# ... expand shortcuts starting with "/"
 		publish_to_mqtt  "$_topic" "$( make_json_from_starred "$2" )" "$3" # ...  replace double quotes by single quotes and stars by double quotes
 	fi
 	}
+	alias _pms=publish_to_mqtt_starred
 
 reply_to_mqtt_status() {
-	[ "$1" ] && [ "$mqtthost" -o "$homie" ] && publish_to_mqtt_starred "/$command/STATUS" "{*status*:*$1*${2:+,*details*:*$2*}${3:+,$3} }"
+	[ "$1" ] && [ "$mqtthost" -o "$homie" ] && _pms "/$command/STATUS" "{*status*:*$1*${2:+,*details*:*$2*}${3:+,$3} }"
 	[ "$1" != "OK" -a "$1" != "ONGOING" ] && logger -p daemon.error -t "$sName $sTargetHost $1" "$2"
 }
 
@@ -345,34 +354,36 @@ hass_announce() { # $sitecode "$nodename" "publicwifi/localclients" "Readable na
 	local _topicword="$( basename "$_topicpart" )"
 	local _command_topic_string="$( [ "$3" != "$_topicpart" ] && echo ",*cmd_t*:*~/set*" ) "    # determined by suffix ".../set"
 	local _hassdevicestring="*dev*:{*name*:*$5*, *mdl*:*Gluon Freifunk Node*, *mf*:*Freifunk*, *ids*: [*${sName}${1:+_$1}_$2*]}"
-	local _msg=""
+	local _data=""
 	# mdi icons from https://cdn.materialdesignicons.com/5.4.55/
 
 	[ "$bDeleteAnnouncement" != "yes" ] &&
-		_msg="{*name*:*$( echo ${5:+$5-}$4 | tr " " "-" | tr -d "(" )*,*friendly_name*:*${5:+$5 }$_topicword*, ${_hassdevicestring:+$_hassdevicestring,}
+		_data="{*name*:*$( echo ${5:+$5-}$4 | tr " " "-" | tr -d "(" )*,*friendly_name*:*${5:+$5 }$_topicword*, ${_hassdevicestring:+$_hassdevicestring,}
 			*~*:*${1:+$1/}$2/$_topicpart*, *stat_t*:*~* ${6:+,*value_template*:*{{ $6 \}\}*} $_command_topic_string ${7:+,*icon*:*mdi:mdi-$7*} }"
-	publish_to_mqtt_starred "homeassistant/sensor/${2}$_topicword/config" "$_msg" "-r"
+	_pms "homeassistant/sensor/${2}$_topicword/config" "$_data" "-r"
   }
 	
 homie_state_is_ready() {
+	# set -x
 	tmpfile="$tmpdir/homie_state"
-	mosquitto_sub ${mqtthost:+-h $mqtthost} -t "homie/$1/\$state" -C 1 > $tmpfile &
-	pid=$!
-	sleep 2
-	kill $pid 2>/dev/null
-	ret="$( cat $tmpfile )"
-	rm $tmpfile
-	expr "$ret" "=" "ready"
+	mosquitto_sub ${mqtthost:+-h $mqtthost} -t "homie/$1/\$state" -W 1 -C 1 > $tmpfile #  &
+	# pid=$!
+	# sleep 2
+	# kill $pid 2>/dev/null
+	_ret="$( cat "$tmpfile" )"
+	# rm $tmpfile
+	set +x
+	expr "$_ret" = "ready" # return value
 	}
 
-homie_line() {
+h_line() {
 		[ "$homie" ] || return
 		publish_to_mqtt "homie/$1" "$2"
 	}
 
-homie_meta() {
-		nox
-		# debug_if_verbose "homie_meta($1,$2,$3)"
+h_meta() {
+		_nx
+		# debug "h_meta($1,$2,$3)"
 		local _msg="$2" ; [ "$bDeleteAnnouncement" = "yes" ] && _msg="" # bDeleteAnnouncement used in side effect from global var
 		local _topic="$( echo $1 | sed -e "s,^/,homie/$homie/,"  -e 's,\(.*/\)\([!/]*\),\1$\2,' )" # ... expand shortcuts starting with "/"
 
@@ -380,20 +391,32 @@ homie_meta() {
 		# sleep 1
 	}
 
+h_multi() { # 1: root, 2: name, 3: retained, 4: settable, 5: datatype, 6: unit, 7: format
+		_nx
+		# debug "h_multi($1,$2,$3,$4,$5,$6)"
+		_root="$1"
+		h_meta $_root/name "$2"
+		h_meta $_root/retained	"${3:-true}"
+		h_meta $_root/settable	"${4:-false}"
+		h_meta $_root/datatype	"$5"
+		h_meta $_root/unit	"$6"
+		h_meta $_root/format	"$7"
+	}
+
 announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are to be deleted.
 	# NB: $sTargetHost and optionally $bDeleteAnnouncement must have been set!
 
-	local -
-	local nAnnouncementDay="$( storage_cache_read "$sTargetHost.nAnnouncementDay" 9999 )"
+	_
+	local _nDay="$( storage_cache_read "$sTargetHost.nAnnouncementDay" 9999 )"
 
 	if [ "$2" = "-d" -o "$bDeleteAnnouncement" = "yes" ] ; then
-		debug_if_verbose "announce_disco($1,$2,bDeleteAnnouncement=$bDeleteAnnouncement): deleting advertisements"
-		bDeleteAnnouncement="yes" # used in side effect in homie_meta, will be resetted further down
+		debug "announce_disco\($1,$2,bDeleteAnnouncement=$bDeleteAnnouncement\): deleting advertisements"
+		bDeleteAnnouncement="yes" # used in side effect in h_meta, will be resetted further down
 	else
-		[ "$sSshUser" = "NOUSER" ] && { homie_line "$1/\$stats/uptime" "$( cut -f 1 -d . < /proc/uptime )" ; }
-		
-		if [ -n "$nAnnouncementDay" ] && [ "$(date "+%j")" -eq "$nAnnouncementDay" -a -z "$bForceMQTTAnnounce" ] && homie_state_is_ready $1 >/dev/null ; then
-			debug_if_verbose "ANNOUNCE_DISCO(): skip announcements, homie state is ready... (bForceMQTTAnnounce=\"$bForceMQTTAnnounce\")" # (re-)announce ONLY IF restart or new day or necessary
+		[ "$sSshUser" = "NOUSER" ] && { h_line "$1/\$stats/uptime" "$( cut -f 1 -d . < /proc/uptime )" ; }
+	
+		if [ -n "$_nDay" ] && [ "$(date "+%j")" -eq "$_nDay" -a -z "$bForceMQTTAnnounce" ] && homie_state_is_ready $1 >/dev/null ; then
+			debug "ANNOUNCE_DISCO: skip announcements, homie state is ready... \(bForceMQTTAnnounce=$bForceMQTTAnnounce\)" # (re-)announce ONLY IF restart or new day or necessary
 			return 0
 		fi
 		os_data="$( get_os_data_semi_starred_cached "$sTargetHost" 1 )" # refresh data from host if old or no data available
@@ -401,95 +424,59 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 		ad_fwname="$( storage_cache_read "$sTargetHost.os_name" 9999 )"
 		ad_fwversion="$( storage_cache_read "$sTargetHost.os_pretty_name" 9999 )"
 		ad_impl="$( storage_cache_read "$sTargetHost.os_id" 9999 )"
-		debug_if_verbose "announce_disco($1,$2): announcing with $ad_devname,$ad_fwname,$ad_fwversion,$ad_impl"
+		debug "announce_disco($1,$2): announcing with $ad_devname,$ad_fwname,$ad_fwversion,$ad_impl"
 	fi
 
 	publish_to_mqtt "debug/$1" "HOMIE ANOUNCEMENTS BEGIN"
 
-	homie_meta /homie "3.0.1"
-	homie_meta /state init	
-	homie_meta /name  "$ad_devname"
+	h_meta /homie "3.0.1"
+	h_meta /state init
+	h_meta /name  "$ad_devname"
 
-	[ "$ad_fwversion" -o "$2" ] && homie_meta /fw/version     "$ad_fwversion"
-	[ "$ad_fwname"    -o "$2" ] && homie_meta /fw/name        "$ad_fwname"
-	[ "$ad_impl"      -o "$2" ] && homie_meta /implementation "$ad_impl"
+	[ "$ad_fwversion" -o "$2" ] && h_meta /fw/version     "$ad_fwversion"
+	[ "$ad_fwname"    -o "$2" ] && h_meta /fw/name        "$ad_fwname"
+	[ "$ad_impl"      -o "$2" ] && h_meta /implementation "$ad_impl"
 
-	# homie_meta $1 "stats/interval" 600
+	# h_meta $1 "stats/interval" 600
 
-	homie_meta /nodes		"publicwifi,gluondata"
-	homie_meta /publicwifi/name       "Public Wifi"
-	homie_meta /publicwifi/type       "Public Wifi Network"
-	homie_meta /publicwifi/properties "clientscount,state,ssidshort,lastdate"
+	h_meta /nodes		"publicwifi,gluondata"
+	h_meta /publicwifi/name       "Public Wifi"
+	h_meta /publicwifi/type       "Public Wifi Network"
+	h_meta /publicwifi/properties "clientscount,state,ssidshort,lastdate"
+
+	h_multi /publicwifi/clientscount "Public WiFi client count" false "" integer "#" "-1:9999"
+	h_multi /publicwifi/state "Public WiFi state" "" "true" boolean "" ""
+
+	# h_multi() { # 1: root, 2: name, 3: retained, 4: settable, 5: datatype, 6: unit, 7: format
 
 	# Defaults are ... settable=false   retained=true
-	homie_meta /publicwifi/clientscount/name "Public WiFi client count"
-	homie_meta /publicwifi/clientscount/retained	false
-	homie_meta /publicwifi/clientscount/datatype	integer
-	homie_meta /publicwifi/clientscount/unit   	"#"
-	homie_meta /publicwifi/clientscount/format	"-1:9999"
 
-	homie_meta /publicwifi/state/name "Public WiFi state"
-	homie_meta /publicwifi/state/settable true
-	homie_meta /publicwifi/state/datatype boolean
-
-	homie_meta /publicwifi/ssidshort/name "Public WiFi short SSID"
-	homie_meta /publicwifi/ssidshort/retained false
 	_gluondomains=$( storage_cache_read "$sTargetHost.gluondomains" 99 )
 	if [ "$_gluondomains" ] ; then
-		_wifi_domains="$( echo $_gluondomains | tr -d "][*" )" # rough hack...
-		debug_if_verbose "wifi_domains: $_wifi_domains"
-		homie_meta /publicwifi/ssidshort/settable true
-		homie_meta /gluondata/ssidshort/datatype enum
-		homie_meta /gluondata/ssidshort/format "$_wifi_domains" # rough hack...
+		_wifi_domains="$( echo "$_gluondomains" | tr -d "][*" )" # rough hack...
+		debug "wifi_domains: $_wifi_domains"
+		h_multi /publicwifi/ssidshort "Public WiFi short SSID" false true enum "" "$_wifi_domains" # rough hack...
 	else
-		homie_meta /publicwifi/ssidshort/settable false
-		homie_meta /publicwifi/ssidshort/datatype string
-		homie_meta /gluondata/ssidshort/format ""
+		h_multi /publicwifi/ssidshort "Public WiFi short SSID" false "" string "" ""
 	fi
 
-	# Defaults are for ... settable=false
-	homie_meta /publicwifi/lastdate/name "Last date sent"
-	homie_meta /publicwifi/lastdate/retained false
-	homie_meta /publicwifi/lastdate/datatype DateTime
-	# homie_meta /publicwifi/lastdate/unit "#"
-	# homie_meta /publicwifi/lastdate/format "0:9999"
+	# h_multi() { # 1: root, 2: name, 3: retained, 4: settable, 5: datatype, 6: unit, 7: format
 
-	homie_meta /gluondata/name       "Node Data"
-	homie_meta /gluondata/type       "Gluon Data"
-	homie_meta /gluondata/properties "autoupdater-branch,autoupdater-enabled,gluon-version,release,model,core-domain"
+	h_multi /publicwifi/lastdate "Last date sent" false "" DateTime "" ""
 
-	homie_meta /gluondata/autoupdater-branch/name "Autoupdater Branch"
-	homie_meta /gluondata/autoupdater-branch/retained false
-	homie_meta /gluondata/autoupdater-branch/datatype string
+	h_meta /gluondata/name       "Node Data"
+	h_meta /gluondata/type       "Gluon Data"
+	h_meta /gluondata/properties "autoupdater-branch,autoupdater-enabled,gluon-version,release,model,core-domain"
 
-	homie_meta /gluondata/autoupdater-enabled/name "Autoupdater Enabled"
-	homie_meta /gluondata/autoupdater-enabled/retained false
-	homie_meta /gluondata/autoupdater-enabled/datatype boolean
+	h_multi /gluondata/autoupdater-branch "Autoupdater Branch" false "" string "" ""
+	h_multi /gluondata/autoupdater-enabled "Autoupdater Branch" false "" boolean "" ""
+	h_multi /gluondata/gluon-version "Gluon Version" false "" string "" ""
+	h_multi /gluondata/release "Local Release" false "" string "" ""
+	h_multi /gluondata/model "Hardware Model" false "" string "" ""
+	h_multi /gluondata/core-domain "Core Domain" false "" string "" ""
+	h_multi /gluondata/gluon-domains "Gluon Domains" false "" string "" ""
 
-	homie_meta /gluondata/gluon-version/name "Gluon Version"
-	homie_meta /gluondata/gluon-version/retained false
-	homie_meta /gluondata/gluon-version/datatype string
-
-	homie_meta /gluondata/release/name "Local Release"
-	homie_meta /gluondata/release/retained false	
-	homie_meta /gluondata/release/datatype string	
-
-	homie_meta /gluondata/model/name "Hardware Model"
-	homie_meta /gluondata/model/retained false	
-	homie_meta /gluondata/model/datatype string	
-
-	homie_meta /gluondata/core-domain/name "Core Domain"
-	homie_meta /gluondata/core-domain/retained false	
-	homie_meta /gluondata/core-domain/datatype string	
-
-	homie_meta /gluondata/gluon-domains/name "Gluon Domains"
-	homie_meta /gluondata/gluon-domains/retained false	
-	homie_meta /gluondata/gluon-domains/datatype string	
-
-	homie_meta /state ready
-
-	# ffmuc/alt-solln/publicwifi/localclients {"count":"3","localclients":[ {"addr":"3c:cd:...:7f:8a","name":"3c:cd:...:7f:8a"}, {"addr":"6c:c7:...:7e:de","name":"6c:c7:...:7e:de"}, {"addr":"b4:9c:...:25:5e","name":"b4:9c:...:25:5e"}],"host":"alt-solln"}
-	# skipping:   *device* ... *sw_version*:*Gluon YYYY.N*, before model
+	h_meta /state ready
 
 	# https://www.home-assistant.io/docs/mqtt/discovery/
 	# <discovery_prefix>/<component>/[<node_id>/]<object_id>/config
@@ -498,7 +485,7 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 	hass_announce "$sitecode" "$1" "publicwifi/ssidshort/set" "Short public SSID" "$ad_devname" "" "wifi"  # 5: value_json.count
 	hass_announce "$sitecode" "$1" "publicwifi/state/set"     "State of public SSID" "$ad_devname" "" "toggle-switch"  # 5: value_json.count
 	hass_announce "$sitecode" "$1" "publicwifi/lastdate"  	  "Last date wifi check" "$ad_devname" "" "clock-check-outline"  # 5: value_json.count
-	
+
 	publish_to_mqtt "debug/$1" "HOMIE ANOUNCEMENTS END"
 
 	bDeleteAnnouncement="" # end of side effect
@@ -511,30 +498,11 @@ hass_init() {
 
 	# homeassistant/sensor/0x00158d0003a401e2/linkquality/config
 	# {"icon":"mdi:signal","unit_of_measurement":"lqi","value_template":"{{ value_json.linkquality }}","state_topic":"zigbee2mqtt/Aqara-Sensor","json_attributes_topic":"zigbee2mqtt/Aqara-Sensor","name":"Aqara-Sensor_linkquality","unique_id":"0x00158d0003a401e2_linkquality_zigbee2mqtt","device":{"identifiers":["zigbee2mqtt_0x00158d0003a401e2"],"name":"Aqara-Sensor","sw_version":"Zigbee2mqtt 1.13.0","model":"MiJia temperature & humidity sensor (WSDCGQ01LM)","manufacturer":"Xiaomi"},"availability_topic":"zigbee2mqtt/bridge/state"}
-string='{
-   "availability_topic" : "zigbee2mqtt/bridge/state",
-   "value_template" : "{{ value_json.linkquality }}",
-   "unit_of_measurement" : "lqi",
-   "unique_id" : "0x00158d0003a401e2_linkquality_zigbee2mqtt",
-   "json_attributes_topic" : "zigbee2mqtt/Aqara-Sensor",
-   "icon" : "mdi:signal",
-   "device" : {
-      "name" : "Aqara-Sensor",
-      "identifiers" : [
-         "zigbee2mqtt_0x00158d0003a401e2"
-      ],
-      "sw_version" : "Zigbee2mqtt 1.13.0",
-      "model" : "MiJia temperature & humidity sensor (WSDCGQ01LM)",
-      "manufacturer" : "Xiaomi"
-   },
-   "state_topic" : "zigbee2mqtt/Aqara-Sensor",
-   "name" : "Aqara-Sensor_linkquality"
- }'
 
 	node_id=0x00158d0003a401e2
 	typ=linkquality
 	dev=Aqara-Sensor
-	true publish_to_mqtt_starred "homeassistant/sensor/$node_id/$typ/config" "{
+	true _pms "homeassistant/sensor/$node_id/$typ/config" "{
    *availability_topic* : *zigbee2mqtt/bridge/state*,
    *value_template* : *{{ value_json.$typ }}*,
    *unit_of_measurement* : *lqi*,
@@ -553,12 +521,12 @@ string='{
    *state_topic* : *zigbee2mqtt/$dev*,
    *name* : *${dev}_$typ*
  }"
-	
+
 	# homeassistant/sensor/sensorBedroomT/config
     #  {"device_class": "temperature", "name": "Temperature", "state_topic": "homeassistant/sensor/sensorBedroom/state", "unit_of_measurement": "°C", "value_template": "{{ value_json.temperature}}" }
 
 	# ffmuc/alt-solln/publicwifi/localclients {"count":"3","localclients":[ {"addr":"3c:cd:...:7f:8a","name":"3c:cd:...:7f:8a"}, {"addr":"6c:c7:...:7e:de","name":"6c:c7:...:7e:de"}, {"addr":"b4:9c:...:25:5e","name":"b4:9c:...:25:5e"}],"host":"alt-solln"}
-	
+
 	}
 
 # Initialize our own variables:
@@ -573,15 +541,15 @@ write_uci_val=""
 
 determine_cmd_mospub() {
 		cmd_mospub="true" # use the command "true" as unfunctional default
-		command -v "mosquitto_pub" >/dev/null && cmd_mospub="mosquitto_pub"
-		debug_if_verbose "Variable/command \$cmd_mospub is *$cmd_mospub* (true is dummy!)."
+		_cmv "mosquitto_pub" && cmd_mospub="mosquitto_pub"
+		debug "Variable/command \$cmd_mospub is *$cmd_mospub* (true is dummy!)."
 	}
 determine_cmd_mospub
 
-jsonfilter=$( command -v jq ) || jsonfilter=$( command -v jsonfilter 2>/dev/null ) || error_and_exit "jsonfilter or jq must be available."
+jsonfilter=$( command -v jq ) || jsonfilter=$( command -v jsonfilter ) || error_and_exit "jsonfilter or jq must be available."
 jsonfilter=$( basename $jsonfilter )
-command -v json_pp >/dev/null || alias json_pp=cat
-alias _jqbeautify="jq -Sm" ; command -v jq >/dev/null || alias _jqbeautify="cat"
+_cmv json_pp || alias json_pp=cat
+alias _jqbeautify="jq -Sm" ; _cmv jq || alias _jqbeautify="cat"
 
 if [ -d $gluondir ] ; then   # I'm running on Gluon (which is based on OpenWrt)
 	mqtthost="test.mosquitto.org"
@@ -598,9 +566,9 @@ fi
 
 for s in /var/log /tmp ; do # find a suitable writable dir. Prefer /var/log over /tmp on openhabian (because of zram).
 	cachedir="$s/${sName%.sh}.$( id -nu )"
-	tmpdir="$cachedir/$$" 
-	debug_if_verbose "Trying tmpdir=$tmpdir"
-	{ [ -d "$cachedir" ] || mkdir -p "$cachedir" 2> /dev/null ; } && mkdir "$tmpdir" && chmod o-rwx "$cachedir" "$tmpdir" && break
+	tmpdir="$cachedir/$$"
+	debug "Trying tmpdir=$tmpdir"
+	{ [ -d "$cachedir" ] || mkdir -p "$cachedir" 2>/dev/null ; } && mkdir "$tmpdir" && chmod o-rwx "$cachedir" "$tmpdir" && break
 done
 
 debugfile="$tmpdir/debugfile"
@@ -638,6 +606,7 @@ do
 	x) bVerbose="yes"
 		set -o xtrace
         ;;
+	l)  ;;
 	q) bQuiet="yes"
 		;;
     t) # option unused
@@ -646,7 +615,7 @@ do
 		bForceMQTTAnnounce="yes" # -a forces auto-discovery announcements even if retained before' ...
 		;;
 	m) [ "$cmd_mospub" = "true" ] && error "mosquitto_pub is missing!"
-		case "$OPTARG" in  #  http://www.steves-internet-guide.com/mqtt-hosting-brokers-and-servers/
+		case "$OPTARG" in     #  http://www.steves-internet-guide.com/mqtt-hosting-brokers-and-servers/
 		test)	mqtthost="test.mosquitto.org" ;;
 		eclipse) mqtthost="mqtt.eclipse.org"   ;;
         hivemq)	mqtthost="broker.hivemq.com"   ;;
@@ -678,16 +647,16 @@ done
 shift "$((OPTIND-1))"   # Discard the options parsed so far and leave the rest of the cmd line...
 
 if [ "$homie" -o "$mqtthost" ] ; then # enable MQTT
-	: debug_if_verbose "MQTT commands not aliased."
+	: debug "MQTT commands not aliased."
 else
-	debug_if_verbose "MQTT commands are aliased."
-	alias publish_to_mqtt_starred="true skipped publish_to_mqtt_starred"
-	alias homie_line="true skipped homie_line"
-	alias homie_meta="true skipped homie_meta"
+	debug "MQTT commands are aliased."
+	alias _pms="true skipped _pms"
+	alias h_line="true skipped h_line"
+	alias h_meta="true skipped h_meta"
 fi
 
 # find a name for the collection of all clients here:
-for ffhost in $( echo "${ffhosts:-localhost}" | tr -s "," " " ) # for each given host, maybe just one... (tr needed on ash)
+for ffhost in $( echo "${ffhosts:-localhost}" | tr -s "," " " ) # for each given host, maybe just one...
 do
 	if [ "$ffhost" = "localhost" ] ; then
 		sSshUser="NOUSER"
@@ -702,7 +671,7 @@ do
 			# echo_if_not_quiet "root@$ffhost:" "$@" 1>&2
 			_r=$( ssh -T "root@$ffhost" -q "$@" ) ; _rc=$?
 			if [ "$_rc" -gt 0 ] ; then
-				debug_if_verbose "ssh -T root@$ffhost returned $_rc" 1>&2
+				debug "ssh -T root@$ffhost returned $_rc" 1>&2
 			else
 				echo "$_r" | tr -d '`'
 			fi
@@ -710,7 +679,7 @@ do
   		  }
 		sTargetHost=$( echo "$ffhost" | awk -- '{ print gensub("-e$", "", 1, gensub("\\..*", "", 1, tolower($0) ) ) }' ) # remove any trailing "-e" and domain name
 	fi
-	
+
 	[ "$sitecode" ] || sitecode="$( get_sitecode_cached "$sTargetHost" || get_most_frequent_sitecode )" # cant do it earlier: Need a $sTargetHost to determine a default...
 
 	tmpfilemqtt="$tmpdir/mqtt.$ffhost"
@@ -724,7 +693,7 @@ do
 		if [ "$bDoAllOfIt" ] ; then
 			echo "$uci_val"
 			continue
-		fi		
+		fi	
 		uci_val="$(extract_uci_values "$uci_val")"
 		if [ -z "$write_uci_val" ]  ; 		then
 			echo "$uci_val" # it was a query only = no writes
@@ -738,34 +707,34 @@ do
 
 		if [ "$commandsToDo" = "mqtt" ] ; then
 			# spawn a subprocess that will wait for a MQTT message....
-			sSysMqqtDummyTopic='$SYS/broker/uptime'
+			sSysMqqtDummyTopic="\$SYS/broker/uptime"
 			readonly fPipe="$tmpdir/f"
 			mkfifo "$fPipe" || error_and_exit "Could not create $fPipe (rc=$?)."
 			_prefix="-t $sitecode/$sTargetHost"
 			_subscriptions="$_prefix/+/get $_prefix/+/+/get $_prefix/+/set $_prefix/+/+/set"
 			[ "$homie" ] && _subscriptions="$_subscriptions -t homie/$sTargetHost/+/+/set"
-			debug_if_verbose "SUBSCRIBING to MQTT broker: \"$mqtthost $_subscriptions\", homie=$homie"
+			debug "SUBSCRIBING to MQTT broker: \"$mqtthost $_subscriptions\", homie=$homie"
 			_last_will_options="--will-topic $sitecode/$sTargetHost/mqtt/STATUS --will-payload OFF"
 			mosquitto_sub -v -R ${mqtthost:+-h $mqtthost}  $_subscriptions -t "$sSysMqqtDummyTopic/maximum" $_last_will_options | awk -- '{ print strftime("MQTT ") $0 ; fflush() }' > $fPipe  &  #  pipe non-stale commands from MQTT broker
 			# set +x
 			readonly nPidMosquitto=$!
-			command="mqtt" && reply_to_mqtt_status "ON" "started subprocess PID $nPidMosquitto, subscribed $( echo "$_subscriptions" | sed -e 's/-t //g' )"
+			command="mqtt" && reply_to_mqtt_status "ON" "started subprocess PID $nPidMosquitto, subscribed $( echo "$_subscriptions" | sed 's/-t //g' )"
 			while sleep 120 ; do echo PERIODIC noop ; done  > $fPipe  &  #  pipe periodic stuff into the pipe to make it wakeup
 			readonly nPidPeriodic=$!
 			trap_function() {
 					rm -f $fPipe
 					kill $nPidMosquitto $nPidPeriodic
 					command="mqtt" && reply_to_mqtt_status "OK" "ending"
- 					debug_if_verbose "$sName: kill'ed $nPidMosquitto $nPidPeriodic, sent MQTT, now stopping at $( date )"
-				}			
+ 					debug "$sName: kill'ed $nPidMosquitto $nPidPeriodic, sent MQTT, now stopping at $( date )"
+				}		
 			trap 'trap_function' INT QUIT TERM
 			# trap "kill $nPidMosquitto $nPidPeriodic ; rm -f $fPipe" INT QUIT EXIT  # variables are set now for cleaning up
 		fi
 		# NB: OpenHab Homie autodiscovery doesn't like uppercase characters at the beginning...
-		[ "$homie" ] && os_data="$( get_os_data_semi_starred_cached "$sTargetHost" 1 )" && homie="$( echo "$sTargetHost" | awk -- '{ print tolower($0) }' )" &&
+		[ "$homie" ] && os_data="$( get_os_data_semi_starred_cached "$sTargetHost" 1 )" && homie="$( _tolower "$sTargetHost" )" &&
 			 [ "$commandsToDo" != "homie-delete" ] && announce_disco "$homie"
-		
-		debug_if_verbose "Entering command loop (commandsToDo=$commandsToDo)"
+	
+		debug "Entering command loop (commandsToDo=$commandsToDo)"
 		while [ "$commandsToDo" ] ; do
 			if [ "$commandsToDo" = "mqtt" ]  ;  then
 				read -r sPipeType command commandopts < "$fPipe" ; nReadCode="$?"
@@ -775,7 +744,7 @@ do
 				if [ "$sPipeType" = "MQTT" ] ; then
 					_prefix="$( echo "$command" | awk -v FS=/ '{ print $1 "/" $2 }' )"
 					_msg="$( echo "$commandopts" | awk '{ print $1 }' )" && [ "$_msg" = "(null)" ] && _msg=""
-					debug_if_verbose "Read raw MQTT command: $command  $_msg  (prefix=$_prefix, sitecode=$sitecode)"
+					debug "Read raw MQTT command: $command  $_msg  (prefix=$_prefix, sitecode=$sitecode)"
 					case "$_prefix" in
 					"homie/$sTargetHost"|"$sitecode/$sTargetHost")
 						# _fullcommand="$( echo "$command" | awk -v FS=/ 'NF && NF-1 { print $3 ( $4 && $4 != "get" ? "/" $4 : "" ) ( $5 && $5 != "get" ? "/" $5 : "" ) }' )${_msg:++$_msg}"
@@ -802,20 +771,20 @@ do
 						;; # extract last part of topic, must have at least one /
 					esac
 					command=${command%/get} && command=${command%/GET}
-					debug_if_verbose "Mapped MQTT command: $command"
+					debug "Mapped MQTT command: $command"
 				fi
 			else
 				     command="$( echo "$commandsToDo" | cut -d "," -f 1     )"
 				commandsToDo="$( echo "$commandsToDo" | cut -d "," -f 2- -s )"
 			     commandopts="$( echo "$command"      | cut -d "+" -f 2- -s )" # split further...
 				     command="$( echo "$command"      | cut -d "+" -f 1     )"
-			fi			
+			fi		
 			    command="$( echo "$command"     | tr -c -d "A-Za-z0-9_-" )" # for security reasons
 			commandopts="$( echo "$commandopts" | tr -c -d "A-Za-z0-9_-" )" # for security reasons
 
 			case "$command" in
 			mqtt|noop|ignore|echo)
-				debug_if_verbose "Command $command $commandopts ($( date +%T ))"
+				debug "Command $command $commandopts ($( date +%T ))"
 				[ "$command" = "echo" ] && reply_to_mqtt_status "OK" "Command $command $commandopts"
 				;;
 			loop)
@@ -847,34 +816,34 @@ do
 				fi
 
 				os_data="$( get_os_data_semi_starred_cached "$sTargetHost" 1 )"
-				debug_if_verbose "$os_data"
+				debug "$os_data"
 
 				# ... try to install mosquitto if not there yet
-				if [ "$( ssh_cmd "command -v mosquitto_pub" 2>/dev/null )" ] ; then
+				if [ "$( ssh_cmd "command -v mosquitto_pub" >/dev/null )" ] ; then
 					echo_if_not_quiet "mosquitto_pub is already installed on $ffhost..."
 				else
 					echo_if_not_quiet "mosquitto_pub was not found on $ffhost... trying to determine install cmd ..."
-					installcmd=$( ssh_cmd "command -v opkg || command -v apt || echo nothing" 2>/dev/null ) 					
+					installcmd=$( ssh_cmd "command -v opkg || command -v apt || echo nothing" 2>/dev/null ) 				
 					case "$( basename "$installcmd" )" in
 					opkg)
 						_cmd="opkg update ; opkg install mosquitto-client-nossl"
 						echo_if_not_quiet "Executing: $_cmd"
-						ssh_cmd "$_cmd" || { echo_if_not_quiet "ssh_cmd failed: $_cmd, aborting ..." ; continue ; }
+						ssh_cmd "$_cmd" # || { echo_if_not_quiet "ssh_cmd failed: $_cmd, aborting ..." ; continue ; }
 						;;
 					apt)
 						_cmd="apt update && apt install mosquitto-clients"
 						echo_if_not_quiet "Executing: $_cmd"
-						ssh_cmd "$_cmd" || { echo_if_not_quiet "ssh_cmd failed: $_cmd, aborting ..." ; continue ; }
+						ssh_cmd "$_cmd" # || { echo_if_not_quiet "ssh_cmd failed: $_cmd, aborting ..." ; continue ; }
 						;;
 					nothing)
 						error_and_exit "ERROR: opkg / apt not found on $ffhost. Stopping..."
 						;;
 					esac
-				fi
+				fi || { echo_if_not_quiet "ssh_cmd failed: $_cmd, aborting ..." ; continue ; }
 
 				# here a quite Gluon-specific part. Trying to determine this by checking for the UCI entry autoupdater_branch
 				autoupdater_branch="$( get_uci_on_host "autoupdater.settings.branch" )"
-				debug_if_verbose "autoupdater_branch=$autoupdater_branch"
+				debug "autoupdater_branch=$autoupdater_branch"
 				if [ -z "$autoupdater_branch" -o -z "$bDoAllOfIt" ] ; then
 					# Probably Non-Freifunk
 					echo_if_not_quiet "Stopping for target $sTargetHost (autoupdater_branch=$autoupdater_branch,bDoAllOfIt=$bDoAllOfIt)..."
@@ -910,22 +879,22 @@ do
 						firewall.client_mqtt.target='ACCEPT'
 						firewall.client_mqtt.proto='tcp'
 EOF
-					{ ssh_cmd "[ -d $gluondir ] && gluon-reconfigure" ; } || debug_if_verbose "Trying to find $gluondir or gluon-reconfigure failed..."
+					{ ssh_cmd "[ -d $gluondir ] && gluon-reconfigure" ; } || debug "Trying to find $gluondir or gluon-reconfigure failed..."
 				fi
 				_pubcmd="$cmd_mospub -h test.mosquitto.org" # caution: Freifunk/Gluon seems to need IPV6 connectivity, not all brokers have it!
 				_topic="\"$sitecode/\`tr A-Z a-z < /proc/sys/kernel/hostname\`/installation\"" # tr will run on remote host!
-				debug_if_verbose "Will send MQTT test message: $_pubcmd $_topic"
+				debug "Will send MQTT test message: $_pubcmd $_topic"
 				ssh_cmd "$_pubcmd -t $_topic -r -m \"TEST\""
 				retval="$?"
 				if [ $retval = 0 ] ; then
-					debug_if_verbose "$_pubcmd $_topic had succeeded, now removing the retained msg again ..."
+					debug "$_pubcmd $_topic had succeeded, now removing the retained msg again ..."
 					ssh_cmd "mosquitto_sub -h test.mosquitto.org -t $_topic -v -C 1 -W 5  --remove-retained"
 				else
 					echo_if_not_quiet "$_pubcmd failed with $retval on remote host (might happen sometimes)"
 				fi
 
 				if ssh_cmd "crontab -l" | grep "$sName" ; then
-					debug_if_verbose "This crontab entry containing '$sName' had been found... Leaving crontab unmodified."
+					debug "This crontab entry containing '$sName' had been found... Leaving crontab unmodified."
 				else
 					echo_if_not_quiet "crontab entry with '$sName' not found... adding a simple one... pls modify it later!!"
 					_cronentry="2 * * * * sleep 15 ; $sName -c machine-data -m test.mosquitto.org"
@@ -936,21 +905,33 @@ EOF
 			filecopy)
 				check_read_mqqt_broker || continue
 				[ -z "$filetocopy" ] && filetocopy="$commandopts"
+				#DELETE_BEGIN#   # Delete this script part when compressing
 				_tmpfile="$cachedir/$( basename "$filetocopy" ).$$"
-				cp -Lpr "$filetocopy" $_tmpfile && 
-					sed -e 's/^[ \t]*//' -e 's/\(^[ \t]*\|  *\)#\($\|#* [^"].*$\)//g' -e 's/() *{/(){/' -e 's/[\t ]*\t[\t ]*/\t/g' -e '/^$/d' -e 's/   *"/ "/g' -e 's/"   */" /g' -e 's/ *| */|/g' -e 's/\$( /$(/g' -e 's/\$(echo /$(e /g' < "$filetocopy" > $_tmpfile
-					#      ^Whitespace      WhiteSpace # Comment                          () *{            Whitesp tab Whitespace   emptyline     WS bef Dou Qts  WS after DblQts     sp pipe sp   spaceAfter$(      echo to e after $(
+				set -x
+				cp -Lpr "$filetocopy" $_tmpfile &&
+					sed -e '/[ \t]#DELETE_BEGIN#/,/[ \t]#DELETE_END#/d' -i $_tmpfile && 
+					sed -e 's/^[ \t]*//' -e 's/\(^[ \t]*\|  *\)#\($\|#* [^"].*$\)//g' -e 's/() *{/(){/' -e 's/[\t ]*\t[\t ]*/\t/g' -e '/^$/d' -e 's/   *"/ "/g' -e 's/"   */" /g' -e 's,\$( ,$(,g' -e 's, )",)",g'  -e 's,\$(echo ,$(e ,g' -e 's,\t*$,,g' -e 's,[^"]local ,l ,' -i "$_tmpfile" && 
+					#      ^Whitespace      WhiteSpace # Comment                          () *{            Whitesp tab Whitespace   emptyline     WS bef Dou Qts  WS after DblQts  spaceAfter$(     spaceBefore)"    echo to e after $(     tab at eol      local to alias l
+						sed -E -i "$_tmpfile"  -e 's,[ \t]*(&&|;|>|>>|\|)[ \t]*,\1,g' && #  -e 's,[^\)]\) [^a-zA-Z],),g'    && # remove any white space around && or ; or | , but not << or <
+						ash -x -n "$_tmpfile" # smoke test syntax of compressed script
 				_rc=$?
-				debug_if_verbose "Command $command: $filetocopy ($( wc -c < $filetocopy )) trimmed in $_tmpfile ($( wc -c < $_tmpfile )) - rc=$_rc"
-
-				if scp -p ${bQuiet:+-q} "$_tmpfile" "$sSshUser:/sbin/$( basename "$filetocopy" )" ; then
-					debug_if_verbose "$filetocopy ($_tmpfile) copied to $sSshUser:/sbin"
-					cp -p $_tmpfile "$cachedir/$( basename "$filetocopy" ).save" 2>/dev/null || true
-					rm $_tmpfile
-				else
-					debug_if_verbose "scp $filetocopy ($_tmpfile) to /sbin failed - retrying to /tmp"
-					scp -p "$_tmpfile" "$sSshUser:/tmp/$( basename "$filetocopy" )"
+				set +x
+				debug "Command $command: $filetocopy ($( wc -c < $filetocopy )) trim to $_tmpfile ($( wc -c < $_tmpfile )) : rc=$_rc"
+				cp -p $_tmpfile "$cachedir/$( basename "$filetocopy" ).save" 2>/dev/null || true
+				if [ "$_rc" != 0 ] ; then
+					error_and_exit "Reducing script $_tmpfile returned error!"
 				fi
+				filetocopy="$_tmpfile"
+				#DELETE_END#
+				if scp -p ${bQuiet:+-q} "$filetocopy" "$sSshUser:/sbin/$( basename "$filetocopy" )" ; then
+					debug "$filetocopy copied to $sSshUser:/sbin"
+				else
+					debug "scp $filetocopy to /sbin failed - retrying to remote /tmp"
+					scp -p "$filetocopy" "$sSshUser:/tmp/$( basename "$filetocopy" )"
+				fi
+				#DELETE_BEGIN#
+				rm $_tmpfile   
+				#DELETE_END#
 				;;
 			sh)
 				check_read_mqqt_broker || continue
@@ -961,71 +942,73 @@ EOF
 				commandsToDo="localclients,ffstatus,gluondata,machine-data,$commandsToDo"
 				
 				uptimecmd="cat /proc/uptime" && [ "$ffhost" != localhost ] && uptimecmd="$0 -h $ffhost $uptimecmd"
-				homieuptime=$( $uptimecmd ) && homie_line "$homie/\$stats/uptime" "$( echo "$homieuptime" | cut -f 1 -d . )"
+				homieuptime="$( $uptimecmd )" && h_line "$homie/\$stats/uptime" "$( echo "$homieuptime" | cut -f 1 -d . )"
 				;;
 			homie-delete|disco-delete|discovery-delete)
 				check_read_mqqt_broker || continue
-				homie="$( echo "$sTargetHost" | awk -- '{ print tolower($0) }' )" # duplicated code...
+				homie="$( _tolower "$sTargetHost" )" # duplicated code...
 				announce_disco "$homie" "-d"
 				;;
 			ffdown)
 				check_read_mqqt_broker || continue
-				ff_if_pub="$( get_public_if_cached "$sTargetHost" )"
-				# [ -z "$ff_if_pub" ] && debug_if_verbose "defaulting to public interface $ff_if_pub1" &&  ff_if_pub="$ff_if_pub1"
-				new_ssid=$( ssh_cmd "iw dev $ff_if_pub del" 2>&1 ) # stop Freifunk public interface
+				get_public_if_cached "" # sets ff_if_pub and sSsidBase
+				# [ -z "$ff_if_pub" ] && debug "defaulting to public interface $ff_if_pub1" &&  ff_if_pub="$ff_if_pub1"
+				new_ssid="$( ssh_cmd "iw dev $ff_if_pub del" 2>&1 )" # stop Freifunk public interface
 				echo "$new_ssid" | grep -q 'No such.* device' && reply_to_mqtt_status "ERROR" "$new_ssid" && new_ssid=""
 				echo_if_not_quiet "$sTargetHost: Ran wifi down on public $ff_if_pub (new_ssid=$new_ssid)"
-				homie_line "$homie/publicwifi/clientscount" "-1"
+				h_line "$homie/publicwifi/clientscount" "-1"
 				[ "$new_ssid" ] && reply_to_mqtt_status "OK" "new_ssid=$new_ssid"
 				commandsToDo="ffstatus${commandsToDo:+,$commandsToDo}"
 				;;
 			ffup|ffstatus)
-				ff_if_pub="$( get_public_if_cached "$sTargetHost" )"
-				# [ -z "$ff_if_pub" ] && debug_if_verbose "defaulting to public interface $ff_if_pub1" &&  ff_if_pub="$ff_if_pub1"
-				debug_if_verbose "Now preparing $command on host $sTargetHost (if=$ff_if_pub) ..."
+				get_public_if_cached "" # sets ff_if_pub and sSsidBase
+				# [ -z "$ff_if_pub" ] && debug "defaulting to public interface $ff_if_pub1" &&  ff_if_pub="$ff_if_pub1"
+				debug "Now preparing $command on host $sTargetHost (if=$ff_if_pub) ..."
 				if [ "$command" = "ffup" ] ; then
 					check_read_mqqt_broker || continue
 					reply_to_mqtt_status "ONGOING" "Will run $command for $sTargetHost"
 					tempstr="$( ssh_cmd "wifi up && sleep $wifiupsleep && iwinfo $ff_if_pub info" )"
 				elif [ "$new_ssid" ] ; then
-					debug_if_verbose "Reused new_ssid=$new_ssid..."
+					debug "Reused new_ssid=$new_ssid..."
 					tempstr="$new_ssid"
 				else
 					tempstr="$( ssh_cmd "iwinfo $ff_if_pub info" 2>&1 )"
 				fi
 				retval="$?"			
-				homie_line "$homie/publicwifi/lastdate" "$( date -Iseconds )"
+				h_line "$homie/publicwifi/lastdate" "$( date -Iseconds )"
 				if [ "$retval" != 0 -o -z "$tempstr" ] || echo "$tempstr" | grep -w -q -E "open failed|connect failed|No such" ; then
 					# something went wrong...
 					tempstr="$( echo "$tempstr" | xargs echo )"
 					error "rc=$retval for executing $command - $tempstr"
-					homie_line "$homie/publicwifi/state" "false"
+					h_line "$homie/publicwifi/state" "false"
 					if [ "$retval" = 1 ] ; then
 						reply_to_mqtt_status "OFF" "rc=$retval"
-						publish_to_mqtt_starred "/publicwifi/state"     "OFF"
+						_pms "/publicwifi/state"     "OFF"
 					elif [ "$retval" = 255 ] ; then
 						reply_to_mqtt_status "OFF" "rc=$retval (unreachable?)"
-						publish_to_mqtt_starred "/publicwifi/state"     "OFF" # better: ERROR ?
+						_pms "/publicwifi/state"     "OFF" # better: ERROR ?
 					else
 						reply_to_mqtt_status "ERROR" "rc=$retval // $tempstr"
-						publish_to_mqtt_starred "/publicwifi/state"     "OFF"  # better: ERROR ?
+						_pms "/publicwifi/state"     "OFF"  # better: ERROR ?
 					fi
 				else # ... went ok.
-					new_ssid=$( echo "$tempstr" | sed -e '/ESSID/s/[^:]*: //' -e 's/\"//g'  -e '1q' )
+					new_ssid="$( echo "$tempstr" | sed -e '/ESSID/s/[^:]*: //' -e 's/\"//g' -e '1q' )"
 					echo "$new_ssid"
 					new_ssid_short="$( printf "%s" "$new_ssid" | sed -e 's,.*/,,' -e 's/"//g'  )"
 					reply_to_mqtt_status "OK" "$new_ssid"
-					homie_line "$homie/publicwifi/state"		"true"
-					homie_line "$homie/publicwifi/ssidshort" 	"$new_ssid_short"
-					publish_to_mqtt_starred "/publicwifi/state"     "ON"
-					publish_to_mqtt_starred "/publicwifi/ssidshort" "$new_ssid_short"
+					h_line "$homie/publicwifi/state"		"true"
+					h_line "$homie/publicwifi/ssidshort" 	"$new_ssid_short"
+					_pms "/publicwifi/state"     "ON"
+					_pms "/publicwifi/ssidshort" "$new_ssid_short"
 				fi
 				;;
 			ffcond)
 				check_read_mqqt_broker || continue
-				result=$( ssh_cmd '{ for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | tee $cachedir/wifis ; echo ++++++++++++ ; iwinfo | fgrep client0 '  )
-				ifresult=$( echo "$result" | grep -A 3 '++++++++++' | grep -m 2 "client0 *ESSID:" )
-				if echo "$result" | grep -A 9 -w '6e:a3:09:ea:31:e00' | grep -w "SSID:.$ssidbase"
+				get_public_if_cached # sets ff_if_pub and sSsidBase
+				result="$( ssh_cmd '{ for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | tee $cachedir/wifis ; echo ++++++++++++ ; iwinfo | fgrep client0 '  )"
+				ifresult="$( echo "$result" | grep -A 3 '++++++++++' | grep -m 2 "client0 *ESSID:" )"
+				error_and_exit "UNFINISHED CODE"
+				if echo "$result" | grep -A 9 -w '6e:a3:09:ea:31:e00' | grep -w "SSID:.$sSsidBase"
 				then
 					# client0   ESSID: "muenchen.freifunk.net/welt"
 					echo_if_not_quiet "To be upped..."
@@ -1034,13 +1017,13 @@ EOF
 					echo_if_not_quiet "To be downed..."
 					if [ -n "$ifresult" ] ; then commandsToDo="ffdown${commandsToDo:+,$commandsToDo}" ; fi
 				fi
-				debug_if_verbose "commandsToDo=$commandsToDo"
+				debug "commandsToDo=$commandsToDo"
 				# ( ( iwinfo | fgrep client0 ) || ( wifi up ; echo wifi upped. ) )	) || ( iwinfo | fgrep client0 && iw dev client0 del ; echo if downed )
 				;;
 			ffotherssid|ffotherssid1|ffotherssid2|ffotherssid_*|ffotherssid-*)
 				check_read_mqqt_broker || continue
-				ff_if_pub="$( get_public_if_cached "$sTargetHost" )"
-				# [ -z "$ff_if_pub" ] && debug_if_verbose "defaulting to public interface $ff_if_pub1" &&  ff_if_pub="$ff_if_pub1"
+				get_public_if_cached # sets ff_if_pub and sSsidBase
+				# [ -z "$ff_if_pub" ] && debug "defaulting to public interface $ff_if_pub1" &&  ff_if_pub="$ff_if_pub1"
 
 				# ["freising", "gauting", "muc_cty", "muc_nord", "muc_ost", "muc_sued", "muc_west", "uml_nord", "uml_ost", "uml_sued", "uml_west", "welt"]
 				# ssh_cmd "ip link set $ff_if_pub up" # start Freifunk public interface
@@ -1058,17 +1041,17 @@ EOF
 				esac
 				command="ffotherssid"
 				# further checks for allowed and lawful SSID values among gluon domains ....
-				if [ "$_shortssid" = "OFFLINE" -o "$_shortssid" = "MYHOSTNAME" ] || expr match "$( get_gluon_domains_starred_cached "$sTargetHost" )" ".*\*${_shortssid}[*]" > /dev/null ; then
+				if [ "$_shortssid" = "OFFLINE" -o "$_shortssid" = "MYHOSTNAME" ] || expr "$( get_gluon_domains_starred_cached "$sTargetHost" )"  :  ".*\*${_shortssid}[*]" > /dev/null ; then
 					[ "$_shortssid" = "MYHOSTNAME" ] && _shortssid="$sTargetHost"
-					otherssid="$ssidbase/$_shortssid"
+					otherssid="$sSsidBase/$_shortssid"
 					reply_to_mqtt_status "ONGOING" "Setting short SSID: $_shortssid"
 				else
 					reply_to_mqtt_status "ERROR" "Illegal shortssid: $_shortssid"
-					publish_to_mqtt_starred "/gluondata/gluon-domains" "$( get_gluon_domains_starred_cached $sTargetHost )"
+					_pms "/gluondata/gluon-domains" "$( get_gluon_domains_starred_cached $sTargetHost )"
 					echo_if_not_quiet "Illegal shortssid: $_shortssid" && continue
 				fi
-				result=$( ssh_cmd "iwinfo $ff_if_pub info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; uci set wireless.client_radio0.ssid=$otherssid ;
-				              wifi up ; sleep $wifiupsleep ; iwinfo $ff_if_pub info | sed -e 's/: /:/' -e '1q' " 2>&1 )
+				result="$( ssh_cmd "iwinfo $ff_if_pub info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; uci set wireless.client_radio0.ssid=$otherssid ;
+				              wifi up ; sleep $wifiupsleep ; iwinfo $ff_if_pub info | sed -e 's/: /:/' -e '1q' " 2>&1 )"
 				_rc="$?"
 				#### uci set wireless.client_radio0.ssid=$otherkey ; uci set wireless.client_radio0.encryption=psk2 ;
 				#### while true ; do sleep 1 ; date ; iwinfo $ff_if_pub info | grep SSID ; done
@@ -1085,22 +1068,22 @@ EOF
 					reply_to_mqtt_status "ERROR" "$_logmsg"
 					continue
 				else
-					prev_ssid=$( printf "$result" | grep SSIDPREV: | cut -d : -f 2 )
-					new_ssid=$(  printf "$result" | grep ESSID:    | cut -d : -f 2 | tr -d \" )
+					prev_ssid="$( e "$result" | grep SSIDPREV: | cut -d : -f 2 )"
+					new_ssid="$(  e "$result" | grep ESSID:    | cut -d : -f 2 | tr -d \" )"
 					echo_if_not_quiet "%s: Set ssid=%s, then wifi up. Now $new_ssid. // id=$(id -nu)/$(id -u)\n" "$sTargetHost" "$otherssid"
 					commandsToDo="ffstatus${commandsToDo:+,$commandsToDo}" # ... implicitly followed by a ffstatus
 				fi
 				;;
 			gluonreconfigure)
 				check_read_mqqt_broker || continue
-				ff_if_pub="$( get_public_if_cached "$sTargetHost" )"
-				# [ -z "$ff_if_pub" ] && debug_if_verbose "defaulting to public interface $ff_if_pub1" &&  ff_if_pub="$ff_if_pub1"
+				get_public_if_cached # sets ff_if_pub and sSsidBase
+				# [ -z "$ff_if_pub" ] && debug "defaulting to public interface $ff_if_pub1" &&  ff_if_pub="$ff_if_pub1"
 
 				# ssh_cmd "ip link set $ff_if_pub up" # start Freifunk public interface
 				# 6 seconds needed for interface!
-				result=$( ssh_cmd "iwinfo $ff_if_pub info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; gluon-reconfigure | tail -3 ; wifi up  ; sleep $wifiupsleep ; iwinfo $ff_if_pub info | sed -e 's/: /:/' -e '1q' " )
-				prev_ssid=$( printf "$result" | grep SSIDPREV | cut -d : -f 2 )
-				new_ssid=$( printf "$result" | grep ESSID | cut -d : -f 2 )
+				result="$( ssh_cmd "iwinfo $ff_if_pub info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; gluon-reconfigure | tail -3 ; wifi up  ; sleep $wifiupsleep ; iwinfo $ff_if_pub info | sed -e 's/: /:/' -e '1q' " )"
+				prev_ssid="$( echo "$result" | grep SSIDPREV | cut -d : -f 2 )"
+				new_ssid="$( echo "$result" | grep ESSID | cut -d : -f 2 )"
 				echo_if_not_quiet "$sTargetHost: Ran gluon-reconfigure, previously $prev_ssid, then wifi up, then $new_ssid. id=$(id -nu)/$(id -u)\n"
 				if [ "$prev_ssid" != "$new_ssid" ] ; then
 					commandsToDo="localclients${commandsToDo:+,$commandsToDo}"
@@ -1130,55 +1113,55 @@ EOF
 				gluonrelease="$(    echo "$_output" | sed -n -e 6p )"
 
 				echo_if_not_quiet		"$os_data"
-				publish_to_mqtt_starred	"/gluondata/os-data" "$os_data"
-				homie_line              "$homie/gluondata/os-data" "$os_data"
+				_pms	"/gluondata/os-data" "$os_data"
+				h_line              "$homie/gluondata/os-data" "$os_data"
 
 				echo_if_not_quiet "$autoupdaterbranch"
-				publish_to_mqtt_starred "/gluondata/autoupdater-branch" "$autoupdaterbranch"
-				homie_line              "$homie/gluondata/autoupdater-branch" "$autoupdaterbranch"
+				_pms "/gluondata/autoupdater-branch" "$autoupdaterbranch"
+				h_line              "$homie/gluondata/autoupdater-branch" "$autoupdaterbranch"
 
 				echo_if_not_quiet "$autoupdaterenabled"
-				publish_to_mqtt_starred "/gluondata/autoupdater-enabled" "$autoupdaterenabled"
-				homie_line              "$homie/gluondata/autoupdater-enabled" "$autoupdaterenabled"
+				_pms "/gluondata/autoupdater-enabled" "$autoupdaterenabled"
+				h_line              "$homie/gluondata/autoupdater-enabled" "$autoupdaterenabled"
 
 				echo_if_not_quiet "$gluoncoredomain"
-				publish_to_mqtt_starred "/gluondata/core-domain" "$gluoncoredomain"
-				homie_line              "$homie/gluondata/core-domain" "$gluoncoredomain"
+				_pms "/gluondata/core-domain" "$gluoncoredomain"
+				h_line              "$homie/gluondata/core-domain" "$gluoncoredomain"
 
 				echo_if_not_quiet "$routermodel"
-				publish_to_mqtt_starred "/gluondata/model" "$routermodel"
-				homie_line              "$homie/gluondata/model" "$routermodel"
+				_pms "/gluondata/model" "$routermodel"
+				h_line              "$homie/gluondata/model" "$routermodel"
 
 				newval="TBD"
-				publish_to_mqtt_starred "/gluondata/site" "$newval"
-				homie_line              "$homie/gluondata/site" "$newval"
+				_pms "/gluondata/site" "$newval"
+				h_line              "$homie/gluondata/site" "$newval"
 
 				echo_if_not_quiet "$gluonversion"
-				publish_to_mqtt_starred "/gluondata/gluon-version" "${gluonversion##v}"
-				homie_line              "$homie/gluondata/gluon-version" "${gluonversion##v}"
+				_pms "/gluondata/gluon-version" "${gluonversion##v}"
+				h_line              "$homie/gluondata/gluon-version" "${gluonversion##v}"
 				
 				echo_if_not_quiet "$gluonrelease"
-				publish_to_mqtt_starred "/gluondata/release" "${gluonrelease##v}"
-				homie_line                  "$homie/gluondata/release" "${gluonrelease##v}"
+				_pms "/gluondata/release" "${gluonrelease##v}"
+				h_line                  "$homie/gluondata/release" "${gluonrelease##v}"
 
 				gluondomains="$( get_gluon_domains_starred_cached $sTargetHost )"
 				echo_if_not_quiet "$gluondomains"
-				publish_to_mqtt_starred "/gluondata/gluon-domains" "$gluondomains"
-				homie_line              "$homie/gluondata/gluon-domains" "$gluondomains"
+				_pms "/gluondata/gluon-domains" "$gluondomains"
+				h_line              "$homie/gluondata/gluon-domains" "$gluondomains"
 
 			  	reply_to_mqtt_status "OK"
 			  fi
 			  ;;
 			machine-data)
 				os_data="$( get_os_data_semi_starred_cached "$sTargetHost" 1 )"
-				debug_if_verbose "os_data=$os_data"
-				newval=$( ssh_cmd "cat /proc/version /proc/cpuinfo" |  awk -v os_data="$os_data" '
+				debug "os_data=$os_data"
+				_data="$( ssh_cmd "cat /proc/version /proc/cpuinfo" |  awk -v os_data="$os_data" '
 					NR==1 { linuxversion=$3 ; FS=": " }
 					/^machine|^Hardware/ { FS=": " ; printf "{*linuxversion*:*%s*,*machine*:*%s*,%s}", linuxversion ,$2, substr(os_data,2,length(os_data)-2) ; exit 0 }
-					' )
-				if [ "$newval" ] ; then
-					echo_if_not_quiet "$newval"
-					publish_to_mqtt_starred "/$command" "$newval"
+					' )"
+				if [ "$_data" ] ; then
+					echo_if_not_quiet "$_data"
+					_pms "/$command" "$_data"
 				else
 					reply_to_mqtt_status "ERROR" "Command $command failed: no output."
 				fi
@@ -1186,8 +1169,8 @@ EOF
 			speedtest|speedtest0*)
 				check_read_mqqt_broker || continue
 				_spparam="" ; [ "$bVerbose" ] || _spparam="-q"  ; _spparam="-q"
-				sLastspeedtest=$( storage_cache_read "$sTargetHost.lastspeedtest" 1 ) && sLastspeedtest=",*lastspeedtest*:*$sLastspeedtest*"
-				speedtestcmd=$( storage_cache_read "$sTargetHost.lastspeedtestcmd" 2 ) # prefer the previous one for 2 days
+				sLastspeedtest="$( storage_cache_read "$sTargetHost.lastspeedtest" 1 )" && sLastspeedtest=",*lastspeedtest*:*$sLastspeedtest*"
+				speedtestcmd="$( storage_cache_read "$sTargetHost.lastspeedtestcmd" 2 )" # prefer the previous one for at most 2 days
 				# make it at least as big as the previous max (cache will time out after 2 days anyway):
 				[ -z "$speedtestcmd" -o "$command" != "${command#$speedtestcmd}" ] && speedtestcmd="$command"
 				_prefix="http://speedtest.tele2.net"
@@ -1203,27 +1186,27 @@ EOF
 									storage_cache_write "$sTargetHost.lastspeedtestcmd" "speedtest0"
 									continue
 				esac
-				debug_if_verbose "speedtest: fetching $_speedfn..."
+				debug "speedtest: fetching $_speedfn..."
 				reply_to_mqtt_status "ONGOING" "Fetching $_speedfn"
 				newval=$( ssh_cmd "date -u +%s; wget $_spparam -O - $_speedfn | wc -c ; date -u +%s"  )
 				_rc="$?"
-				# debug_if_verbose "speedtest debug: $newval, rc=$_rc"
+				# debug "speedtest: $newval, rc=$_rc"
 
 				if [ "$newval" ] ; then
-					starttime=$( echo "$newval" | sed -n -e "1 p" )
-					filesize=$(	echo "$newval" | sed -n -e "2 p" )
-					endtime=$(	echo "$newval" | sed -n -e "3 p" )
-					newval=$((	endtime - starttime ))
-					speedMB=$( awk "BEGIN { printf \"%.1f\" , $filesize * 8 / ( $newval + 0.000001 ) / 1024 / 1024 }" )
+					starttime="$( echo "$newval" | sed -n -e "1 p" )"
+					filesize="$(	echo "$newval" | sed -n -e "2 p" )"
+					endtime="$(	echo "$newval" | sed -n -e "3 p" )"
+					newval="$((	endtime - starttime ))"
+					speedMB="$( awk "BEGIN { printf \"%.1f\" , $filesize * 8 / ( $newval + 0.000001 ) / 1024 / 1024 }" )"
 					if [ "$newval" -lt 11 -o "$filesize" -lt 10000 ] ; then
 						speedtestcmd="${speedtestcmd}0" # try next bigger size
-						debug_if_verbose "Result time ${newval}s or file size ${filesize}B too small, redoing with $speedtestcmd" 
+						debug "Result time ${newval}s or file size ${filesize}B too small, redoing with $speedtestcmd"
 						reply_to_mqtt_status "ONGOING" "Result time ${newval}s or file size ${filesize}B too small. Rerun with larger file." "*speedMb*:*$speedMB*"
 						commandsToDo="${speedtestcmd}${commandsToDo:+,$commandsToDo}"
 						storage_cache_write "$sTargetHost.lastspeedtestcmd" "$speedtestcmd" # cache bigger file speedtest for next time
 					else
 						echo_if_not_quiet "$speedMB"
-						publish_to_mqtt_starred "/speedtest" "{*speedMb*:*$speedMB*,*filesize*:*$filesize*,*elapsedtime*:*$newval*,*unit*:*Mb/s*${sLastspeedtest}}"
+						_pms "/speedtest" "{*speedMb*:*$speedMB*,*filesize*:*$filesize*,*elapsedtime*:*$newval*,*unit*:*Mb/s*${sLastspeedtest}}"
 						storage_cache_write "$sTargetHost.lastspeedtest" "$speedMB"
 					fi
 				else
@@ -1232,24 +1215,24 @@ EOF
 				fi
 				;;
 			status)
-				newval="$( ssh_cmd "cat /proc/uptime /proc/loadavg" | awk '
+				_data="$( ssh_cmd "cat /proc/uptime /proc/loadavg" | awk '
 					NR==1 { uptime=sprintf("%d", $1) }
 					NR==2 { printf "{*uptime*:*%s*,*load*:*%.2f*}", uptime ,$1 }' )" # uptime in seconds
-				echo_if_not_quiet "$newval"
-				publish_to_mqtt_starred "/$command" "$newval"
+				echo_if_not_quiet "$_data"
+				_pms "/$command" "$_data"
 				;;
 			printmap)
 				check_read_mqqt_broker || continue
-				newval=$( ssh_cmd "print_map.sh" ) || continue # Freifunk node info as JSON for non-Gluon systems, e.g. from Ulm
-				echo "$newval" | json_pp 
-				publish_to_mqtt_starred "/$command" "$newval"
+				_data="$( ssh_cmd "print_map.sh" )" || continue # Freifunk node info as JSON for non-Gluon systems, e.g. from Ulm
+				echo "$_data" | json_pp
+				_pms "/$command" "$_data"
 				;;
 			localclients)
 				clientcollectionfile="$tmpdir/clientcollection"
 				touch "$clientcollectionfile" && chmod g+w "$clientcollectionfile"
 				localclientsfile="$clientcollectionfile.$sTargetHost"
 				[ -r $macidsfile ] || touch $macidsfile
-				
+
 				_batctl_output="$( ssh_cmd "batctl tl" )"
 				retval="$?"
 				if [ $retval != 0 ] ;  then
@@ -1261,27 +1244,27 @@ EOF
 					# ( date ; cat $localclientsfile ) >> $debugfile
 					awk -- "{ print strftime(\"%Y-%m-%d_%H:%M:%S \") \$0 \" $sTargetHost\" ; fflush() ; next }" $localclientsfile >> $clientcollectionfile
 					
-					if command -v join >/dev/null && [ -r $macidsfile ] ; then  # prerequisites to join the data to a list of clients...
+					if _cmv join && [ -r $macidsfile ] ; then  # prerequisites to join the data to a list of clients...
 						{ sort -k 1 $localclientsfile | join -1 1 -2 1 -a 1 - $macidsfile | sort | uniq -w 17 > "$localclientsfile"_with_names ; } &&
 								mv "$localclientsfile"_with_names "$localclientsfile"
 					fi
 
 					[ "$bVerbose" ] && echo "****  \$localclientsfile=$localclientsfile: ****" && cat "$localclientsfile"
-					_lccount=$( wc -l < $localclientsfile )
-					homie_line "$homie/publicwifi/clientscount" "$_lccount"
+					_lccount="$( wc -l < $localclientsfile )"
+					h_line "$homie/publicwifi/clientscount" "$_lccount"
 					cp -p $localclientsfile $cachedir/xx
-					localclients=$( tr " " "," < "$localclientsfile" |
+					localclients="$( tr " " "," < "$localclientsfile" |
 						awk -F, -v lccount="$_lccount" -v hname="$sTargetHost" 'BEGIN { printf "{*count*:*%s*,*localclients*:[", lccount } { printf comma " {*addr*:*%s*,*name*:*%s*,*detail*:*%s*}", $1, ($2=="") ? $1 : $2, gensub(/ *$/, "", 1, $3 " " $4 " " $5) ; comma="," } END { printf "],*host*:*%s*}",hname }' |
-						  shorten_ethernet_addr_in_json ${bDoAllOfIt:+skip} )
+						  shorten_ethernet_addr_in_json ${bDoAllOfIt:+skip} )"
 					while read -r _ipaddr _what _who ; do
-						debug_if_verbose "*$_ipaddr* *$_what* *$_who*"
-						_ipaddr="$( echo $_ipaddr | sed -e 's/://g' )"
+						debug "*$_ipaddr* *$_what* *$_who*"
+						_ipaddr="$( echo $_ipaddr | tr -d ':' )"
 						_details="${_what} $_who" && [ "$_details" ] || _details="$_ipaddr"
-						publish_to_mqtt_starred "$sitecode/$sArea/$_ipaddr" "{*lasthost*:*$sTargetHost*,*details*:*$_details*}"
+						_pms "$sitecode/$sArea/$_ipaddr" "{*lasthost*:*$sTargetHost*,*details*:*$_details*}"
 					done < "$localclientsfile"
 					echo_if_not_quiet "$( make_json_from_starred "$localclients" )"
-					publish_to_mqtt_starred "$sitecode/$sTargetHost/publicwifi/localclients" "$localclients"
-					[ "$workonallclients" ] && nCollectedSumOfClients=$(( nCollectedSumOfClients + _lccount ))
+					_pms "$sitecode/$sTargetHost/publicwifi/localclients" "$localclients"
+					[ "$workonallclients" ] && nCollectedSumOfClients="$(( nCollectedSumOfClients + _lccount ))"
 					collectedclients="$collectedclients $( xargs < $localclientsfile )"
 					collectedclients="${collectedclients% }" # trim leading spaces
 				fi
@@ -1291,7 +1274,7 @@ EOF
 				tmpfilejson="$tmpdir/$sTargetHost.$command.tmp"
 				ffnodeip="$( storage_cache_read "$sTargetHost.nodeip" 30 )"
 				if [ -z "$ffnodeip" ]  ;  then
-					ffnodeip=$( ssh_cmd "ip -f inet6 -o addr show dev $ifipv6" | awk -e '{ print gensub("/.*", "", "1", $4) ; exit 0 }'  )
+					ffnodeip="$( ssh_cmd "ip -f inet6 -o addr show dev $ifipv6" | awk -e '{ print gensub("/.*", "", "1", $4) ; exit 0 }'  )"
 					_rc="$?"
 					[ "$ffnodeip" ] && storage_cache_write "$sTargetHost.nodeip" "$ffnodeip" # new value > cache it
 				fi
@@ -1303,8 +1286,8 @@ EOF
 					[ "$one_additional_option" ] && ffhost="$one_additional_option" # use other host to query the remote one ...
 					ssh_cmd "$_gni_cmd $ffnodeip" | tee "$tmpfilemqtt"
 					_rc="$?"
-					debug_if_verbose "Had called $_gni_cmd > $ffnodeip (rc=$_rc)"
-					returnsize=$( wc -l < "$tmpfilemqtt" )
+					debug "Had called $_gni_cmd > $ffnodeip (rc=$_rc)"
+					returnsize="$( wc -l < "$tmpfilemqtt" )"
 					if [ "$returnsize" -eq 0 ]  ;  then
 						error "Connection or gluon-neighbour-info failed: Command $command on node ip $ffnodeip failed..."
 						reply_to_mqtt_status "ERROR" "remote result empty"
@@ -1317,11 +1300,11 @@ EOF
 							### publish_to_mqtt "$sitecode/$node_id/$command"  "$( cat $tmpfilemqtt )"  "-r"
 							# publish_to_mqtt "$sitecode/$sTargetHost/ipv6" "$ffnodeip" "-r"
 							### publish_to_mqtt "$sitecode/$node_id/ipv6"      "$ffnodeip" "-r"
-							clients="$( jsonfilter_func ".clients.wifi" < "$tmpfilemqtt" )"
+							_data="$( jsonfilter_func ".clients.wifi" < "$tmpfilemqtt" )"
 							# cat $tmpfilemqtt
-							publish_to_mqtt_starred "/clients" "$clients"
-							[ "$workonallclients" ] && nCollectedSumOfClients=$(( nCollectedSumOfClients + clients ))
-							# publish_to_mqtt "$sitecode/$node_id/clients" "$clients"
+							_pms "/clients" "$_data"
+							[ "$workonallclients" ] && nCollectedSumOfClients="$(( nCollectedSumOfClients + _data ))"
+							# publish_to_mqtt "$sitecode/$node_id/clients" "$_data"
 						fi
 
 						[ -f $tmpfilejson.prev ] && mv -f $tmpfilejson.prev $tmpfilejson.old
@@ -1346,7 +1329,7 @@ EOF
 				_content="$( ssh_cmd "df -Ph -T" | sed -e 's/\([0-9]\)\.0K/\1K/g' )"
 				if [ "$_content" ] ; then
 					_content="$( echo "$_content" | jq -R -s '
-						[ split("\n")	|  .[]  |
+						[ split("\n") | .[]  |
 						if test("^/") or test("overlay") then
 							gsub(" +"; " ") | split(" ") | {mountpoint:.[6], filesystem:.[0], type:.[1], spaceavail:.[4], spaceused:.[3], percentused:.[5], spacetotal:.[2]}
 						else
@@ -1364,7 +1347,7 @@ EOF
 				_data="$( ssh_cmd "free -t" | tr -d -c "0-9 a-zA-Z:\n")"
 				echo_if_not_quiet "$_data"
 				_data="$( echo "$_data" | make_json_from_table_with_headers 1 )"
-				publish_to_mqtt_starred "/$command" "$_data"
+				_pms "/$command" "$_data"
 				;;
 			reboot)
 				check_read_mqqt_broker || continue
@@ -1376,7 +1359,7 @@ EOF
 					reply_to_mqtt_status "ERROR" "call failed (rc=$_rc)"
 				fi
 				;;
-			wifiscan|scandirty)
+			wifiscan)
 				check_read_mqqt_broker || continue
 				# relies on the following entry in root's crontab, since only root is allowed to do a full wifi scan
 				# SHELL=/bin/bash
@@ -1384,30 +1367,37 @@ EOF
 				# { for i in 2 2 2 2 ; do /sbin/iw dev wlan0 scan ; sleep $i ; done } | fgrep SSID  | cut -d ":" -f 2 | xargs -n 1 | sort -u > /tmp/wifis.new ; mv /tmp/wifis.new /tmp/wifis.txt ; date >> /tmp/wifis.txt
 				# * * * * * { for i in 1 2 1 2 ; do /sbin/iw dev wlan0 scan ; sleep $i ; done } | egrep -w '^BSS|SSID'| sed -e 's/BSS *//' -e 's/(.*//' -e 's/\t*SSID: //' -e 's/^$/./' | xargs -L2 | sort -u > /tmp/wifis.new ; mv /tmp/wifis.new /tmp/wifis.txt ; date >> /tmp/wifis.txt
 
-				# make_json_array_from_words < /dev/null
+				get_public_if_cached # sets ff_if_pub and sSsidBase
 
-				ff_if_pub="$( get_public_if_cached "$sTargetHost" )"
-
-				# [ -z "$ff_if_pub" ] && debug_if_verbose "defaulting to public interface $ff_if_pub1" &&  ff_if_pub="$ff_if_pub1"
+				# [ -z "$ff_if_pub" ] && debug "defaulting to public interface $ff_if_pub1" &&  ff_if_pub="$ff_if_pub1"
 
 				_data="$( ssh_cmd "[ \"$(id -u)\" = 0 ] || echo ERROR && iw dev $ff_if_pub scan" )"
 				_rc="$?"
 
 				if [ $_rc = 0 ] ; then
-					_data="$( echo "$_data" | awk '$1 ~ /^SSID/ { sub("\t*SSID: *", "") ; if (length($0)) print } { next }' | sort -u | make_json_array_from_words)"
+					# _data="$( echo "$_data" | awk '$1 ~ /^SSID/ { sub("\t*SSID: *", "") ; if (length($0)) print } { next }' | sort -u | make_json_array_from_words)"
+					# set -x
+					_data="$( echo "$_data" | awk '
+							/^BSS / 	{ MAC 	= gensub("(.*", "", 1, $2)  }
+							/signal:/  	{ signal[MAC] 	= gensub(".00", "", 1, $2) }
+							/SSID:/  	{ ssid[MAC] 	= $2 }
+							/primary channel:/ {  channel[MAC] = $NF  }
+							END {
+								printf "%s\t%s\t%s\t%s\n", "MAC", "signal", "channel", "SSID"
+								for (mac in ssid)  {  printf "%s\t%s\t%s\t%s\n", mac, signal[mac], channel[mac], ssid[mac] }
+							} ' )"
 					echo_if_not_quiet "$_data"
-					publish_to_mqtt_starred "/wifiscan" "$_data"
+					_pms "/$command" "$_data"
 					# reply_to_mqtt_status "OK" "$_data"
 				else
 					echo_if_not_quiet "ssh command $command failed (rc=$_rc)"
 					reply_to_mqtt_status "ERROR" "rc=$_rc // $_data"
 				fi
-				# exit 0
 				continue
 
 				echo "$sName: command scandirty grepping for **$ffssid**" > "$debugfile"
-				grep -wi "${ffssid}"  $cachedir/wifis.txt | tee "$debugfile"
-				rm -f $cachedir/wifis.txt.hint
+				grep -wi "${ffssid}"  "$cachedir/wifis.txt" | tee "$debugfile"
+				rm -f "$cachedir/wifis.txt.hint"
 				exit 0
 				;;
 			*)
@@ -1434,16 +1424,16 @@ if [ -n "$nCollectedSumOfClients" ] ; then
 	if [ "$clientcollectionfile" ] ; then
 		sort_and_tail_file "$clientcollectionfile" 18 1
 		[ "$bVerbose" ] && echo $clientcollectionfile: && cat "$clientcollectionfile"
-		if command -v join >/dev/null && [ -r $macidsfile ]; then
+		if _cmv join && [ -r $macidsfile ]; then
 			_ccwn_fn="${clientcollectionfile}_with_names"
 			{ sort -k 2 "$clientcollectionfile" | join -1 2 -2 1 -a 1 - $macidsfile | sort -r -k 1 |
-			uniq -w 17 | sort -k 2 > "$_ccwn_fn" ; } && debug_if_verbose "$_ccwn_fn:" && debug_if_verbose "$(cat "$_ccwn_fn")"
+			uniq -w 17 | sort -k 2 > "$_ccwn_fn" ; } && debug "$_ccwn_fn:" && debug "$(cat "$_ccwn_fn")"
 			mv "$_ccwn_fn" "$clientcollectionfile"
 		fi
-		_string="$( awk -F" " -v id="$sArea" -v lccount="$nCollectedSumOfClients" 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lccount, id } { printf comma "{*addr*:*%s*,*name*:*%s*}", $1 , ($4=="")? $1 : $4 $5 $6 $7 ; comma="," } END { printf "]}" }' < "$clientcollectionfile" |
+		_data="$( awk -F" " -v id="$sArea" -v lccount="$nCollectedSumOfClients" 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lccount, id } { printf comma "{*addr*:*%s*,*name*:*%s*}", $1 , ($4=="")? $1 : $4 $5 $6 $7 ; comma="," } END { printf "]}" }' < "$clientcollectionfile" |
 			shorten_ethernet_addr_in_json ${bDoAllOfIt:+skip} )"
-		echo_if_not_quiet "$( make_json_from_starred "$_string" | json_pp )"
-		publish_to_mqtt_starred "$sitecode/$sArea/alllocalclients" "$_string"		
+		echo_if_not_quiet "$( make_json_from_starred "$_data" | json_pp )"
+		_pms "$sitecode/$sArea/alllocalclients" "$_data"
 	fi
 fi
 
@@ -1452,10 +1442,3 @@ mv "$tmpdir"/* "$cachedir" ; rmdir "$tmpdir"
 find "$cachedir" -maxdepth 1 -path "$cachedir/[0-9]*" -type d -mtime +0 -exec rm -r '{}' \; # remove old debug files
 
 # End of main.
-
-# Old stuff:
-# password=$(cat password_file)
-# uci set wireless.@wifi-iface[0].encryption=psk
-# uci set wireless.@wifi-iface[0].key="$password"
-# uci commit wireless
-# wifi
