@@ -53,7 +53,7 @@ N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluo
 * For use case A, B, and C as well as debugging purposes: 
   Enable [automatic remote invocation via SSH using public key authentication](https://openwrt.org/docs/guide-user/security/dropbear.public-key.auth)
 * If you want to use the script remotely: Install ash from a package repository (or manually replace ash by bash in the first line), e.g. on a Raspberry: ``apt install ash``. The script is written to be compatible to both ash and bash.
-* This script relies on some version of Gluon or at least OpenWRT/Raspbian/Raspberry Pi OS: It has been tested on [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*, 2020.1.* and 2020.2.* from these communities:
+* This script relies on some version of Gluon or at least OpenWRT/Raspbian/Raspberry Pi OS: It has been tested on [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*, 2020.1.* up to 2020.3.* from these communities:
   [Freifunk Munich](https://ffmuc.net), [Freifunk Frankfurt](https://ffm.freifunk.net).
 
    Please let me know or open a GitHub issue if you have success or problems with other versions or other communities.
