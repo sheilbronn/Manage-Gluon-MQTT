@@ -25,7 +25,7 @@ if _cmv busybox ; then
 	alias tr="busybox tr"
 fi
 	alias e="echo"
-	alias l="local" # needed when compressing script
+	alias l="local" # needed when compressing script for reduced storage
 
 set -o noglob  # noglob will limit security and escaping problems
 sName="${0##*/}" && sName="${sName%.sh}"
@@ -38,7 +38,7 @@ sArea="$( cat /proc/sys/kernel/hostname 2>/dev/null || hostname || e "unknown" )
 [ "$sArea" = "openHABianPi" -o "$sArea" = "unknown" ] && sArea="${sArea}-$( awk -F ":" -e '{ print $5$6 }' < /sys/class/net/eth0/address )"
 sArea="$( _tolower "$sArea" )" # lowercase only
 sSsidBase="UNKNOWN" # would be an an error
-sPubIf="" # will be determined on first call, then cached
+sPubIfs="" # will be determined on first call, then cached
 nMqttSleep=50 # 1190
 sHassTopicPrefix="homeassistant/sensor" 
 basetopic="xyz"                  # default MQTT topic prefix
@@ -52,10 +52,10 @@ alias _nx="local - ; set +x"
 # Notes for future enhancements:
 # ping ff host and up/down own public if accordingly
 # ( ping -c 3 2001:608:a01:103:62e3:27ff:febd:b8ba && echo yes ) || echo no
-# ( ping -c 3 2001:608:a01:103:62e3:27ff:febd:b8be && ( ( iwinfo | fgrep $sPubIf ) || ( wifi up ; echo wifi upped. ) ) ) || ( iw dev client0 del ; echo if downed )
+# ( ping -c 3 2001:608:a01:103:62e3:27ff:febd:b8be && ( ( iwinfo | grep $sPubIf0 ) || ( wifi up ; echo wifi upped. ) ) ) || ( iw dev client0 del ; echo if downed )
 # scan repeatedly for public Wifi and up/down own public if accordingly:
-# ( { for i in 1 1 1 1 2 ; do iw dev mesh0 scan ; sleep $i ; done } | fgrep -w '6e:a3:09:ea:31:e1' && ( ( iwinfo | fgrep $sPubIf ) || ( wifi up ; echo wifi upped. ) ) ) || ( iw dev $sPubIf del ; echo if downed )
-# ( { for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | egrep -A 9 -w '6e:a3:09:ea:31:e0' | grep SSID:.muenchen.freifunk.net/muc_sued && ( ( iwinfo | fgrep $sPubIf ) || ( wifi up ; echo wifi upped. ) ) ) || ( iwinfo | fgrep $sPubIf && iw dev $sPubIf del ; echo if downed )
+# ( { for i in 1 1 1 1 2 ; do iw dev mesh0 scan ; sleep $i ; done } | fgrep -w '6e:a3:09:ea:31:e1' && ( ( iwinfo | grep $sPubIf0 ) || ( wifi up ; echo wifi upped. ) ) ) || ( iw dev $sPubIf0 del ; echo if downed )
+# ( { for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | egrep -A 9 -w '6e:a3:09:ea:31:e0' | grep SSID:.muenchen.freifunk.net/muc_sued && ( ( iwinfo | grep $sPubIf0 ) || ( wifi up ; echo wifi upped. ) ) ) || ( iwinfo | grep $sPubIf0 && iw dev $sPubIf0 del ; echo if downed )
 
 show_help() {
 	echo "Usage: $sName ... -v -c command ...
@@ -150,6 +150,18 @@ get_most_frequent_sitecode() {
 		[ "$_data" ] || return 1
 	}
 
+get_hostname_cached() { # $1=host $2=cachetimeout
+	_nx
+	local _key="${1:-$sTargetHost}.hostname"
+	local _data="$( storage_cache_read "$_key" "${2:-99}" )"
+	if [ -z "$_data" ] ; then
+		_data="$( ssh_cmd "tr A-Z a-z < /proc/sys/kernel/hostname" )" || { _rc="$?" ; echo "${1:-$sTargetHost}" ; return $_rc ; }
+		debug "REMOTE hostname is: $_data"
+	fi
+	[ "$_data" ] && storage_cache_write "$_key" "$_data" 
+	echo "$_data"
+}
+
 get_pub_iface_cached() { # $1=host $2=cachetimeout  ## TODO ## -1 for forced reloading
 	_nx
 	local _key="${1:-$sTargetHost}.iwinfo"
@@ -158,21 +170,24 @@ get_pub_iface_cached() { # $1=host $2=cachetimeout  ## TODO ## -1 for forced rel
 		# should find a better solution based on iw ...:
 		_dataall="$( ssh_cmd "command -v iwinfo >/dev/null && iwinfo" | sed -e 's/^  */;/' -e 's/   */;/' | awk '/^$/ { print l ; l = "" ; next } { l = l $0 ; next }' )" ||
 				 {	_rc="$?" ; return $_rc ; }
-		debug "Remote iwinfo returned: '$_dataall'"
-		if echo "$_dataall" | grep -q "Mode: Master;.*;Encryption: none" ; then #  .... cache result only if at least the public Freifunk if is up and running
+		debug "REMOTE iwinfo returned: '$_dataall'"
+		if echo "$_dataall" | grep -q "Mode: Master;.*;Encryption: none" ; then #  .... cache result only if at least one public Freifunk if is up and running
 			storage_cache_write "$_key" "$_dataall"
 		fi
 	fi
 	_data="$( echo "$_dataall" | awk -F ";" '/;Mode: Master/ && /;Encryption: none/ { print $1 } ' )"
-	# setting global sPubIf and sSsidBase as side effects...
+	# setting global $sPubIfs, $sPubIf0, $sPubIf1 and sSsidBase as side effects...
 	if [ -z "$_data" ] ; then
-		sPubIf="ERROR"
-		debug "No public interface determinable, using sPubIf=$sPubIf"
+		sPubIfs="ERROR" ; sPubIf0="" ; sPubIf1=""
+		debug "No public interface determinable: sPubIfs=$sPubIfs"
 		sSsidBase=""
 		return 1
 	else
-		sPubIf="$_data"
-		sSsidBase="$( echo "$_dataall" | awk -F ";" '/;Mode: Master/ && /;Encryption: none/ { print $2 }' | tr -d \" | awk -F ": " '{ print gensub("/.*", "", "g", $2) }' )"
+		sPubIfs="$( echo $_data | xargs -r echo )"
+		sPubIf0="$( echo "$sPubIfs" | awk '{ print $1 }' )" # 1st interface
+		sPubIf1="$( echo "$sPubIfs" | awk '{ print $2 }' )" # 2nd interface if any (e.g. 5 Ghz)
+		# debug "PUBLIC interface(s): ssPubIf0=$sPubIf0,sPubIf1=$sPubIf1,sPubIfs=$sPubIfs"
+		sSsidBase="$( echo "$_dataall" | awk -F ";" '/;Mode: Master/ && /;Encryption: none/ { print $2 ; exit }' | tr -d \" | awk -F ": " '{ print gensub("/.*", "", "g", $2) }' )"
 		return 0
 	fi
 }
@@ -258,7 +273,7 @@ storage_read() { # read key/value pair from cache or user storage  (1:searchkey,
 			[ "$_val" ] || _result="##EMPTY##"
 		fi
 	fi
-	debug "STORAGE_READ($1,$2,$3,${4%ed})=\"$( shorten_string "$_val" 23 )\",$_result)" 1>&2
+	debug "STORE_READ" "($1,$2,$3,${4%ed})=\"$( shorten_string "$_val" 23 )\",$_result)" 1>&2
 	echo "$_val"
 	[ -z "$_val" ] && return 1
 	return 0
@@ -275,9 +290,13 @@ storage_user_read() { # read a key/value pair across script invocations
 	return $?
 	}
 
+	TC='\e[' # https://gist.github.com/bcap/5682077#file-terminal-control-sh
+	Yellow="${TC}33m" ; Cyan="${TC}36m" ; OnRed="${TC}41m" ;
+	Reg="${TC}22;24m" ; RegF="${TC}39m" ; RegB="${TC}49m" ; Rst="${TC}0m"     # Reset all coloring and style
+
 error()   {
 	_nx
-	echo "$sName: ERROR: $1" 1>&2
+	echo "$sName: ${OnRed}ERROR$Rst: $1" 1>&2
 	}
 
 error_and_exit() {
@@ -288,12 +307,15 @@ error_and_exit() {
 
 echo_if_not_quiet() {
 	_nx
-	[ "$bQuiet" ] || e "$*"
+	[ "$bQuiet" ] || e "$Cyan$*$Rst"
 	}
 
 debug() { # output the args to stderror if option -v was set
 	_nx
-	[ "$bVerbose" ] && e "$*" 1>&2 && return 0
+	[ "$bVerbose" ] && { 
+	 { [ $# = 2 ] && echo "$Yellow$1$Rst" "$2" || echo "$*" ; } 1>&2 
+	 return 0 
+	}
 	return 1
 	}
 
@@ -333,7 +355,7 @@ check_write_mqqt_broker() { ## for now: only trusting a broker on the same host.
 publish_to_mqtt() {
 	_nx
 	[ "$cmd_mospub" = "true" ] && return 0
-	debug "PUBLISH_MQTT: TOPIC=$1  MSG=$2 ${3:+ OPTIONS=$3} ${bMoreVerbose:+ (\$mqtthost=$mqtthost)}"
+	debug "PUB_MQTT:" "TOP=$1  M=$2 ${3:+ OPTIONS=$3} ${bMoreVerbose:+ (\$mqtthost=$mqtthost)}"
 	$cmd_mospub ${mqtthost:+-h $mqtthost} ${sMID:+-i $sMID} -t "$1" -m "$2" -i "${sitecode}_$sTargetHost" $3  || debug "$cmd_mospub failed..." #  $3  passed without quotes on purpose
 	}
 
@@ -354,7 +376,7 @@ publish_to_mqtt_starred() {		# _pms(expandableTopic,message,moreMsoquittoOptions
 reply_to_mqtt_status() {
 	_nx
 	_cmd="$( echo $command | sed -e 's/[0-9]*$//' )" # remove any trailing digits from command
-	[ "$1" ] && [ "$mqtthost" -o "$homie" ] && _pms "/$_cmd/STATUS" "{*status*:*$1*${2:+,*details*:*$2*}${3:+,$3} }"
+	[ "$1" ] && [ "$mqtthost" -o "$homie" ] && _pms "/$_cmd/STATUS" "{*status*:*$1*${2:+,*details*:*$2*}${3:+,$3}}"
 	[ "$1" != "OK" -a "$1" != "ONGOING" ] && logger -p daemon.error -t "$sName $sTargetHost $1" "$2"
 }
 
@@ -711,7 +733,7 @@ do
 			_r=$( ssh -T "root@$ffhost" -q "$@" < /dev/null ) 
 			_rc=$?
 			if [ "$_rc" -gt 0 ] ; then
-				debug "ssh -T root@$ffhost returned $_rc" 1>&2
+				debug "SSH -T root@$ffhost RETURNED $_rc" 1>&2
 			else
 				echo "$_r" | tr -d '`'
 			fi
@@ -773,7 +795,7 @@ do
 		[ "$homie" ] && os_data="$( get_os_data_semi_starred_cached "$sTargetHost" 1 )" && homie="$( _tolower "$sTargetHost" )" &&
 			 [ "$commandsToDo" != "homie-delete" ] && announce_disco "$homie"
 	
-		debug "Entering command loop (commandsToDo=$commandsToDo)"
+		debug "LOOP" "START (commandsToDo=$commandsToDo)"
 		while [ "$commandsToDo" ] ; do
 			if [ "$commandsToDo" = "mqtt" ]  ;  then
 				read -r sPipeType command commandopts < "$fPipe" ; nReadCode="$?"
@@ -1006,33 +1028,33 @@ EOF
 				;;
 			ffdown)
 				check_read_mqqt_broker || continue
-				get_pub_iface_cached "" # also sets sPubIf and sSsidBase
-				sNewSSID="$( ssh_cmd "iw dev $sPubIf del" 2>&1 )" # stop Freifunk public interface
+				get_pub_iface_cached "" # also sets sPubIfs and sSsidBase
+				debug "PREPARING $command on host $sTargetHost (if=$sPubIf0,$sPubIf1) ..."
+				sNewSSID="$( ssh_cmd "iw dev $sPubIf0 del ${sPubIf1:+; iw dev $sPubIf1 del >/dev/null} " 2>&1 )" # stop Freifunk public interface
 				echo "$sNewSSID" | grep -q 'No such.* device' && reply_to_mqtt_status "ERROR" "$sNewSSID" && sNewSSID=""
-				echo_if_not_quiet "$sTargetHost: Ran wifi down on public $sPubIf (sNewSSID=$sNewSSID)"
 				h_line "$homie/publicwifi/clientscount" "-1"
 				[ "$sNewSSID" ] && reply_to_mqtt_status "OK" "sNewSSID=$sNewSSID"
 				commandsToDo="ffstatus${commandsToDo:+,$commandsToDo}"
 				;;
 			ffup|ffstatus)
-				get_pub_iface_cached "" # also sets sPubIf and sSsidBase
-				debug "Now preparing $command on host $sTargetHost (if=$sPubIf) ..."
+				get_pub_iface_cached "" # also sets sPubIf* and sSsidBase
+				debug "PREPARING $command on host $sTargetHost (if=$sPubIfs) ..."
 				if [ "$command" = "ffup" ] ; then
 					check_read_mqqt_broker || continue
-					reply_to_mqtt_status "ONGOING" "Will run $command for $sTargetHost"
-					tempstr="$( ssh_cmd "wifi up && sleep $wifiupsleep && iwinfo $sPubIf info" )"
+					reply_to_mqtt_status "ONGOING" "RUNNING $command for $sTargetHost"
+					tempstr="$( ssh_cmd "wifi up && sleep $wifiupsleep && iwinfo $sPubIf0 info" )" # ... ignoring any 2nd interface
 				elif [ "$sNewSSID" ] ; then
-					debug "Reused sNewSSID=$sNew_sid..."
+					debug "REUSED sNewSSID=$sNewSSID..."
 					tempstr="$sNewSSID"
 				else
-					tempstr="$( ssh_cmd "iwinfo $sPubIf info" 2>&1 )"
+					tempstr="$( ssh_cmd "iwinfo $sPubIf0 info" 2>&1 )" # ... ignoring any 2nd interface
 				fi
 				retval="$?"			
 				h_line "$homie/publicwifi/lastdate" "$( date -Iseconds )"
 				if [ "$retval" != 0 -o -z "$tempstr" ] || echo "$tempstr" | grep -w -q -E "open failed|connect failed|No such" ; then
 					# something went wrong...
 					tempstr="$( echo "$tempstr" | xargs echo )"
-					error "rc=$retval for executing $command - $tempstr"
+					error "rc=$retval for exec $command - $tempstr"
 					h_line "$homie/publicwifi/state" "false"
 					if [ "$retval" = 1 ] ; then
 						reply_to_mqtt_status "OFF" "rc=$retval"
@@ -1057,8 +1079,8 @@ EOF
 				;;
 			ffcond)
 				check_read_mqqt_broker || continue
-				get_pub_iface_cached # also sets sPubIf and sSsidBase
-				result="$( ssh_cmd '{ for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | tee $cachedir/wifis ; echo ++++++++++++ ; iwinfo | fgrep client0 '  )"
+				get_pub_iface_cached # also sets sPubIfs and sSsidBase
+				result="$( ssh_cmd '{ for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | tee $cachedir/wifis ; echo ++++++++++++ ; iwinfo | grep sPubIf0 '  )"
 				ifresult="$( echo "$result" | grep -A 3 '++++++++++' | grep -m 2 "client0 *ESSID:" )"
 				error_and_exit "UNFINISHED CODE"
 				if echo "$result" | grep -A 9 -w '6e:a3:09:ea:31:e00' | grep -w "SSID:.$sSsidBase"
@@ -1075,7 +1097,7 @@ EOF
 				;;
 			ffotherssid|ffotherssid1|ffotherssid2|ffotherssid_*|ffotherssid-*)
 				check_read_mqqt_broker || continue
-				get_pub_iface_cached # sets sPubIf and sSsidBase
+				get_pub_iface_cached # sets sPubIfs and sSsidBase
 				otherssid="${commandopts:-welt}"
 				case "$command" in
 					ffotherssid1)	_shortssid="uml_nord" 	;;
@@ -1090,7 +1112,8 @@ EOF
 				command="ffotherssid"
 				# further checks for allowed and legal  SSID values amongst gluon domains ....
 				if [ "$_shortssid" = "OFFLINE" -o "$_shortssid" = "MYHOSTNAME" ] || expr "$( get_gluon_domains_starred_cached "$sTargetHost" )"  :  ".*\*${_shortssid}[*]" > /dev/null ; then
-					[ "$_shortssid" = "MYHOSTNAME" ] && _shortssid="$sTargetHost"
+					reply_to_mqtt_status "ONGOING" "Setting short SSID: $_shortssid"
+					[ "$_shortssid" = "MYHOSTNAME" ] && _shortssid="$( get_hostname_cached "$sTargetHost" )"
 					reply_to_mqtt_status "ONGOING" "Setting short SSID: $_shortssid"
 					otherssid="$sSsidBase/$_shortssid"
 				else
@@ -1100,27 +1123,28 @@ EOF
 				fi
 				_esc_ssid="$( echo $otherssid | sed -e 's,/,\\/,' )" # escape slashes for awk matching
 				# echo ================
-				_result="$( ssh_cmd "iwinfo $sPubIf info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/'  -e '1q' | awk '{ print } /\"$_esc_ssid\"/ { exit(10) }' && 
-						uci set wireless.client_radio0.ssid=$otherssid &&
+				_result="$( ssh_cmd "iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/'  -e '1q' | awk '{ print } /\"$_esc_ssid\"/ { exit(10) }' && 
+						uci set wireless.client_radio0.ssid=$otherssid ${sPubIf1:+&& uci set wireless.client_radio1.ssid=$otherssid} &&
 				        wifi up && sleep $wifiupsleep ; 
-						iwinfo $sPubIf info | sed -e 's/: /:/' -e '1q' " 2>&1 )"
+						iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDNEW/' -e '1q' " 2>&1 )" # FIXME: ignoring any 2nd interface
 				# echo ----------------
-					debug "_result=****$_result*****"
+				debug "_result=****$_result*****"
 				_rc="$?"
+				set +x
 
 				if [ "$_rc" = 255 ] ; then
-					_log="target not reachable (SSH return code 255), aborting ffotherssid command...."
+					_log="target sTargetHost not reachable (SSH retcode 255), aborting ffotherssid command...."
 					echo_if_not_quiet "$_log"
 					reply_to_mqtt_status "ERROR" "$_log"
 					continue
 				elif [ -z "$_result" ] ; then
-					_log="commands for $command on remote host returned empty string..."
+					_log="commands for $command on remote host sTargetHost returned empty string..."
 					echo_if_not_quiet "$_log"
 					reply_to_mqtt_status "ERROR" "$_log"
 					continue
 				else
-					prev_ssid="$( e "$_result" | grep SSIDPREV: | cut -d : -f 2 | tr -d \" )"
-					sNewSSID="$(  e "$_result" | grep ESSID:    | cut -d : -f 2 | tr -d \" )"
+					prev_ssid="$( e "$_result" | grep -m 1 SSIDPREV: | cut -d : -f 2 | tr -d \" )"
+					sNewSSID="$(  e "$_result" | grep -m 1 SSIDNEW:  | cut -d : -f 2 | tr -d \" )"
 					_log="Previous=$prev_ssid, now=$sNewSSID"
 					if [ "$prev_ssid" = "$sNewSSID" ] ; then
 						_log="$_log (no change)"
@@ -1132,13 +1156,13 @@ EOF
 				;;
 			gluonreconfigure)
 				check_read_mqqt_broker || continue
-				get_pub_iface_cached # sets sPubIf and sSsidBase
+				get_pub_iface_cached # sets sPubIf* and sSsidBase
 
-				# ssh_cmd "ip link set $sPubIf up" # start Freifunk public interface
+				reply_to_mqtt_status "ONGOING" "Affected Interface(s): $sPubIfs"
 				# 6 seconds needed for interface!
-				result="$( ssh_cmd "iwinfo $sPubIf info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; gluon-reconfigure | tail -3 ; wifi up  ; sleep $wifiupsleep ; iwinfo $sPubIf info | sed -e 's/: /:/' -e '1q' " )"
+				result="$( ssh_cmd "iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; gluon-reconfigure | tail -3 ; wifi up  ; sleep $wifiupsleep ; iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDNEW/' -e '1q' " )"
 				prev_ssid="$( echo "$result" | grep SSIDPREV | cut -d : -f 2 )"
-				sNewSSID="$( echo "$result" | grep ESSID | cut -d : -f 2 )"
+				sNewSSID="$( echo "$result" | grep SSIDNEW | cut -d : -f 2 )"
 				echo_if_not_quiet "$sTargetHost: Ran gluon-reconfigure, previously $prev_ssid, then wifi up, then $sNewSSID. id=$(id -nu)/$(id -u)\n"
 				if [ "$prev_ssid" != "$sNewSSID" ] ; then
 					commandsToDo="localclients${commandsToDo:+,$commandsToDo}"
@@ -1422,9 +1446,9 @@ EOF
 				# { for i in 2 2 2 2 ; do /sbin/iw dev wlan0 scan ; sleep $i ; done } | fgrep SSID  | cut -d ":" -f 2 | xargs -n 1 | sort -u > /tmp/wifis.new ; mv /tmp/wifis.new /tmp/wifis.txt ; date >> /tmp/wifis.txt
 				# * * * * * { for i in 1 2 1 2 ; do /sbin/iw dev wlan0 scan ; sleep $i ; done } | egrep -w '^BSS|SSID'| sed -e 's/BSS *//' -e 's/(.*//' -e 's/\t*SSID: //' -e 's/^$/./' | xargs -L2 | sort -u > /tmp/wifis.new ; mv /tmp/wifis.new /tmp/wifis.txt ; date >> /tmp/wifis.txt
 
-				get_pub_iface_cached # sets sPubIf and sSsidBase
+				get_pub_iface_cached # sets sPubIf* and sSsidBase
 
-				_data="$( ssh_cmd "[ \"$(id -u)\" = 0 ] || echo ERROR && iw dev $sPubIf scan" )"
+				_data="$( ssh_cmd "[ \"$(id -u)\" = 0 ] || echo ERROR && iw dev $sPubIf0 scan ${sPubIf1:+&& iw dev $sPubIf1 scan} " )"
 				_rc="$?"
 
 				if [ $_rc = 0 ] ; then
