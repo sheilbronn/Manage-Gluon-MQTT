@@ -176,7 +176,7 @@ get_pub_iface_cached() { # $1=host $2=cachetimeout  ## TODO ## -1 for forced rel
 		fi
 	fi
 	_data="$( echo "$_dataall" | awk -F ";" '/;Mode: Master/ && /;Encryption: none/ { print $1 } ' )"
-	# setting global $sPubIfs, $sPubIf0, $sPubIf1 and sSsidBase as side effects...
+	# setting global variables $sPubIfs, $sPubIf0, $sPubIf1 and sSsidBase as side effects...
 	if [ -z "$_data" ] ; then
 		sPubIfs="ERROR" ; sPubIf0="" ; sPubIf1=""
 		debug "No public interface determinable: sPubIfs=$sPubIfs"
@@ -196,7 +196,7 @@ make_json_from_table_with_headers() { # table is piped in
 	_nx
 	awk -v missingHeaders="${1:-0}" 'BEGIN { OFS=""
 			getline
-			for (i=1; i<=NF; i++) names[i] = $i # read headers
+			for (i=1; i<=NF; i++) names[i] = $i     # read headers
 			printf "{"
 		} {
 			printf comma " *%s*:{", gensub(":", "", 1, tolower($1)) # remove any ":"
@@ -238,11 +238,11 @@ storage_write() { # write a key/value pair to a dir
 	_nx
 	if [ -z "$1" ] ; then
 		e "##INVALIDPARAM##"
-		error_and_exit "STORE_WRITE($1.$4, \"$2\", $3) with ##INVALIDPARAM##"
+		error_and_exit "STORE_WRITE($1.$4, \"$2\", $3) = ##INVALIDPARAM##"
 	else
 		mkdir -p "$3" && echo "$2" > "$3/$1.$4"
 		_rc="$?"
-		debug "STORE_WRITE($1.$4, \"$2\", $3) => $_rc"
+		debug "STORE_WRITE" "($1.$4,\"$2\",$3) = $_rc"
 	fi
 	}
 storage_user_write() {  # write a key/value pair permanently across script invocations
@@ -313,7 +313,7 @@ echo_if_not_quiet() {
 debug() { # output the args to stderror if option -v was set
 	_nx
 	[ "$bVerbose" ] && { 
-	 { [ $# = 2 ] && echo "$Yellow$1$Rst" "$2" || echo "$*" ; } 1>&2 
+	 { [ $# = 2 ] && echo "$Yellow$1$Rst""$2" || echo "$*" ; } 1>&2 
 	 return 0 
 	}
 	return 1
@@ -355,7 +355,7 @@ check_write_mqqt_broker() { ## for now: only trusting a broker on the same host.
 publish_to_mqtt() {
 	_nx
 	[ "$cmd_mospub" = "true" ] && return 0
-	debug "PUB_MQTT:" "TOP=$1  M=$2 ${3:+ OPTIONS=$3} ${bMoreVerbose:+ (\$mqtthost=$mqtthost)}"
+	debug "PUB_MQTT:" "$1  M=$2 ${3:+ OPTIONS=$3} ${bMoreVerbose:+ (\$mqtthost=$mqtthost)}"
 	$cmd_mospub ${mqtthost:+-h $mqtthost} ${sMID:+-i $sMID} -t "$1" -m "$2" -i "${sitecode}_$sTargetHost" $3  || debug "$cmd_mospub failed..." #  $3  passed without quotes on purpose
 	}
 
@@ -366,7 +366,7 @@ make_json_from_starred() {
 publish_to_mqtt_starred() {		# _pms(expandableTopic,message,moreMsoquittoOptions)
 	_nx
 	if [ -n "$mqtthost" -o "$homie" ] && [ "$cmd_mospub" != "true" ] ; then
-		local _topic="$( echo $1 | sed "s,^/,$sitecode/$sTargetHost/," )"	# ... expand shortcuts starting with "/"
+		local _topic="$( echo $1 | sed "s,^/,$sitecode/$sTargetHost/," )" # ... expand shortcuts starting with "/"
 		_resi="$( make_json_from_starred "$2" )"
 		publish_to_mqtt  "$_topic" "$_resi" "$3" # ...  replace double quotes by single quotes and stars by double quotes
 	fi
@@ -505,7 +505,7 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 	publish_to_mqtt "debug/$1" "HOMIE ANOUNCEMENTS BEGIN (\$2=$2)"
 
 	if [ "$2" = "-d" -o "$bDeleteAnnouncement" = "yes" ] ; then
-		debug "announce_disco\($1,$2,bDeleteAnnouncement=$bDeleteAnnouncement\): deleting advertisements"
+		debug "announce_disco" "\($1,$2,bDeleteAnnouncement=$bDeleteAnnouncement\): deleting advertisements"
 		bDeleteAnnouncement="yes" # used in side effect in h_meta, will be resetted further down
 		# exploit remove-retained"feature of newer mosquitto versions:
 		mosquitto_sub ${mqtthost:+-h $mqtthost} ${sMID:+-i $sMID} -W 1  -t "homie/$homie/#" --remove-retained --retained-only > /dev/null ||
@@ -514,7 +514,7 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 		[ "$sSshUser" = "NOUSER" ] && { h_line "$1/\$stats/uptime" "$( cut -f 1 -d . < /proc/uptime )" ; }
 	
 		if [ -n "$_nDay" ] && [ "$(date "+%j")" -eq "$_nDay" -a -z "$bForceMQTTAnnounce" ] && homie_state_is_ready $1 >/dev/null ; then
-			debug "ANNOUNCE_DISCO: skip announcements, homie state is ready... \(bForceMQTTAnnounce=$bForceMQTTAnnounce\)" # (re-)announce ONLY IF restart or new day or necessary
+			debug "ANNOUNCE_DISCO" ": skip announcements, homie state is ready... \(bForceMQTTAnnounce=$bForceMQTTAnnounce\)" # (re-)announce ONLY IF restart or new day or necessary
 			return 0
 		fi
 		os_data="$( get_os_data_semi_starred_cached "$sTargetHost" 1 )" # refresh data from host if old or no data available
@@ -522,7 +522,7 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 		ad_fwname="$( storage_cache_read "$sTargetHost.os_name" 9999 )"
 		ad_fwversion="$( storage_cache_read "$sTargetHost.os_pretty_name" 9999 )"
 		ad_impl="$( storage_cache_read "$sTargetHost.os_id" 9999 )"
-		debug "announce_disco($1,$2): announcing with $ad_devname,$ad_fwname,$ad_fwversion,$ad_impl"
+		debug "announce_disco" "($1,$2): announcing with $ad_devname,$ad_fwname,$ad_fwversion,$ad_impl"
 	fi
 
 	if [ -z "$bDeleteAnnouncement" ] ; then
@@ -608,7 +608,7 @@ determine_cmd_mospub() {
 determine_cmd_mospub
 
 jsonfilter=$( command -v jq ) || jsonfilter=$( command -v jsonfilter ) || error_and_exit "jsonfilter or jq must be available."
-jsonfilter=$( basename $jsonfilter )
+jsonfilter=$( basename "$jsonfilter" )
 _cmv json_pp || alias json_pp=cat
 alias _jqbeautify="jq -Sm" ; _cmv jq || alias _jqbeautify="cat"
 
@@ -733,13 +733,13 @@ do
 			_r=$( ssh -T "root@$ffhost" -q "$@" < /dev/null ) 
 			_rc=$?
 			if [ "$_rc" -gt 0 ] ; then
-				debug "SSH -T root@$ffhost RETURNED $_rc" 1>&2
+				debug "SSH" " -T root@$ffhost RETURNED $_rc" 1>&2
 			else
 				echo "$_r" | tr -d '`'
 			fi
 			return $_rc
   		  }
-		sTargetHost=$( echo "$ffhost" | awk -- '{ print gensub("-e$", "", 1, gensub("\\..*", "", 1, tolower($0) ) ) }' ) # remove any trailing "-e" and domain name
+		sTargetHost=$( echo "$ffhost" | awk -- '{ print gensub("-[a-z]$", "", 1, gensub("\\..*", "", 1, tolower($0) ) ) }' ) # remove any trailing "-<letter>" and the domain name
 	fi
 
 	[ "$sitecode" ] || sitecode="$( get_sitecode_cached "$sTargetHost" || get_most_frequent_sitecode )" # cant do it earlier: Need a $sTargetHost to determine a default...
@@ -795,7 +795,7 @@ do
 		[ "$homie" ] && os_data="$( get_os_data_semi_starred_cached "$sTargetHost" 1 )" && homie="$( _tolower "$sTargetHost" )" &&
 			 [ "$commandsToDo" != "homie-delete" ] && announce_disco "$homie"
 	
-		debug "LOOP" "START (commandsToDo=$commandsToDo)"
+		debug "LOOP" " START (commandsToDo=$commandsToDo)"
 		while [ "$commandsToDo" ] ; do
 			if [ "$commandsToDo" = "mqtt" ]  ;  then
 				read -r sPipeType command commandopts < "$fPipe" ; nReadCode="$?"
@@ -1092,7 +1092,7 @@ EOF
 					echo_if_not_quiet "To be downed..."
 					if [ -n "$ifresult" ] ; then commandsToDo="ffdown${commandsToDo:+,$commandsToDo}" ; fi
 				fi
-				debug "commandsToDo=$commandsToDo"
+				debug "commandsToDo=" "$commandsToDo"
 				# ( ( iwinfo | fgrep client0 ) || ( wifi up ; echo wifi upped. ) )	) || ( iwinfo | fgrep client0 && iw dev client0 del ; echo if downed )
 				;;
 			ffotherssid|ffotherssid1|ffotherssid2|ffotherssid_*|ffotherssid-*)
@@ -1138,7 +1138,7 @@ EOF
 					reply_to_mqtt_status "ERROR" "$_log"
 					continue
 				elif [ -z "$_result" ] ; then
-					_log="commands for $command on remote host sTargetHost returned empty string..."
+					_log="commands for $command on host $sTargetHost returned empty string..."
 					echo_if_not_quiet "$_log"
 					reply_to_mqtt_status "ERROR" "$_log"
 					continue
@@ -1286,7 +1286,7 @@ EOF
 					else
 						echo_if_not_quiet "$speedMB"
 						_pms "/speedtest" "{*speedMb*:*$speedMB*,*filesize*:*$filesize*,*elapsedtime*:*$_val*,*unit*:*Mb/s*${sLastspeedtest}}"
-						storage_cache_write "$sTargetHost.lastspeedtest" "$speedMB"
+						storage_cache_write "$sTargetHost.lastspdtest" "$speedMB"
 					fi
 				else
 					echo_if_not_quiet "ERROR: $_rc"
@@ -1372,6 +1372,7 @@ EOF
 						reply_to_mqtt_status "ERROR" "remote result empty"
 					else
 						storage_cache_write "$sTargetHost.$command" "$_val" # cache all data to support change detection some time
+						echo_if_not_quiet "$_val"
 						publish_to_mqtt "$sitecode/$sTargetHost/$command" "$_val"
 						if [ "$command" = "statistics" ] ; then
 							# node_id=$( jq -r .node_id $tmpfilemqtt )
