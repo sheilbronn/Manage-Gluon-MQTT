@@ -80,7 +80,7 @@ N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluo
 
 Supported commands for the -c option are - names might change during refactoring:
 
-* *mqtt*: Script will become a daemon waiting for MQTT commands, subsequent commands are ignored (Use case D)
+* *bridge*: Script will become a daemon waiting for MQTT commands, subsequent commands are ignored (Use case D)
 * *noop*: Do nothing (for testing purposes)
 * *install*: Install if necessary the Mosquitto package, a firewall rule, a sample crontab entry, and the script itself (to /sbin).
 * *sh*: Invoke a remote SSH shell on the remote host (limited to A,B for security!)
