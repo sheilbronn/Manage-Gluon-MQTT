@@ -186,7 +186,7 @@ get_pub_iface_cached() { # $1=host $2=cachetimeout  ## TODO ## -1 for forced rel
 		sPubIfs="$( echo $_data | xargs -r echo )"
 		sPubIf0="$( echo "$sPubIfs" | awk '{ print $1 }' )" # 1st interface
 		sPubIf1="$( echo "$sPubIfs" | awk '{ print $2 }' )" # 2nd interface if any (e.g. 5 Ghz)
-		# debug "PUBLIC interface(s): ssPubIf0=$sPubIf0,sPubIf1=$sPubIf1,sPubIfs=$sPubIfs"
+		debug "GET:" "PUBLIC interface(s): ssPubIf0=$sPubIf0,sPubIf1=$sPubIf1,sPubIfs=$sPubIfs"
 		sSsidBase="$( echo "$_dataall" | awk -F ";" '/;Mode: Master/ && /;Encryption: none/ { print $2 ; exit }' | tr -d \" | awk -F ": " '{ print gensub("/.*", "", "g", $2) }' )"
 		return 0
 	fi
@@ -648,7 +648,7 @@ clientcollectionfile=""
 
 [ $# -eq 0 ] && { show_help ; exit 1 ; } # at least one parameter on the command line is required
 
-while getopts "?h:gvxql:as:pi:f:m:G:n:c:o:w:" opt   # https://wiki.bash-hackers.org/howto/getopts_tutorial
+while getopts "?h:Gvxql:as:pi:f:m:g:n:c:o:w:" opt   # https://wiki.bash-hackers.org/howto/getopts_tutorial
 do
     case "$opt" in
     \?) show_help
@@ -668,7 +668,7 @@ do
 			workonallclients="yes"
 		fi
         ;;
-    g) bGiveHost="yes"
+    G) bGiveHost="yes"
 		;;
     v) [ "$bVerbose" = "yes" ] && bMoreVerbose="yes"
 		bVerbose="yes"
@@ -693,7 +693,7 @@ do
 		*) mqtthost="$( echo "$OPTARG" | tr -c -d '0-9a-zA-Z_.' )" ;; # clean up for sec purposes
 		esac
 		;;
-	G)  mqttGroup="$OPTARG"
+	g)  mqttGroup="$OPTARG"
 		;;
 	p) homie="yes"
 		[ "$cmd_mospub" = "true" ] && error_and_exit "MQTT client mosquitto_pub is not installed, but -$opt was requested..."
@@ -795,15 +795,27 @@ do
 			readonly nPidMosquitto=$!
 			command="bridge" && reply_to_mqtt_log "ON" "Subscribed $( echo "$_subscriptions" | sed 's/-t //g' )"
 			
-			while sleep 10 ; do echo PERIODIC noop ; sleep $nMqttSleep ; done  > $fPipe  &  #  pipe periodic stuff into the pipe to make it wakeup
+			#  pipe periodic stuff into the pipe to make it wakeup:
+			while sleep 6 ; do echo PERIODIC noop ; sleep $nMqttSleep ; done  > $fPipe  &  
 			readonly nPidPeriodic=$!
-			debug "Started procs: nPidMosquitto=$nPidMosquitto,nPidPeriodic=$nPidPeriodic,fPipe=$fPipe"
+			
+			#  .. and enable a listener for the ubus bus:
+			if command -v ubus > /dev/null ; then
+				# set -x
+				( ubus listen & echo $! >"$tmpdir/ubusPid" ) | awk -- '{ print "UBUS LISTEN " $0 ; fflush() }' > $fPipe &  
+				readonly nPidUbus="$( cat "$tmpdir/ubusPid" )"
+				debug "UBUS:" "Background ubus listen pid is: $( pgrep -lfa "ubus listen" )"
+				ubus send "$sName" '{ "debug": "started" }' 
+				set +x
+			fi
+
+			debug "Started procs: nPidMosquitto=$nPidMosquitto,nPidPeriodic=$nPidPeriodic,nPidUbus=$nPidUbus,fPipe=$fPipe"
 			
 			trap_function() {
 					command="bridge" && reply_to_mqtt_log "ONGOING" "trapped signal."
 					rm -f $fPipe
-					kill $nPidPeriodic $nPidMosquitto 2>/dev/null || true
- 					debug "$sName: kill'ed $nPidMosquitto $nPidPeriodic, sent MQTT, now stopping at $( date )"
+					kill $nPidPeriodic $nPidMosquitto $nPidUbus 2>/dev/null || true
+ 					debug "$sName: killed $nPidMosquitto $nPidPeriodic $nPidUbus, sent MQTT, now stopping at $( date )"
 				}		
 			trap 'trap_function' INT QUIT TERM SEGV
 		fi
@@ -815,7 +827,6 @@ do
 		while [ "$commandsToDo" ] ; do
 			if [ "$commandsToDo" = "bridge" ]  ;  then
 				read -r sPipeType command commandopts < "$fPipe" ; _rc="$?"
-				# exit
 				if [ "$_rc" -ne 0 ] ; then
 					sleep 1
 					if [ -p $fPipe ] ; then
@@ -823,32 +834,36 @@ do
 						reply_to_mqtt_log "ERROR" "$_string"
 						error_and_exit "$_string: $( ls $fPipe 2>&1 )"
 					else
-						# _string="Pipe $fPipe disappeared (rc=$_rc)."
-						reply_to_mqtt_log "OK" "Exiting. Pipe $fPipe gone (rc was $_rc)."
+						reply_to_mqtt_log "OK" "Exiting. Read had returned $_rc."
 						exit 0
 					fi
 				fi
 				
-				if [ "$sPipeType" != "MQTT" ] ; then
+				if [ "$sPipeType" = "UBUS" ] ; then
+					debug "TYPE=$sPipeType,$command,$commandopts"
+					_pms "/ubus/log"     "$commandopts"
+					commandsToDo="bridge"
+					# command=noop
+					continue
+				elif [ "$sPipeType" != "MQTT" ] ; then
 					debug "TYPE=$sPipeType,$command,$commandopts"
 					commandsToDo="ffstatus,statistics,bridge"
 				else
 					_prefix="$( echo "$command" | awk -v FS=/ '{ print $1 "/" $2 }' )"
 					_msg="$( echo "$commandopts" | awk '{ print $1 }' )" && [ "$_msg" = "(null)" ] && _msg=""
-					debug "Read raw MQTT command: $command  $_msg  (prefix=$_prefix, sitecode=$sitecode)"
+					debug "MQTT:" "command: $command  $_msg  (prefix=$_prefix, sitecode=$sitecode)"
 					case "$_prefix" in
-					"homie/$sTargetHost"|"$sitecode/$sTargetHost"|"$sitecode/${mqttHost:-$sTargetHost}")
+					"homie/$sTargetHost"|"$sitecode/$sTargetHost"|"$sitecode/${mqttGroup:-$sTargetHost}")
 						# _fullcommand="$( echo "$command" | awk -v FS=/ 'NF && NF-1 { print $3 ( $4 && $4 != "get" ? "/" $4 : "" ) ( $5 && $5 != "get" ? "/" $5 : "" ) }' )${_msg:++$_msg}"
 						command="$( echo "$command" | awk -v FS=/ 'NF && NF-1 { print $3 ( $4 && $4 != "get" ? "/" $4 : "" ) ( $5 && $5 != "get" ? "/" $5 : "" ) }' )"
 						case "$command" in
 						localclients*|publicwifi/localclients*)				command="localclients" ;;
 						publicwifi/ssidshort/set) command="ffotherssid_$_msg" ;;
-
+						radio/channel24/set)		command="ffchannel" ;;
 						publicwifi/state/set) 	[ $_msg = "true"  -o $_msg = "ON"  ] && command="ffup"
 												[ $_msg = "false" -o $_msg = "OFF" ] && command="ffdown"
 											;;
-						ffstatus*|radio/channel24/get|publicwifi/state/get)		command="ffstatus" ;;
-						radiochannel24set)		command="ffchannel" ;;
+						ffstatus*|radio/channel24|publicwifi/state|publicwifi/ssidshort) command="ffstatus" ;;
 						ffup*)			command="ffup"   ;;
 						ffdown*)		command="ffdown" ;;
 						echo*)			command="echo"   ;;
@@ -863,7 +878,7 @@ do
 						;; # extract last part of topic, must have at least one /
 					esac
 					command=${command%/get} && command=${command%/GET}
-					debug "Remapped MQTT command: $command"
+					debug "MQTT:" "Remapped to command: $command"
 				fi
 			else
 				     command="$( echo "$commandsToDo" | cut -d "," -f 1     )"
@@ -875,9 +890,10 @@ do
 			commandopts="$( echo "$commandopts" | tr -c -d "A-Za-z0-9_-" )" # for security reasons
 
 			case "$command" in
-			bridge|noop|ignore|echo)
+			bridge|noop|ignore|echo|date)
 				debug "Command=$command,$commandopts,($( date +%T ))"
 				[ "$command" = "echo" ] && reply_to_mqtt_log "OK" "Command $command $commandopts"
+				[ "$command" = "date" ] && reply_to_mqtt_log "OK" "Command $command: $( date )"
 				;;
 			loop)
 				check_read_mqqt_broker || continue
@@ -1060,9 +1076,18 @@ EOF
 				get_pub_iface_cached # also sets sPubIfs and sSsidBase
 				debug "PREPARING:" "$command on host $sTargetHost (if=$sPubIf0,$sPubIf1) ..."
 				sNewSSID="$( ssh_cmd "iw dev $sPubIf0 del ${sPubIf1:+; iw dev $sPubIf1 del >/dev/null} " 2>&1 )" # stop Freifunk public interface
-				echo "$sNewSSID" | grep -q 'No such.* device' && reply_to_mqtt_log "ERROR" "$sNewSSID" && sNewSSID=""
-				h_line "$homie/publicwifi/clientscount" "-1"
-				[ "$sNewSSID" ] && reply_to_mqtt_log "OK" "sNewSSID=$sNewSSID"
+				_rc=$?
+				tempstr="$( echo "$sNewSSID" | xargs echo )"
+				if [ "$_rc" -eq 237 -o $_rc -eq 1 ] ; then
+					reply_to_mqtt_log "OK" "$tempstr (_rc=$_rc)"
+					h_line "$homie/publicwifi/clientscount" "-1"  && sNewSSID=""
+				elif [ -z "$sNewSSID" -o $_rc != 0 ] ; then
+					reply_to_mqtt_log "ERROR" "sNewSSID=$tempstr (_rc=$_rc)" 
+					h_line "$homie/publicwifi/clientscount" "-1"  && sNewSSID=""
+				else 
+					reply_to_mqtt_log "OK" "sNewSSID=$tempstr"
+				fi
+				debug "FFDOWN:" "Now running ffstatus"
 				commandsToDo="ffstatus${commandsToDo:+,$commandsToDo}"
 				;;
 			ffup|ffstatus)
@@ -1073,26 +1098,30 @@ EOF
 					reply_to_mqtt_log "ONGOING" "RUNNING $command for $sTargetHost"
 					tempstr="$( ssh_cmd "wifi up && sleep $wifiupsleep && iwinfo $sPubIf0 info" )" # ... ignoring any 2nd interface
 				elif [ "$sNewSSID" ] ; then
-					debug "REUSED sNewSSID=$sNewSSID..."
+					debug "REUSED:" "sNewSSID=$sNewSSID..."
 					tempstr="$sNewSSID"
 				else
 					tempstr="$( ssh_cmd "iwinfo $sPubIf0 info" 2>&1 )" # ... ignoring any 2nd interface
 				fi
-				retval="$?"			
+				_rc=$?			
 				# h_line "$homie/publicwifi/lastdate" "$( date -Iseconds )"
-				if [ "$retval" != 0 -o -z "$tempstr" ] || echo "$tempstr" | grep -w -q -E "open failed|connect failed|No such" ; then
+				_out="$( echo "$tempstr" | xargs echo )"
+				if [ $_rc = 1 -o $_rc = 237 ] && echo "$tempstr" | grep -w -q -E "No such" ; then
+					reply_to_mqtt_log "OFF" "tempstr=$_out (rc=$_rc)"
+					_pms "/publicwifi/state"     "OFF"
+				elif [ $_rc != 0 -o -z "$tempstr" ] || echo "$tempstr" | grep -w -q -E "open failed|connect failed|No such" ; then
 					# something went wrong...
-					tempstr="$( echo "$tempstr" | xargs echo )"
-					error "rc=$retval for exec $command - $tempstr"
+					error "rc=$_rc for exec $command - $tempstr"
 					h_line "$homie/publicwifi/state" "false"
-					if [ "$retval" = 1 ] ; then
-						reply_to_mqtt_log "OFF" "rc=$retval"
-						_pms "/publicwifi/state"     "OFF"
-					elif [ "$retval" = 255 ] ; then
-						reply_to_mqtt_log "OFF" "rc=$retval (unreachable?)"
+					if echo "$tempstr" | grep -w -q -E "open failed|connect failed|No such" ; then
+						reply_to_mqtt_log "OK" "_out (rc=$_rc)"
+						_pms "/publicwifi/state"     "OFF" # better: ERROR ?
+						h_line "$homie/publicwifi/clientscount" "-1"
+					elif [ $_rc = 255 ] ; then
+						reply_to_mqtt_log "OFF" "rc=$_rc (unreachable?)"
 						_pms "/publicwifi/state"     "OFF" # better: ERROR ?
 					else
-						reply_to_mqtt_log "ERROR" "rc=$retval // $tempstr"
+						reply_to_mqtt_log "ERROR" "rc=$_rc // $_out"
 						_pms "/publicwifi/state"     "OFF"  # better: ERROR ?
 					fi
 				else # ... went ok.
@@ -1129,17 +1158,23 @@ EOF
 				debug "commandsToDo=" "$commandsToDo"
 				# ( ( iwinfo | fgrep client0 ) || ( wifi up ; echo wifi upped. ) )	) || ( iwinfo | fgrep client0 && iw dev client0 del ; echo if downed )
 				;;
-			ffchannel|radiochannel24set)
+			ffchannel|ffchannel-*|radiochannel24set)
+				# FIXME: only fully implemented for 2.4Ghz (first) radio
 				check_read_mqqt_broker || continue
 				get_pub_iface_cached "" 0 # sets sPubIfs and sSsidBase, and channel
+				_channel24="$commandopts" && [ "$_channel24" ] || _channel24="${command#ffchannel-}"
 				command="channel24"
-				if [ "$commandopts" -lt 1 -o "$commandopts" -gt 13 ] ; then
-					reply_to_mqtt_log "ERROR" "Illegal channel: $commandopts"
+				if [ "$_channel24" -lt 1 -o "$_channel24" -gt 13 ] ; then
+					reply_to_mqtt_log "ERROR" "Illegal channel: $_channel24"
 				fi
-				reply_to_mqtt_log "ONGOING" "Setting channel: ${commandopts}" # FIXME: assert numeric value 1-13
-				commandopts="$( echo "$commandopts" | tr -c -d "0-9" )" # for security reasons
+				reply_to_mqtt_log "ONGOING" "Setting wireless.radio0.channel=$_channel24  (if=$sPubIf0,$sPubIf0)"
+				_channel24="$( echo "$_channel24" | tr -c -d "0-9" )" # for security reasons
+				_result="$( ssh_cmd "uci set wireless.radio0.channel=$_channel24 && 
+				        wifi up && sleep $wifiupsleep && iwinfo $sPubIf0 info | grep -w Channel" 2>&1 )" # FIXME: ignoring any 2nd interface # iwinfo $sPubIf0 info
+				debug "_result=****$_result*****"
 				# FIXME: more code to be added
 				# ...
+				_rc="$?"
 				;;
 			ffotherssid|ffotherssid1|ffotherssid2|ffotherssid_*|ffotherssid-*)
 				check_read_mqqt_broker || continue
