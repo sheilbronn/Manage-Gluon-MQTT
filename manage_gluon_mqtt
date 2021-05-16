@@ -380,8 +380,8 @@ publish_to_mqtt_starred() {		# _pms(expandableTopic,message,moreMsoquittoOptions
 reply_to_mqtt_log() {
 	_nx
 	_cmd="$( echo "$command" | sed -e 's/[0-9]*$//' )" # remove any trailing digits from command
-	[ "$1" ] && [ "$mqtthost" -o "$homie" ] && _pms "/$_cmd/log" "{*status*:*$1*${2:+,*details*:*$2*}${3:+,$3}}"
-	[ "$1" != "OK" -a "$1" != "ONGOING" ] && logger -p daemon.error -t "$sName $sTargetHost $1" "$2"
+	[ "$1" ] && [ "$mqtthost" -o "$homie" ] && _pms "/$_cmd/log" "{*status*:*$1*${2:+,*details*:*$2*}${3:+,$3}$( [ "$fPipe" ] && echo ",*daemon*:*yes*")}"
+	[ "$1" != "OK" -a "$1" != "ONGOING" ] && logger -p daemon.error -t "$sName $sTargetHost $1" "$2 $3"
 	debug "SENT LOG " "$1 :: $2 :: $3 ::"
 }
 
