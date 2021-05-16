@@ -29,9 +29,10 @@ fi
 
 set -o noglob  # noglob will limit security and escaping problems
 sName="${0##*/}" && sName="${sName%.sh}"
-sID="$( basename "${sName}" .sh )" # sID="${sID}433"
-sMID="$sID"
+sMID="$( basename "${sName}" .sh )"
+sID="$( echo "${sMID}" |  tr -c -d "[a-zA-Z0-9]" )" # sanitize a little
 sManufacturer="Linux"
+rc_ssh=0
 
 sUserConfigDir="$HOME/.${sName%.sh}"
 sArea="$( cat /proc/sys/kernel/hostname 2>/dev/null || hostname || e "unknown" )"
@@ -114,7 +115,7 @@ get_os_data_semi_starred_cached() {
 	local _os_id
 
 	if [ -z "$_result" ] ; then
-		_data="$( ssh_cmd "cat $_os_data_fn" )" || {	_rc="$?" ; return $_rc ; } # cancel func
+		_data="$( ssh_cmd "cat $_os_data_fn" )" || return $rc_ssh  # cancel func
 		if [ -n "$_data" ] ; then
 			storage_cache_write "$1.os_data_lined" "$_data" # keep it for now, dont need it yet
 			_result="$( echo "$_data" | awk -F= 'BEGIN { printf  "{*os*:{"
@@ -379,7 +380,7 @@ publish_to_mqtt_starred() {		# _pms(expandableTopic,message,moreMsoquittoOptions
 
 reply_to_mqtt_log() {
 	_nx
-	_cmd="$( echo "$command" | sed -e 's/[0-9]*$//' )" # remove any trailing digits from command
+	local _cmd="$( echo "$command" | sed -e 's/[0-9]*$//' )" # remove any trailing digits from command
 	[ "$1" ] && [ "$mqtthost" -o "$homie" ] && _pms "/$_cmd/log" "{*status*:*$1*${2:+,*details*:*$2*}${3:+,$3}$( [ "$fPipe" ] && echo ",*daemon*:*yes*")}"
 	[ "$1" != "OK" -a "$1" != "ONGOING" ] && logger -p daemon.error -t "$sName $sTargetHost $1" "$2 $3"
 	debug "SENT LOG " "$1 :: $2 :: $3 ::"
@@ -735,6 +736,8 @@ do
 		ssh_cmd() {
 			# echo_if_not_quiet "$@" 1>&2
 			eval "$@" # < /dev/null
+			rc_ssh=$?
+			return $rc_ssh
 		  }
 		sTargetHost="$sArea"
 	else
@@ -742,13 +745,12 @@ do
 		ssh_cmd() {
 			# echo_if_not_quiet "root@$ffhost:" "$@" 1>&2
 			_r=$( ssh -T "root@$ffhost" -q "$@" ) 
-			_rc=$?
-			if [ "$_rc" -gt 0 ] ; then
-				debug "SSH" " -T root@$ffhost RETURNED $_rc" 1>&2
-			else
-				echo "$_r" | tr -d '`'
+			rc_ssh=$?
+			echo "$_r" | tr -d '`'
+			if [ "$rc_ssh" -gt 0 ] ; then
+				debug "SSH" " -T root@$ffhost RETURNED $rc_ssh" 1>&2
 			fi
-			return $_rc
+			return $rc_ssh
   		  }
 		# remove any trailing "-<letter>"  also the domain name
 		sTargetHost=$( echo "$ffhost" | awk -- '{ print gensub("-[a-z]$", "", 1, gensub("\\..*", "", 1, tolower($0) ) ) }' ) 
@@ -795,7 +797,7 @@ do
 			command="bridge" && reply_to_mqtt_log "ON" "Subscribed $( echo "$_subscriptions" | sed 's/-t //g' )"
 			
 			#  pipe periodic stuff into the pipe to make it wakeup:
-			while sleep 5 ; do echo PERIODIC noop ; sleep $nMqttSleep || true ; done  > $fPipe  &  
+			while sleep 5 ; do echo PERIODIC noop "${nMqttSleep}secs" ; sleep $nMqttSleep || true ; done  > $fPipe  &  
 			readonly nPidPeriodic=$!
 			
 			#  .. and enable a listener for the ubus bus:
@@ -825,9 +827,11 @@ do
 		debug "LOOP" " START (commandsToDo=$commandsToDo)"
 		while [ "$commandsToDo" ] ; do
 			if [ "$commandsToDo" = "bridge" ]  ;  then
-				read -r sPipeType command commandopts < "$fPipe" ; _rc="$?"
+				debug "READ:" "Reading from pipe $fPipe ..."
+				read -r sPipeType command commandopts < "$fPipe"
+				_rc="$?"
 				if [ "$_rc" -ne 0 ] ; then
-					sleep 1
+					# sleep 1
 					if [ -p $fPipe ] ; then
 						_string="Read error from pipe (rc=$_rc)"
 						reply_to_mqtt_log "ERROR" "$_string"
@@ -836,21 +840,20 @@ do
 						reply_to_mqtt_log "OK" "Exiting. Read had returned $_rc."
 						exit 0
 					fi
-				fi
-				
+				fi				
 				if [ "$sPipeType" = "UBUS" ] ; then
-					debug "TYPE=$sPipeType,$command,$commandopts"
+					debug "READ:" "TYPE=$sPipeType,$command,$commandopts"
 					_pms "/ubus/log"     "$commandopts"
 					commandsToDo="bridge"
-					# command=noop
 					continue
 				elif [ "$sPipeType" != "MQTT" ] ; then
-					debug "TYPE=$sPipeType,$command,$commandopts"
+					debug "READ:" "TYPE=$sPipeType,$command,$commandopts"
+					[ "$commandopts" = "noop" ] && continue # ".... noop" does absolutely nothing
 					commandsToDo="ffstatus,statistics,bridge"
 				else
 					_prefix="$( echo "$command" | awk -v FS=/ '{ print $1 "/" $2 }' )"
 					_msg="$( echo "$commandopts" | awk '{ print $1 }' )" && [ "$_msg" = "(null)" ] && _msg=""
-					debug "MQTT:" "command: $command  $_msg  (prefix=$_prefix, sitecode=$sitecode)"
+					debug "READ:" "command: $command  $_msg  (prefix=$_prefix, sitecode=$sitecode)"
 					case "$_prefix" in
 					"homie/$sTargetHost"|"$sitecode/$sTargetHost"|"$sitecode/${mqttGroup:-$sTargetHost}")
 						# _fullcommand="$( echo "$command" | awk -v FS=/ 'NF && NF-1 { print $3 ( $4 && $4 != "get" ? "/" $4 : "" ) ( $5 && $5 != "get" ? "/" $5 : "" ) }' )${_msg:++$_msg}"
@@ -877,7 +880,7 @@ do
 						;; # extract last part of topic, must have at least one /
 					esac
 					command=${command%/get} && command=${command%/GET}
-					debug "MQTT:" "Remapped to command: $command"
+					debug "READ:" "Remapped MQTT to command: $command"
 				fi
 			else
 				     command="$( echo "$commandsToDo" | cut -d "," -f 1     )"
@@ -887,10 +890,10 @@ do
 			fi		
 			    command="$( echo "$command"     | tr -c -d "A-Za-z0-9_-" )" # for security reasons
 			commandopts="$( echo "$commandopts" | tr -c -d "A-Za-z0-9_-" )" # for security reasons
-
+			[ "$bMoreVerbose" ] && debug "COMMAND:" "command=$command ($commandopts) // commandsToDo=$commandsToDo"
 			case "$command" in
 			bridge|noop|ignore|echo|date)
-				debug "Command=$command,$commandopts,($( date +%T ))"
+				debug "COMMAND:" "Command=$command,$commandopts,($( date +%T ))"
 				[ "$command" = "echo" ] && reply_to_mqtt_log "OK" "Command $command $commandopts"
 				[ "$command" = "date" ] && reply_to_mqtt_log "OK" "Command $command: $( date )"
 				;;
@@ -1011,7 +1014,6 @@ EOF
 				# ... still not implemented: installing it as an MQTT daemon on Gluon ...
 				rcfile="/etc/rc.local"
 				_result="$( ssh_cmd "cat $rcfile" )"
-				_rc="$?"
 				if echo "$_result" | grep "$sName" ; then
 					debug "MODIFY:" "The $rcfile line containing '$sName' was found above... Leaving $rcfile unmodified."
 				else
@@ -1071,20 +1073,19 @@ EOF
 				announce_disco "$homie" "-d"
 				;;
 			ffdown)
-				check_read_mqqt_broker || continue
+				check_write_mqqt_broker || continue
 				get_pub_iface_cached # also sets sPubIfs and sSsidBase
 				debug "PREPARING:" "$command on host $sTargetHost (if=$sPubIf0,$sPubIf1) ..."
-				sNewSSID="$( ssh_cmd "iw dev $sPubIf0 del ${sPubIf1:+; iw dev $sPubIf1 del >/dev/null} 2>&1" )" # stop Freifunk public interface
-				_rc=$?
-				tempstr="$( echo "$sNewSSID" | xargs echo )"
-				if [ "$_rc" -eq 237 -o $_rc -eq 1 ] ; then
-					reply_to_mqtt_log "OK" "$tempstr (_rc=$_rc)"
-					h_line "$homie/publicwifi/clientscount" "-1"  && sNewSSID=""
-				elif [ -z "$sNewSSID" -o $_rc != 0 ] ; then
-					reply_to_mqtt_log "ERROR" "sNewSSID=$tempstr (_rc=$_rc)" 
-					h_line "$homie/publicwifi/clientscount" "-1"  && sNewSSID=""
+				tempstr="$( ssh_cmd "iw dev $sPubIf0 del ${sPubIf1:+; iw dev $sPubIf1 del >/dev/null} 2>&1" )" # stop Freifunk public interface
+				tempstr="$( echo "$tempstr" | xargs echo )"
+				if [ "$rc_ssh" -eq 237 -o $rc_ssh -eq 1 ] ; then
+					reply_to_mqtt_log "OK" "$tempstr (_rc=$rc_ssh)"
+					h_line "$homie/publicwifi/clientscount" "0"  && tempstr=""
+				elif [ -z "$tempstr" -a $rc_ssh != 0 ] ; then
+					reply_to_mqtt_log "ERROR" "tempstr=$tempstr (_rc=$rc_ssh)" 
+					h_line "$homie/publicwifi/clientscount" "0"  && tempstr=""
 				else 
-					reply_to_mqtt_log "OK" "sNewSSID=$tempstr"
+					reply_to_mqtt_log "OK" "tempstr=$tempstr"
 				fi
 				debug "FFDOWN:" "Now running ffstatus"
 				commandsToDo="ffstatus${commandsToDo:+,$commandsToDo}"
@@ -1092,55 +1093,56 @@ EOF
 			ffup|ffstatus)
 				get_pub_iface_cached # also sets sPubIf* and sSsidBase
 				debug "PREPARING:" "$command on host $sTargetHost (if=$sPubIfs) ..."
+				_cmd="iwinfo $sPubIf0 info || uci get wireless.client_radio0.ssid" # .. fallback to uci-setting ... and ignoring any 2nd interface
+				set -x
 				if [ "$command" = "ffup" ] ; then
-					check_read_mqqt_broker || continue
+					check_write_mqqt_broker || continue
 					reply_to_mqtt_log "ONGOING" "RUNNING $command"
-					tempstr="$( ssh_cmd "wifi up && sleep $wifiupsleep && iwinfo $sPubIf0 info" )" # ... ignoring any 2nd interface
+					tempstr="$( ssh_cmd "wifi up && sleep $wifiupsleep && $_cmd" )" 
 				elif [ "$sNewSSID" ] ; then
+					rc_ssh=0
 					debug "REUSED:" "sNewSSID=$sNewSSID..."
-					tempstr="$sNewSSID"
 				else
-					reply_to_mqtt_log "ONGOING" "RUNNING $command (cache unused)"
-					tempstr="$( ssh_cmd "iwinfo $sPubIf0 info 2>&1" )" # ... ignoring any 2nd interface
-				fi
-				_rc=$?			
-				# h_line "$homie/publicwifi/lastdate" "$( date -Iseconds )"
-				_out="$( echo "$tempstr" | xargs echo )"
-				if [ $_rc = 1 -o $_rc = 237 ] && echo "$tempstr" | grep -w -q -E "No such" ; then
-					reply_to_mqtt_log "OFF" "tempstr=$_out (rc=$_rc)"
-					_pms "/publicwifi/state"     "OFF"
-				elif [ $_rc != 0 -o -z "$tempstr" ] || echo "$tempstr" | grep -w -q -E "open failed|connect failed|No such" ; then
-					# something went wrong...
-					error "rc=$_rc for exec $command - $tempstr"
-					h_line "$homie/publicwifi/state" "false"
-					if echo "$tempstr" | grep -w -q -E "open failed|connect failed|No such" ; then
-						reply_to_mqtt_log "OK" "_out (rc=$_rc)"
-						_pms "/publicwifi/state"     "OFF" # better: ERROR ?
-						h_line "$homie/publicwifi/clientscount" "-1"
-					elif [ $_rc = 255 ] ; then
-						reply_to_mqtt_log "OFF" "rc=$_rc (unreachable?)"
-						_pms "/publicwifi/state"     "OFF" # better: ERROR ?
-						_pms "/publicwifi/ssidshort" ""
-						( sleep 30 ; echo PERIODIC noop "sooner" )  > $fPipe  & # retry soon
-					else
-						reply_to_mqtt_log "ERROR" "rc=$_rc // $_out"
-						_pms "/publicwifi/state"     "OFF"  # better: ERROR ?
-					fi
-				else # ... went ok.
+					reply_to_mqtt_log "ONGOING" "RUNNING $command (iwinfo)"
 					# set -x
-					sNewSSID="$( echo "$tempstr" | sed -e '/ESSID:/s/[^:]*: //' -e 's/\"//g' -e '1q' )"
+					tempstr="$( ssh_cmd "$_cmd" )"
+				fi
+				if [ "$rc_ssh" = 0 -a "${tempstr#$sPubIf0}" != "${tempstr}"  ] ; then
+					sNewSSID="$( echo "$tempstr" | sed -e '/ESSID:/s/[^:]*: //' -e 's/\"//g' -e '1q' )" # coerce iwinfo and uci get results
+					debug "SUCCESS:" "tempstr=$tempstr"
+					echo_if_not_quiet "$sNewSSID"
+				set +x
 					sChannel24="$( echo "$tempstr" | awk '$3 ~ /Channel:/ { print $4 }' )"
-					set +x
+					h_line "$homie/radio/channel24"		"$sChannel24"
+					h_line "$homie/publicwifi/state"		"true"
+					_pms "/radio/channel24"     "$sChannel24"
+					_pms "/publicwifi/state"     "ON"
+				elif [ "$tempstr" ] ; then
+					error "rc=$rc_ssh for command $command - $tempstr"
+					if [ $rc_ssh = 255 ] || echo "$tempstr" | grep -w -q -E "open failed|connect failed" ; then # unreachable
+						reply_to_mqtt_log "OFF" "rc=$rc_ssh (unreachable?)"
+						( sleep 60 ; echo PERIODIC noop "sooner" )  > $fPipe  & # inject for sooner retry
+					elif [ "${tempstr#sPubIf0}" = "${tempstr}" ]  ; then
+						reply_to_mqtt_log "OFF" "rc=$rc_ssh (interface missing or off)"
+					else
+						reply_to_mqtt_log "ERROR" "rc=$rc_ssh // $( echo "$tempstr" | xargs echo ) "
+					fi
+				set +x
+					_pms "/publicwifi/state"     "OFF" 
+					h_line "$homie/publicwifi/state" "false"
+					_pms "/clients" "0"
+					h_line "$homie/publicwifi/clientscount" "0"
+				fi
+				if [ "$sNewSSID" ] ; then
 					echo_if_not_quiet "$sNewSSID"
 					_new_short_ssid="$( printf "%s" "$sNewSSID" | sed -e 's,.*/,,' -e 's/"//g'  )"
 					reply_to_mqtt_log "OK" "$sNewSSID"
-					h_line "$homie/radio/channel24"		"$sChannel24"
-					h_line "$homie/publicwifi/state"		"true"
 					h_line "$homie/publicwifi/ssidshort" 	"$_new_short_ssid"
-					_pms "/radio/channel24"     "$sChannel24"
-					_pms "/publicwifi/state"     "ON"
 					_pms "/publicwifi/ssidshort" "$_new_short_ssid"
-					sNewSSID="" # ensure that rerun happens next time
+					sNewSSID="" # ensure that rerun happens again next time 
+				else	
+					h_line "$homie/publicwifi/ssidshort" 	""
+					_pms "/publicwifi/ssidshort" ""
 				fi
 				;;
 			ffcond)
@@ -1177,7 +1179,6 @@ EOF
 				debug "_result=****$_result*****"
 				# FIXME: more code to be added
 				# ...
-				_rc="$?"
 				;;
 			ffotherssid|ffotherssid1|ffotherssid2|ffotherssid_*|ffotherssid-*)
 				check_read_mqqt_broker || continue
@@ -1196,7 +1197,7 @@ EOF
 				command="ffotherssid"
 				# further checks for allowed and legal  SSID values amongst gluon domains ....
 				if [ "$_shortssid" = "OFFLINE" -o "$_shortssid" = "MYHOSTNAME" ] || expr "$( get_gluon_domains_starred_cached "$sTargetHost" )"  :  ".*\*${_shortssid}[*]" > /dev/null ; then
-					reply_to_mqtt_log "ONGOING" "Setting short SSID: $_shortssid"
+					# reply_to_mqtt_log "ONGOING" "Setting short SSID: $_shortssid"
 					[ "$_shortssid" = "MYHOSTNAME" ] && _shortssid="$( get_hostname_cached "$sTargetHost" )"
 					reply_to_mqtt_log "ONGOING" "Setting short SSID: $_shortssid"
 					otherssid="$sSsidBase/$_shortssid"
@@ -1213,10 +1214,9 @@ EOF
 						iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDNEW/' -e '1q' " 2>&1 )" # FIXME: ignoring any 2nd interface
 				# echo ----------------
 				debug "_result=****$_result*****"
-				_rc="$?"
 				set +x
 
-				if [ "$_rc" = 255 ] ; then
+				if [ "$rc_ssh" = 255 ] ; then
 					_log="target sTargetHost not reachable (SSH retcode 255), aborting ffotherssid command...."
 					echo_if_not_quiet "$_log"
 					reply_to_mqtt_log "ERROR" "$_log"
@@ -1232,6 +1232,8 @@ EOF
 					_log="Previous=$prev_ssid, now=$sNewSSID"
 					if [ "$prev_ssid" = "$sNewSSID" ] ; then
 						_log="$_log (no change)"
+					else
+						sNewSSID=""
 					fi
 					debug "$_log"
 					reply_to_mqtt_log "OK" "$_log"
@@ -1246,9 +1248,9 @@ EOF
 				# 6 seconds needed for interface!
 				_result="$( ssh_cmd "iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; gluon-reconfigure | tail -3 ; wifi up  ; sleep $wifiupsleep ; iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDNEW/' -e '1q' " )"
 				prev_ssid="$( echo "$_result" | grep SSIDPREV | cut -d : -f 2 )"
-				sNewSSID="$( echo "$_result" | grep SSIDNEW | cut -d : -f 2 )"
-				echo_if_not_quiet "$sTargetHost: Ran gluon-reconfigure, previously $prev_ssid, then wifi up, then $sNewSSID. id=$(id -nu)/$(id -u)\n"
-				if [ "$prev_ssid" != "$sNewSSID" ] ; then
+				new_ssid="$( echo "$_result" | grep SSIDNEW | cut -d : -f 2 )"
+				echo_if_not_quiet "$sTargetHost: Ran gluon-reconfigure, previously $prev_ssid, then wifi up, then $new_ssid. id=$(id -nu)/$(id -u)\n"
+				if [ "$prev_ssid" != "$new_ssid" ] ; then
 					commandsToDo="localclients${commandsToDo:+,$commandsToDo}"
 				fi
 				commandsToDo="ffstatus${commandsToDo:+,$commandsToDo}" # ... implicitly followed by a ffstatus
@@ -1352,8 +1354,7 @@ EOF
 				debug "SPEEDTEST:" "fetching $_url..."
 				reply_to_mqtt_log "ONGOING" "Trying $_url"
 				_val=$( ssh_cmd "date -u +%s; wget $_spparam -O - $_url | wc -c ; date -u +%s"  )
-				_rc="$?"
-				# debug "speedtest: $_val, rc=$_rc"
+				# debug "speedtest: $_val, rc=$rc_ssh"
 
 				if [ "$_val" ] ; then
 					starttime="$(	echo "$_val" | sed -n -e "1 p" )"
@@ -1373,8 +1374,8 @@ EOF
 						storage_cache_write "$sTargetHost.lastspdtest" "$speedMB"
 					fi
 				else
-					echo_if_not_quiet "ERROR: $_rc"
-					reply_to_mqtt_log "ERROR" "{*ERROR*:*$_rc*,*file*:*$_url*${sLastspeedtest}}"
+					echo_if_not_quiet "ERROR: $rc_ssh"
+					reply_to_mqtt_log "ERROR" "{*ERROR*:*$rc_ssh*,*file*:*$_url*${sLastspeedtest}}"
 				fi
 				;;
 			status)
@@ -1432,12 +1433,11 @@ EOF
 				fi
 				;;
 			nodeinfo|neighbours|statistics)
-				_rc=""
+				rc_ssh=""
 				tmpfilejson="$tmpdir/$sTargetHost.$command.tmp"
 				ffnodeip="$( storage_cache_read "$sTargetHost.nodeip" 30 )"
 				if [ -z "$ffnodeip" ]  ;  then
 					ffnodeip="$( ssh_cmd "ip -f inet6 -o addr show dev $ifipv6" | awk -e '{ print gensub("/.*", "", "1", $4) ; exit 0 }'  )"
-					_rc="$?"
 					[ "$ffnodeip" ] && storage_cache_write "$sTargetHost.nodeip" "$ffnodeip" # new value > cache it
 				fi
 				if [ -z "$ffnodeip" ] ; then # ... was still not determinable > abort
@@ -1447,13 +1447,12 @@ EOF
 					_gni_cmd="gluon-neighbour-info -i br-client -p 1001 -r $command -d " # ipaddr will be appended ...
 					[ "$one_additional_option" ] && ffhost="$one_additional_option" # use other host to query the remote one ...
 					ssh_cmd "$_gni_cmd $ffnodeip" > "$tmpfilemqtt"
-					_rc="$?"
 					_val="$( cat "$tmpfilemqtt" )"
-					debug "Had called $_gni_cmd > $ffnodeip (rc=$_rc)"
+					debug "Had called $_gni_cmd for $ffnodeip (rc=$rc_ssh)"
 					returnsize="$( wc -l < "$tmpfilemqtt" )"
 					if [ "$returnsize" -eq 0 ]  ;  then
 						error "Connection or gluon-neighbour-info failed: Command $command on node ip $ffnodeip failed..."
-						reply_to_mqtt_log "ERROR" "remote result empty (rc=$_rc)"
+						reply_to_mqtt_log "ERROR" "remote result empty (rc=$rc_ssh)"
 					else
 						storage_cache_write "$sTargetHost.$command" "$_val" # cache all data to support change detection some time
 						echo_if_not_quiet "$_val"
@@ -1518,9 +1517,8 @@ EOF
 				if ssh_cmd "/sbin/reboot" ; then
 					reply_to_mqtt_log "OK" # might not even get here if run locally ...
 				else
-					_rc="$?"
-					error "reboot for $sSshUser failed (rc=$_rc)"
-					reply_to_mqtt_log "ERROR" "call failed (rc=$_rc)"
+					error "reboot for $sSshUser failed (rc=$rc_ssh)"
+					reply_to_mqtt_log "ERROR" "call failed (rc=$rc_ssh)"
 				fi
 				;;
 			wifiscan)
@@ -1534,9 +1532,8 @@ EOF
 				get_pub_iface_cached # sets sPubIf* and sSsidBase
 
 				_data="$( ssh_cmd "[ \"$(id -u)\" = 0 ] || echo ERROR && iw dev $sPubIf0 scan ${sPubIf1:+&& iw dev $sPubIf1 scan} " )"
-				_rc="$?"
 
-				if [ $_rc = 0 ] ; then
+				if [ $rc_ssh = 0 ] ; then
 					# _data="$( echo "$_data" | awk '$1 ~ /^SSID/ { sub("\t*SSID: *", "") ; if (length($0)) print } { next }' | sort -u | make_json_array_from_words)"
 					# set -x
 					_data="$( echo "$_data" | awk '
@@ -1552,8 +1549,8 @@ EOF
 					_pms "/$command" "$_data"
 					# reply_to_mqtt_log "OK" "$_data"
 				else
-					echo_if_not_quiet "ssh command $command failed (rc=$_rc)"
-					reply_to_mqtt_log "ERROR" "rc=$_rc // $_data"
+					echo_if_not_quiet "ssh command $command failed (rc=$rc_ssh)"
+					reply_to_mqtt_log "ERROR" "rc=$rc_ssh // $_data"
 				fi
 				continue
 
