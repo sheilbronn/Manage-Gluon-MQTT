@@ -670,9 +670,8 @@ do
         ;;
     G) bGiveHost="yes"
 		;;
-    v) [ "$bVerbose" = "yes" ] && bMoreVerbose="yes"
+    v) [ "$bVerbose" = "yes" ] && bMoreVerbose="yes" && nMqttSleep=30 || nMqttSleep=170 # not to small to allow for gathering status in between !
 		bVerbose="yes"
-		nMqttSleep=170 # not to small to allow for gathering status in between !
 		;;
 	x) bVerbose="yes"
 		set -o xtrace
@@ -1121,6 +1120,8 @@ EOF
 					elif [ $_rc = 255 ] ; then
 						reply_to_mqtt_log "OFF" "rc=$_rc (unreachable?)"
 						_pms "/publicwifi/state"     "OFF" # better: ERROR ?
+						_pms "/publicwifi/ssidshort" ""
+						( sleep 30 ; echo PERIODIC noop "sooner" )  > $fPipe  & # retry soon
 					else
 						reply_to_mqtt_log "ERROR" "rc=$_rc // $_out"
 						_pms "/publicwifi/state"     "OFF"  # better: ERROR ?
@@ -1139,6 +1140,7 @@ EOF
 					_pms "/radio/channel24"     "$sChannel24"
 					_pms "/publicwifi/state"     "ON"
 					_pms "/publicwifi/ssidshort" "$_new_short_ssid"
+					sNewSSID="" # ensure that rerun happens next time
 				fi
 				;;
 			ffcond)
