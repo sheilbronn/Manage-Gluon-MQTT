@@ -298,7 +298,7 @@ fi
 
 error()   {
 	_nx
-	e -e "$sName: ${OnRed}ERROR$Rst: $1" 1>&2
+	e -e "${OnRed}ERROR$Rst: $@" 1>&2
 	}
 
 error_and_exit() {
@@ -796,7 +796,7 @@ do
 			command="bridge" && reply_to_mqtt_log "ON" "Subscribed $( echo "$_subscriptions" | sed 's/-t //g' )"
 			
 			#  pipe periodic stuff into the pipe to make it wakeup:
-			while sleep 6 ; do echo PERIODIC noop ; sleep $nMqttSleep ; done  > $fPipe  &  
+			while sleep 5 ; do echo PERIODIC noop ; sleep $nMqttSleep || true ; done  > $fPipe  &  
 			readonly nPidPeriodic=$!
 			
 			#  .. and enable a listener for the ubus bus:
@@ -1075,7 +1075,7 @@ EOF
 				check_read_mqqt_broker || continue
 				get_pub_iface_cached # also sets sPubIfs and sSsidBase
 				debug "PREPARING:" "$command on host $sTargetHost (if=$sPubIf0,$sPubIf1) ..."
-				sNewSSID="$( ssh_cmd "iw dev $sPubIf0 del ${sPubIf1:+; iw dev $sPubIf1 del >/dev/null} " 2>&1 )" # stop Freifunk public interface
+				sNewSSID="$( ssh_cmd "iw dev $sPubIf0 del ${sPubIf1:+; iw dev $sPubIf1 del >/dev/null} 2>&1" )" # stop Freifunk public interface
 				_rc=$?
 				tempstr="$( echo "$sNewSSID" | xargs echo )"
 				if [ "$_rc" -eq 237 -o $_rc -eq 1 ] ; then
@@ -1095,13 +1095,14 @@ EOF
 				debug "PREPARING:" "$command on host $sTargetHost (if=$sPubIfs) ..."
 				if [ "$command" = "ffup" ] ; then
 					check_read_mqqt_broker || continue
-					reply_to_mqtt_log "ONGOING" "RUNNING $command for $sTargetHost"
+					reply_to_mqtt_log "ONGOING" "RUNNING $command"
 					tempstr="$( ssh_cmd "wifi up && sleep $wifiupsleep && iwinfo $sPubIf0 info" )" # ... ignoring any 2nd interface
 				elif [ "$sNewSSID" ] ; then
 					debug "REUSED:" "sNewSSID=$sNewSSID..."
 					tempstr="$sNewSSID"
 				else
-					tempstr="$( ssh_cmd "iwinfo $sPubIf0 info" 2>&1 )" # ... ignoring any 2nd interface
+					reply_to_mqtt_log "ONGOING" "RUNNING $command (cache unused)"
+					tempstr="$( ssh_cmd "iwinfo $sPubIf0 info 2>&1" )" # ... ignoring any 2nd interface
 				fi
 				_rc=$?			
 				# h_line "$homie/publicwifi/lastdate" "$( date -Iseconds )"
@@ -1170,7 +1171,7 @@ EOF
 				reply_to_mqtt_log "ONGOING" "Setting wireless.radio0.channel=$_channel24  (if=$sPubIf0,$sPubIf0)"
 				_channel24="$( echo "$_channel24" | tr -c -d "0-9" )" # for security reasons
 				_result="$( ssh_cmd "uci set wireless.radio0.channel=$_channel24 && 
-				        wifi up && sleep $wifiupsleep && iwinfo $sPubIf0 info | grep -w Channel" 2>&1 )" # FIXME: ignoring any 2nd interface # iwinfo $sPubIf0 info
+				        wifi up && sleep $wifiupsleep && iwinfo $sPubIf0 info | grep -w Channel 2>&1" )" # FIXME: ignoring any 2nd interface # iwinfo $sPubIf0 info
 				debug "_result=****$_result*****"
 				# FIXME: more code to be added
 				# ...
@@ -1450,7 +1451,7 @@ EOF
 					returnsize="$( wc -l < "$tmpfilemqtt" )"
 					if [ "$returnsize" -eq 0 ]  ;  then
 						error "Connection or gluon-neighbour-info failed: Command $command on node ip $ffnodeip failed..."
-						reply_to_mqtt_log "ERROR" "remote result empty"
+						reply_to_mqtt_log "ERROR" "remote result empty (rc=$_rc)"
 					else
 						storage_cache_write "$sTargetHost.$command" "$_val" # cache all data to support change detection some time
 						echo_if_not_quiet "$_val"
