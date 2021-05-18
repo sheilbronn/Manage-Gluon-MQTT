@@ -864,8 +864,9 @@ do
 						localclients*|publicwifi/localclients*)				command="localclients" ;;
 						publicwifi/ssidshort/set) command="ffotherssid_$_msg" ;;
 						radio/channel24/set)		command="ffchannel" ;;
-						publicwifi/state/set) 	[ $_msg = "true"  -o $_msg = "ON"  ] && command="ffup"
-												[ $_msg = "false" -o $_msg = "OFF" ] && command="ffdown"
+						publicwifi/state/set) 	{ [ $_msg = "true"  -o $_msg = "ON"  ] && command="ffup" ; } ||
+												{ [ $_msg = "false" -o $_msg = "OFF" ] && command="ffdown" ; } ||
+												error "Illegal _msg=$_msg"
 											;;
 						ffstatus*|radio/channel24|publicwifi/state|publicwifi/ssidshort) command="ffstatus" ;;
 						ffup*)			command="ffup"   ;;
@@ -1096,7 +1097,8 @@ EOF
 				get_pub_iface_cached # also sets sPubIf* and sSsidBase
 				debug "PREPARING:" "$command on host $sTargetHost (if=$sPubIfs) ..."
 				_cmd="iwinfo $sPubIf0 info || uci get wireless.client_radio0.ssid" # .. fallback to uci-setting ... and ignoring any 2nd interface
-				set -x
+				tempstr=""
+				# set -x
 				if [ "$command" = "ffup" ] ; then
 					check_write_mqqt_broker || continue
 					reply_to_mqtt_log "ONGOING" "RUNNING $command"
@@ -1109,8 +1111,8 @@ EOF
 					# set -x
 					tempstr="$( ssh_cmd "$_cmd" )"
 				fi
+				sNewSSID="$( echo "$tempstr" | sed -e '/ESSID:/s/[^:]*: //' -e 's/\"//g' -e '1q' )" # coerce iwinfo and uci get results
 				if [ "$rc_ssh" = 0 -a "${tempstr#$sPubIf0}" != "${tempstr}"  ] ; then
-					sNewSSID="$( echo "$tempstr" | sed -e '/ESSID:/s/[^:]*: //' -e 's/\"//g' -e '1q' )" # coerce iwinfo and uci get results
 					debug "SUCCESS:" "tempstr=$tempstr"
 					echo_if_not_quiet "$sNewSSID"
 				set +x
@@ -1564,8 +1566,8 @@ EOF
 				;;
 			*)
 				echo_if_not_quiet "Illegal command=$command"
-				check_read_mqqt_broker || continue
-				error_and_exit "Unknown command: $command"
+				check_write_mqqt_broker || error_and_exit "Unknown command: $command"
+				error "Unknown command: $command"
 			esac
 		done
 	fi
