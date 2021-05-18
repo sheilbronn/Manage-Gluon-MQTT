@@ -348,7 +348,7 @@ shorten_ethernet_addr_in_json() { # remove some bytes für anonymization
 
 check_read_mqqt_broker() { # for now: only trusting a broker on the same host...
 	_nx
-	[ "$commandsToDo" != "bridge" ] && return
+	[ "$commandsToDo" != "bridge" ] && return 0
 	[ "$mqtthost"  != "localhost" ] && { echo_if_not_quiet "Untrusted MQTT command ignored: $command" ; return 1 ; }
 	return 0
 	}
@@ -792,7 +792,8 @@ do
 			[ "$homie" ] && _subscriptions="$_subscriptions -t homie/$sTargetHost/+/+/set"
 			debug "SUBSCRIBING to MQTT broker: \"$mqtthost $_subscriptions\", homie=$homie, fPipe=$fPipe"
 			_last_will_options="" # "--will-topic $sitecode/$sTargetHost/mqtt/STATUS --will-payload OFF"
-			mosquitto_sub -v -R ${mqtthost:+-h $mqtthost} ${sMID:+-i $sMID} $_subscriptions $_last_will_options | awk -- '{ print strftime("MQTT ") $0 ; fflush() }' > $fPipe  &  #  pipe non-stale commands from MQTT broker
+			# mosquitto_sub -v -R ${mqtthost:+-h $mqtthost} ${sMID:+-i $sMID} $_subscriptions $_last_will_options | awk -- '{ print strftime("MQTT ") $0 ; fflush() }' > $fPipe  &  #  pipe non-stale commands from MQTT broker
+			mosquitto_sub -F "MQTT %t %p" -R ${mqtthost:+-h $mqtthost} ${sMID:+-i $sMID} $_subscriptions $_last_will_options > $fPipe  &  #  pipe non-stale commands from MQTT broker
 			readonly nPidMosquitto=$!
 			command="bridge" && reply_to_mqtt_log "ON" "Subscribed $( echo "$_subscriptions" | sed 's/-t //g' )"
 			
@@ -829,6 +830,7 @@ do
 			if [ "$commandsToDo" = "bridge" ]  ;  then
 				debug "READ:" "Reading from pipe $fPipe ..."
 				read -r sPipeType command commandopts < "$fPipe"
+				debug "RAW:" "sPipeType=$sPipeType,command=$command,commandopts=$commandopts"
 				_rc="$?"
 				if [ "$_rc" -ne 0 ] ; then
 					# sleep 1
