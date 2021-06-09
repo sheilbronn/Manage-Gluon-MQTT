@@ -68,30 +68,33 @@ N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluo
 
 * -c (commands): One or more management commands to be executed (comma-separated), see below for the details.
 * -s (server): If the script is not run locally on the Freifunk node itself (localhost), the SSH names of one or more other Freifunk nodes maybe passed with -s (comma-seperated)
-* -g (give): In the output add an informative line with host and command (useful für multiple commands and hosts)
+* -G (give): In the output add an informative line with host and command (useful für multiple commands and hosts)
+* -g (group): group.
+    If running as a daemon (D), also listen to MQTT messages for a MQTT group as well.
 * -v (verbose): more, verbose output from the script as well as intermediate steps. Additional -v's add more verbosity.
 * -x (execute): each shell command is echoed to stdout before execution (for debugging)
-* -q (quit): no output on stdout
-* -h (host): name or IP adress of the MQTT broker (momentarily still -m).
-    The public test broker test.mosquitto.org may be abbreviated as -h test. iot.eclipse.ors as -h eclipse.
-    If no broker is given, mosquitto_pub and mosquitto_sub will use their defaults (see their manual pages)
+* -q (quiet): no output on stdout
+* -h (host): name or IP adress of the MQTT broker.
+    The public test broker test.mosquitto.org may be abbreviated as -h test and iot.eclipse.ors as -h eclipse.
+    If no broker is given, mosquitto_pub and mosquitto_sub will use their defaults (see their manual pages).
 * -m (mqtt): use MQTT or not (currently only implied by -p)
-* -p : support Homie or Home-Assistant auto-discovery (not fully verified yet)
+* -p : support Homie or Home-Assistant auto-discovery
 
-Supported commands for the -c option are - names might change during refactoring:
+Supported commands for the -c option are:
 
 * *bridge*: Script will become a daemon waiting for MQTT commands, subsequent commands are ignored (Use case D)
 * *noop*: Do nothing (for testing purposes)
 * *install*: Install if necessary the Mosquitto package, a firewall rule, a sample crontab entry, and the script itself (to /sbin).
-* *sh*: Invoke a remote SSH shell on the remote host (limited to A,B for security!)
-* *homie-update*: Issue all auto-discovery announcements as well as the values. (NB: Command name might change in future versions)
-* *homie-delete*: Remove all retained messages for auto-discovery. (NB: Command name might change in future versions)
+* *sh*: Invoke a remote SSH shell on the remote host (limited to A,B for security reasons!)
+* *homie-update*: Issue all auto-discovery announcements as well as the values.
+* *homie-delete*: Remove all retained messages for auto-discovery.
 * *ffstatus* ...
 * *ffdown* ...
-* *ffup*: Return status of the public Freifunk wifi interface, or switch it down or up
+* *ffup*: Return the status of the public Freifunk wifi interface, or switch it down or up
 * *ffotherssid*: Change name of public Wifi interface (within community boundaries)
-* *ffgluonreconfigure*: Reset interface name back to original
-* *gluon-data*: Lots of Gluon configuration data
+* *ffchannel* : Change the WiFi channel of the public Freifunk wifi network (for the 2.4 Ghz channel only)
+* *ffgluonreconfigure*: Reset to configured values and states
+* *gluondata*: Lots of Gluon configuration data
 * *machine-data*: Version and CPU info of the node
 * *speedtest*: Get a larger file, measure the time it takes and calculate download speed im MB/s
 * *status*: Load and uptime of the node
@@ -129,6 +132,10 @@ Remotely on a linux box at home (gluonnode ist the FF node):
 On the FF node itself:
 
   ``$ manage_gluon_mqtt -m test.mosquitto.org -s gluonnode -c ffstatus``
+
+To run verbosely as a daemon on the target host:
+
+  ``$ manage_gluon_mqtt -m test.mosquitto.org -c bridge -v``
 
 ### Notes / Comments
 

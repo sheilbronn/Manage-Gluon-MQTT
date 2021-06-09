@@ -135,7 +135,7 @@ get_os_data_semi_starred_cached() {
 get_sitecode_cached() { # $1=host $2=cachetimeout
 	local _data="$( storage_cache_read "$1.sitecode" "${2:-10}" )" # the site code should be stable...
 	if [ -z "$_data" ] ; then
-		_data="$( ssh_cmd "[ -d $gluondir ] && cat $gluondir/site.json"  )" || { _rc="$?" ; return $_rc ; }
+		_data="$( ssh_cmd "[ -d $gluondir ] && cat $gluondir/site.json"  )" || return $rc_ssh
 		if [ -n "$_data" ] ; then
 			_data="$( echo "$_data" | jsonfilter_func .site_code )"
 			storage_cache_write "$1.sitecode" "$_data"
@@ -156,7 +156,7 @@ get_hostname_cached() { # $1=host $2=cachetimeout
 	local _key="${1:-$sTargetHost}.hostname"
 	local _data="$( storage_cache_read "$_key" "${2:-99}" )"
 	if [ -z "$_data" ] ; then
-		_data="$( ssh_cmd "tr A-Z a-z < /proc/sys/kernel/hostname" )" || { _rc="$?" ; echo "${1:-$sTargetHost}" ; return $_rc ; }
+		_data="$( ssh_cmd "tr A-Z a-z < /proc/sys/kernel/hostname" )" || { echo "${1:-$sTargetHost}" ; return $rc_ssh ; }
 		debug "REMOTE hostname is: $_data"
 	fi
 	[ "$_data" ] && storage_cache_write "$_key" "$_data" 
@@ -170,7 +170,7 @@ get_pub_iface_cached() { # $1=host $2=cachetimeout  ## TODO ## -1 for forced rel
 	if [ -z "$_dataall" ] ; then
 		# should find a better solution based on iw ...:
 		_dataall="$( ssh_cmd "command -v iwinfo >/dev/null && iwinfo" | sed -e 's/^  */;/' -e 's/   */;/' | awk '/^$/ { print l ; l = "" ; next } { l = l $0 ; next }' )" ||
-				 {	_rc="$?" ; return $_rc ; }
+				return $rc_ssh
 		debug "REMOTE iwinfo returned: '$_dataall'"
 		if echo "$_dataall" | grep -q "Mode: Master;.*;Encryption: none" ; then #  .... cache result only if at least one public Freifunk if is up and running
 			storage_cache_write "$_key" "$_dataall"
@@ -226,7 +226,7 @@ get_gluon_domains_starred_cached() {
 	local _data="$( storage_cache_read "$1.gluondomains" 1 )"
 
 	if [ -z "$_data" ] ; then
-		_data="$( ssh_cmd "ls -1 "$gluondir/domains" 2>&1" )" || {	_rc="$?" ; return $_rc ; } # cancel func
+		_data="$( ssh_cmd "ls -1 "$gluondir/domains" 2>&1" )" || return $rc_ssh  # cancel func
 		if [ -n "$_data" ] ; then
 			_data="$( echo "$_data" | sed -e 's/[^_]*_//' -e 's/.json//' )"
 			storage_cache_write "$1.gluondomains" "$_data"
@@ -457,7 +457,6 @@ hass_announce() {
   }
 
 homie_state_is_ready() {
-	# set -x
 	tmpfile="$tmpdir/homie_state"
 	mosquitto_sub ${mqtthost:+-h $mqtthost} ${sMID:+-i $sMID} -W 1 -C 1 -t "homie/$1/\$state" > $tmpfile  # &
 	# pid=$!
@@ -824,14 +823,16 @@ do
 		# NB: OpenHab Homie autodiscovery doesn't like uppercase characters at the beginning...
 		[ "$homie" ] && os_data="$( get_os_data_semi_starred_cached "$sTargetHost" 1 )" && homie="$( _tolower "$sTargetHost" )" &&
 			 [ "$commandsToDo" != "homie-delete" ] && announce_disco "$homie"
-	
+
 		debug "LOOP" " START (commandsToDo=$commandsToDo)"
+
 		while [ "$commandsToDo" ] ; do
 			if [ "$commandsToDo" = "bridge" ]  ;  then
+				command=""
 				debug "READ:" "Reading from pipe $fPipe ..."
 				read -r sPipeType command commandopts < "$fPipe"
-				debug "RAW:" "sPipeType=$sPipeType,command=$command,commandopts=$commandopts"
 				_rc="$?"
+				debug "RAW:" "sPipeType=$sPipeType,command=$command,commandopts=$commandopts,rc=$_rc"
 				if [ "$_rc" -ne 0 ] ; then
 					# sleep 1
 					if [ -p $fPipe ] ; then
@@ -848,17 +849,16 @@ do
 					_pms "/ubus/log"     "$commandopts"
 					commandsToDo="bridge"
 					continue
-				elif [ "$sPipeType" != "MQTT" ] ; then
+				elif [ "$sPipeType" = "PERIODIC" ] ; then
 					debug "READ:" "TYPE=$sPipeType,$command,$commandopts"
 					[ "$commandopts" = "noop" ] && continue # ".... noop" does absolutely nothing
 					commandsToDo="ffstatus,statistics,bridge"
-				else
+				elif [ "$sPipeType" = "MQTT" ] ; then
 					_prefix="$( echo "$command" | awk -v FS=/ '{ print $1 "/" $2 }' )"
 					_msg="$( echo "$commandopts" | awk '{ print $1 }' )" && [ "$_msg" = "(null)" ] && _msg=""
 					debug "READ:" "command: $command  $_msg  (prefix=$_prefix, sitecode=$sitecode)"
 					case "$_prefix" in
 					"homie/$sTargetHost"|"$sitecode/$sTargetHost"|"$sitecode/${mqttGroup:-$sTargetHost}")
-						# _fullcommand="$( echo "$command" | awk -v FS=/ 'NF && NF-1 { print $3 ( $4 && $4 != "get" ? "/" $4 : "" ) ( $5 && $5 != "get" ? "/" $5 : "" ) }' )${_msg:++$_msg}"
 						command="$( echo "$command" | awk -v FS=/ 'NF && NF-1 { print $3 ( $4 && $4 != "get" ? "/" $4 : "" ) ( $5 && $5 != "get" ? "/" $5 : "" ) }' )"
 						case "$command" in
 						localclients*|publicwifi/localclients*)				command="localclients" ;;
@@ -884,6 +884,8 @@ do
 					esac
 					command=${command%/get} && command=${command%/GET}
 					debug "READ:" "Remapped MQTT to command: $command"
+				else
+					error_and_exit "Unknown sPipeType=$sPipeType from pipe $fPipe (rc=$_rc)"
 				fi
 			else
 				     command="$( echo "$commandsToDo" | cut -d "," -f 1     )"
@@ -962,12 +964,14 @@ do
 				if [ -z "$autoupdater_branch" -o -z "$bDoAllOfIt" ] ; then  # is probably Non-Freifunk					
 					echo_if_not_quiet "Stopping for target $sTargetHost (autoupdater_branch=$autoupdater_branch,bDoAllOfIt=$bDoAllOfIt)..."
 					continue
-				else
-					storage_cache_write "$sTargetHost.autoupdater_branch" "$autoupdater_branch"
-					echo_if_not_quiet "autoupdater config found ... assuming Gluon node ... add firewall rules for MQTT..."
-					# works for Ulmer Software w/o Gluon, too... DONT KNOW IF NECESSARY ON ALL GLUON VERSIONS
+				fi
+				storage_cache_write "$sTargetHost.autoupdater_branch" "$autoupdater_branch"
+				echo_if_not_quiet "autoupdater config found ... assuming Gluon node ... add firewall rules for MQTT..."
+				# works for Ulmer Software w/o Gluon, too... DONT KNOW IF NECESSARY ON ALL GLUON VERSIONS
 
-					ssh_cmd "xargs ${bVerbose:+-t} -n 1 uci set ; uci commit" << EOF
+				# skip for now:
+				if [ "" ] ; then
+					ssh_cmd "xargs ${bVerbose:+-t} -n 1 uci set ; uci commit" << EOF 
 						firewall.local_client_mqtt=rule
 						firewall.local_client_mqtt.dest_port='1883'
 						firewall.local_client_mqtt.src='local_client'
@@ -995,16 +999,16 @@ do
 EOF
 					{ ssh_cmd "[ -d $gluondir ] && gluon-reconfigure" ; } || debug "Failed to find $gluondir or gluon-reconfigure..."
 				fi
+				
 				_pubcmd="$cmd_mospub -h test.mosquitto.org" # caution: Freifunk/Gluon seems to need IPV6 connectivity, not all brokers have it!
 				_topic="\"$sitecode/\`tr A-Z a-z < /proc/sys/kernel/hostname\`/installation\"" # tr will run on remote host!
 				debug "SENDING:" "MQTT test message: $_pubcmd $_topic"
 				ssh_cmd "$_pubcmd -t $_topic -r -m \"TEST\""
-				retval="$?"
-				if [ $retval = 0 ] ; then
+				if [ $rc_ssh = 0 ] ; then
 					debug "SENDING:" "$_pubcmd $_topic had succeeded, now removing retained msg again ..."
 					ssh_cmd "mosquitto_sub -h test.mosquitto.org -t $_topic -v -C 1 -W 5  --remove-retained"
 				else
-					echo_if_not_quiet "$_pubcmd failed with $retval on remote host (might happen sometimes)"
+					error "$_pubcmd failed with $rc_ssh on remote host (check why!)"
 				fi
 
 				if ssh_cmd "crontab -l" | grep "$sName" ; then
@@ -1026,7 +1030,6 @@ EOF
 					# sed -i -e "\$s/exit 0/exit 0\naaa/g" rc.local
 					ssh_cmd "sed -i sav -e  \"s/^exit 0/$_line\\nexit 0/\" $rcfile ; 	 ${bVerbose:+echo $rcfile is now: ; cat $rcfile }"
 				fi
-				# exit 0
 				;;
 			filecopy)
 				check_read_mqqt_broker || continue
@@ -1044,9 +1047,7 @@ EOF
 				_rc=$?
 				debug "FILECOPY:" "$command: $_filepath ($( wc -c < $_filepath )) trim to $_tmpfile ($( wc -c < $_tmpfile )) : rc=$_rc"
 				cp -p $_tmpfile "$cachedir/$_basename.save" 2>/dev/null || true
-				if [ "$_rc" != 0 ] ; then
-					error_and_exit "Reducing script $_tmpfile returned error!"
-				fi
+				[ "$_rc" != 0 ] && error_and_exit "Reducing script $_tmpfile returned error $_rc!"
 				_filepath="$_tmpfile"
 				#DELETE_END#
 				if scp -p ${bQuiet:+-q} "$_filepath" "$sSshUser:/sbin/$_basename" ; then
@@ -1402,10 +1403,9 @@ EOF
 				[ -r $macidsfile ] || touch $macidsfile
 
 				_batctl_output="$( ssh_cmd "batctl tl" )"
-				retval="$?"
-				if [ $retval != 0 ] ;  then
-					error "Connection $sSshUser failed (rc=$retval). Stopping for this node..."
-				  	reply_to_mqtt_log "ERROR" "Connection failed (rc=$retval)"
+				if [ $rc_ssh != 0 ] ;  then
+					error "Connection $sSshUser failed (rc=$rc_ssh). Stopping for this node..."
+				  	reply_to_mqtt_log "ERROR" "Connection failed (rc=$rc_ssh)"
 				else
 					echo "$_batctl_output" | awk '$3 == "[....W.]" { printf "%s\n", $1 }' | sort > $localclientsfile # | join -a 1 - "$macidsfile"
 				
