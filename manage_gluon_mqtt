@@ -94,7 +94,7 @@ extract_uci_values() {
 	e "$_res"
 	}
 
-query_uci_on_host() { # query (show) possibly many UCI values from a host and return them all
+query_uci_on_host() { # query/show (possibly) many UCI values from a host and return them all
 	ssh_cmd "uci show $1" > /dev/null
 	echo $ssh_data
 	return $?
@@ -327,7 +327,7 @@ error_and_exit() {
 	exit 1
 	}
 
-echo_if_not_quiet() {
+echo_non_quiet() {
 	_nx
 	[ "$bQuiet" ] && return
 	local _out="$*" && [ "$1" = "${1#\{\*}" ] && [ "$1" = "${1#\[\*}" ] || _out="$( make_json_from_starred "$*" )" # expand any "starred" pseudo-JSON
@@ -368,7 +368,7 @@ shorten_ethernet_addr_in_json() { # remove some bytes für anonymization
 mqtt_allowed_get() { # for now: only trusting a broker on the same host...
 	_nx
 	[ "$cmdsToDo" != "bridge" ] && return 0
-	[ "$mqtthost"  != "localhost" ] && { echo_if_not_quiet "Untrusted MQTT command ignored: $cmd" ; return 1 ; }
+	[ "$mqtthost"  != "localhost" ] && { echo_non_quiet "Untrusted MQTT command ignored: $cmd" ; return 1 ; }
 	return 0
 	}
 
@@ -438,7 +438,7 @@ hass_announce() {
 		local _jsonpath_red="$( echo "$_jsonpath" | tr -d "][ /-_" )"     #  "${_jsonpath//[ \/_-]/}" # cleaned and reduced, needed in unique id's
 		local _configtopicpart="$( echo "$_topicpart" | tr -d "][ /-" )"
 		local _value_template_str=",*value_template*:*{{ $5 \}\}*"
-		local _dev_unique_id="${sID}_${_configtopicpart}"
+		local _dev_unique_id="${sID}${_configtopicpart}"
 	    local _dev_name="$2 ${_devid}" # "$2 ${_devid^}"
 	else
 		local _devid="$2"
@@ -446,7 +446,7 @@ hass_announce() {
 		local _jsonpath_red="" 
 		local _configtopicpart="$( echo "$_topicpart" | tr -d "][ /-" )"
         local _value_template_str=""
-		local _dev_unique_id="${sID}_$2"
+		local _dev_unique_id="${sID}$2"
 	    local _dev_name="$2"
     fi
     local _topic="${sHassTopicPrefix}/$1${_configtopicpart}$_jsonpath_red/$_dev_class/config"  # e.g. homeassistant/sensor/rtl433bresser3ch109/{temperature,humidity}/config
@@ -756,7 +756,7 @@ do
 	if [ "$ffhost" = "localhost" ] ; then
 		sSshUser="NOUSER"
 		ssh_cmd() {
-			# echo_if_not_quiet "$@" 1>&2
+			# echo_non_quiet "$@" 1>&2
 			ssh_data="$( eval "$@" )" # < /dev/null
 			ssh_rc=$?
 			return $ssh_rc
@@ -765,7 +765,7 @@ do
 	else
 		sSshUser="root@$ffhost"
 		ssh_cmd() {
-			# echo_if_not_quiet "root@$ffhost:" "$@" 1>&2
+			# echo_non_quiet "root@$ffhost:" "$@" 1>&2
 			_nx
 			if [ "$1" = "-v" ] ; then
 				printit="y"
@@ -805,7 +805,7 @@ do
 				error_and_exit "key :$option_to_query: had returned more than one line!"
 			else
 				ssh_cmd "uci set $option_to_query=$write_uci_val ; uci commit $option_to_query" > /dev/null
-				echo $ssh_data
+				echo $ssh_data # FIXME: ok w/o quotes?
 			fi
 		fi	
 	else
@@ -935,11 +935,11 @@ do
 				reply_to_mqtt_log ONGOING "$cmd'ing $cmdopts times"
 				if [ 2 -le "$cmdopts" -a "$cmdopts" -lt 11 ]  ; then
 					_cmd='ssh_cmd date -u +%s'
-					$_cmd ; startval="$ssh_data" && echo_if_not_quiet "$startval"
+					$_cmd ; startval="$ssh_data" && echo_non_quiet "$startval"
 					for i in $( seq 1 $((cmdopts - 1)) ) ; do
 						$_cmd
 						dbg "$_ssh_data"
-					done && echo_if_not_quiet "$ssh_data"
+					done && echo_non_quiet "$ssh_data"
 					reply_to_mqtt_log OK "Command $cmd: Performed $cmdopts-times /bin/date in $(( ssh_data - startval)) seconds: $startval-$ssh_data"
 				else
 					reply_to_mqtt_log ERROR "Command $cmd: Invalid parameter '$cmdopts'"
@@ -950,12 +950,12 @@ do
 				ssh_cmd "id -nu"
 				tuser="$ssh_data"
 				if [ -z "$tuser" ] ; then
-					echo_if_not_quiet "targetuser on targethost could not be determined remotely. Pls debug/establish SSH setup..."
+					echo_non_quiet "targetuser on targethost could not be determined remotely. Pls debug/establish SSH setup..."
 					continue # abort case
 				fi
 
 				if [ "$ffhost" != "localhost" -o "$(dirname "$0")" != "/sbin" ] && [ "$tuser" = "root" ] ; then
-					echo_if_not_quiet "Remote targetuser is $tuser: Will try to copy this script to /sbin later..."
+					echo_non_quiet "Remote targetuser is $tuser: Will try to copy this script to /sbin later..."
 					cmdsToDo="filecopy${cmdsToDo:+,$cmdsToDo}"
 					filetocopy="$0"
 				fi
@@ -966,48 +966,47 @@ do
 				# ... try to install mosquitto if not there yet
 				ssh_cmd "command -v mosquitto_pub" > /dev/null
 				if [ "$ssh_data" ] ; then
-					echo_if_not_quiet "mosquitto_pub is already installed on $ffhost..."
+					echo_non_quiet "mosquitto_pub is already installed on $ffhost..."
 				else
-					echo_if_not_quiet "mosquitto_pub not found on $ffhost... trying to determine install cmd ..."
+					echo_non_quiet "mosquitto_pub not found on $ffhost... trying to determine install cmd ..."
 					ssh_cmd "command -v opkg || command -v apt || echo nothing" 2>/dev/null >/dev/null
 					case "$( basename "$ssh_data" )" in
 					opkg)
 						_cmd="opkg update ; opkg install mosquitto-client-nossl"
-						echo_if_not_quiet "Executing: $_cmd"
-						ssh_cmd -v "$_cmd" # || { echo_if_not_quiet "ssh_cmd failed: $_cmd, aborting ..." ; continue ; }
+						echo_non_quiet "Executing: $_cmd"
+						ssh_cmd -v "$_cmd" # || { echo_non_quiet "ssh_cmd failed: $_cmd, aborting ..." ; continue ; }
 						;;
 					apt)
 						_cmd="apt update && apt install mosquitto-clients"
-						echo_if_not_quiet "Executing: $_cmd"
-						ssh_cmd -v "$_cmd" # || { echo_if_not_quiet "ssh_cmd failed: $_cmd, aborting ..." ; continue ; }
+						echo_non_quiet "Executing: $_cmd"
+						ssh_cmd -v "$_cmd" # || { echo_non_quiet "ssh_cmd failed: $_cmd, aborting ..." ; continue ; }
 						;;
 					nothing)
 						error_and_exit "ERROR: opkg / apt not found on $ffhost. Stopping..."
 						;;
 					esac
 					echo "$ssh_data"
-				fi || { echo_if_not_quiet "ssh_cmd failed: $_cmd, aborting ..." ; continue ; }
+				fi || { echo_non_quiet "ssh_cmd failed: $_cmd, aborting ..." ; continue ; }
 
 				# now comes a Gluon-specific part - determine Gluon by checking for the UCI entry autoupdater_branch
 				autoupdater_branch="$( get_uci_on_host "autoupdater.settings.branch" )"
 				dbg "autoupdater_branch=$autoupdater_branch"
 				if [ -z "$autoupdater_branch" -o -z "$bDoAllOfIt" ] ; then  # is probably Non-Freifunk					
-					echo_if_not_quiet "Stopping for target $sTarget (autoupdater_branch=$autoupdater_branch,bDoAllOfIt=$bDoAllOfIt)..."
+					echo_non_quiet "Stopping for target $sTarget (autoupdater_branch=$autoupdater_branch,bDoAllOfIt=$bDoAllOfIt)..."
 					continue
 				fi
 				storage_cache_write "$sTarget.autoupdater_branch" "$autoupdater_branch"
-				echo_if_not_quiet "autoupdater config found ... assuming Gluon node ... add firewall rules for MQTT..."
-				# works for Ulmer Software w/o Gluon, too... DONT KNOW IF NECESSARY ON ALL GLUON VERSIONS
-
-				# skip for now:
-				if [ "" ] ; then
+				
+				if [ "x" ] ; then # skip for now
+					echo_non_quiet "autoupdater config found ... assuming Gluon node ... add firewall rules for outgoing MQTT..."
+					# works for Ulmer Software w/o Gluon, too... DONT KNOW IF NECESSARY ON ALL GLUON VERSIONS
 					ssh_cmd "xargs ${bVerbose:+-t} -n 1 uci set ; uci commit" << EOF 
-						firewall.local_client_mqtt=rule
-						firewall.local_client_mqtt.dest_port='1883'
-						firewall.local_client_mqtt.src='local_client'
-						firewall.local_client_mqtt.name='local_client_mqtt'
-						firewall.local_client_mqtt.target='ACCEPT'
-						firewall.local_client_mqtt.proto='tcp'
+						firewall.loc_client_mqtt=rule
+						firewall.loc_client_mqtt.dest_port='1883'
+						firewall.loc_client_mqtt.src='loc_client'
+						firewall.loc_client_mqtt.name='loc_client_mqtt'
+						firewall.loc_client_mqtt.target='ACCEPT'
+						firewall.loc_client_mqtt.proto='tcp'
 						firewall.wan_mqtt=rule
 						firewall.wan_mqtt.dest_port='1883'
 						firewall.wan_mqtt.src='wan'
@@ -1023,9 +1022,42 @@ do
 						firewall.client_mqtt=rule
 						firewall.client_mqtt.dest_port='1883'
 						firewall.client_mqtt.src='mesh'
-						firewall.client_mqtt.name='client_mqtt_mqtt'
+						firewall.client_mqtt.name='client_mqtt'
 						firewall.client_mqtt.target='ACCEPT'
 						firewall.client_mqtt.proto='tcp'
+EOF
+					ssh_cmd "[ -d $gluondir ] && gluon-reconfigure" > /dev/null || dbg "Failed to find $gluondir or gluon-reconfigure..."
+					echo "$ssh_data"
+				fi
+				
+				if [ "fornow" ] ; then # skip for now
+					echo_non_quiet "... add firewall rules for incoming MQTT..."
+					# works for Ulmer Software w/o Gluon, too... DONT KNOW IF NECESSARY ON ALL GLUON VERSIONS
+					ssh_cmd "xargs ${bVerbose:+-t} -n 1 uci set ; uci commit" << EOF 
+						firewall.loc_client_mqtt_in=rule
+						firewall.loc_client_mqtt_in.dest_port='1883'
+						firewall.loc_client_mqtt_in.src='loc_client'
+						firewall.loc_client_mqtt_in.name='loc_client_mqtt'
+						firewall.loc_client_mqtt_in.target='ACCEPT'
+						firewall.loc_client_mqtt_in.proto='tcp'
+						firewall.wan_mqtt=rule
+						firewall.wan_mqtt.dest_port='1883'
+						firewall.wan_mqtt.src='wan'
+						firewall.wan_mqtt.name='wan_mqtt'
+						firewall.wan_mqtt.target='ACCEPT'
+						firewall.wan_mqtt.proto='tcp'
+						firewall.mesh_mqtt=rule
+						firewall.mesh_mqtt.dest_port='1883'
+						firewall.mesh_mqtt.src='mesh'
+						firewall.mesh_mqtt.name='mesh_mqtt'
+						firewall.mesh_mqtt.target='ACCEPT'
+						firewall.mesh_mqtt.proto='tcp'
+						firewall.loc_client_mqtt=rule
+						firewall.loc_client_mqtt.dest_port='1883'
+						firewall.loc_client_mqtt.src='loc_client'
+						firewall.loc_client_mqtt.name='loc_client_mqtt'
+						firewall.loc_client_mqtt.target='ACCEPT'
+						firewall.loc_client_mqtt.proto='tcp'
 EOF
 					ssh_cmd "[ -d $gluondir ] && gluon-reconfigure" > /dev/null || dbg "Failed to find $gluondir or gluon-reconfigure..."
 					echo "$ssh_data"
@@ -1036,7 +1068,7 @@ EOF
 				dbg "SENDING:" "MQTT test message: $_pubcmd $_topic"
 				ssh_cmd "$_pubcmd -t $_topic -r -m \"TEST\""
 				if [ $ssh_rc = 0 ] ; then
-					dbg "SENDING:" "$_pubcmd $_topic had succeeded, now removing retained msg again ..."
+					dbg "SENDING:" "$_pubcmd $_topic had succeeded, now removing this retained msg again ..."
 					ssh_cmd "mosquitto_sub -h test.mosquitto.org -t $_topic -v -C 1 -W 5  --remove-retained"
 				else
 					error "$_pubcmd failed with $ssh_rc on remote host (check why!)"
@@ -1046,8 +1078,8 @@ EOF
 					echo "$ssh_data"
 					dbg "MODIFY:" "A crontab line containing '$sName' was found... Leaving crontab unmodified."
 				else
-					echo_if_not_quiet "crontab entry with '$sName' not found... adding a simple one... pls modify it later!!"
-					_line="2 * * * * sleep 15 ; $sName -c machine-data,statistics -m test.mosquitto.org"
+					echo_non_quiet "crontab entry with '$sName' not found... adding a simple one... pls modify it later!!"
+					_line="2 * * * * sleep 45 ; $sName -c machine-data,statistics -r -m test.mosquitto.org"
 					ssh_cmd "{ crontab -l ; echo \"$_line\" ; } | crontab - ; ${bVerbose:+echo crontab is now: ; crontab -l}" > /dev/null
 					echo "$ssh_data"
 				fi
@@ -1057,8 +1089,8 @@ EOF
 				if echo "$ssh_data" | grep "$sName" ; then
 					dbg "MODIFY:" "The $rcfile line containing '$sName' was found above... Leaving $rcfile unmodified."
 				else
-					echo_if_not_quiet "$rcfile entry with '$sName' not found... adding a simple one... pls modify it later!!"
-					_line="\( sleep 100 \; $sName -c machine-data,statistics -m test.mosquitto.org \; \) \&"
+					echo_non_quiet "$rcfile entry with '$sName' not found... adding a simple one... pls modify it later!!"
+					_line="\( sleep 180 \; $sName -c machine-data,statistics -m test.mosquitto.org \; \) \&"
 					# _line="echo hallo"
 					# sed -i -e "\$s/exit 0/exit 0\naaa/g" rc.local
 					ssh_cmd "sed -i sav -e  \"s/^exit 0/$_line\\nexit 0/\" $rcfile ; 	 ${bVerbose:+echo $rcfile is now: ; cat $rcfile }"
@@ -1080,7 +1112,7 @@ EOF
 						cp -p "$_tmpfile" /tmp && 
 							sed -E -i "$_tmpfile"  -e 's,[ \t]*(&&|;|>|>>|\|)[ \t]*,\1,g' -e '/awk|printf|test|:/!s,"([a-z0-9/-][a-z0-9/._-]+)",\1,g' && #  -e 's,[^\)]\) [^a-zA-Z],),g'    && 
 						#             white space around && or ; or | , but not << or <    strings > 1c in double quotes   #FRAGILE
-						bash -x -n "$_tmpfile" # smoke test syntax of compressed script
+						bash -x -n "$_tmpfile" && _cmv ash && ash -x -n "$_tmpfile" # smoke test syntax of compressed script
 				_rc=$?
 				dbg "FILECOPY:" "$cmd: $_filepath ($( wc -c < $_filepath )) trim to $_tmpfile ($( wc -c < "$_tmpfile" )) : rc=$_rc"
 				cp -p "$_tmpfile" "$cachedir/$_basename.save" 2>/dev/null || true
@@ -1153,7 +1185,7 @@ EOF
 				sNewSSID="$( echo "$ssh_data" | sed -e '/ESSID:/s/[^:]*: //' -e 's/\"//g' -e '1q' )" # coerce iwinfo and uci get results
 				if [ "$ssh_rc" = 0 -a "${ssh_data#$sPubIf0}" != "${ssh_data}"  ] ; then
 					dbg "SUCCESS:" "tempstr=$ssh_data"
-					# echo_if_not_quiet "$sNewSSID"
+					# echo_non_quiet "$sNewSSID"
 					sChannel24="$( echo "$ssh_data" | awk '$3 ~ /Channel:/ { print $4 }' )"
 					h_line "$homie/radio/channel24"		"$sChannel24"
 					h_line "$homie/publicwifi/state"		"true"
@@ -1175,7 +1207,7 @@ EOF
 					h_line "$homie/publicwifi/clientscount" "0"
 				fi
 				if [ "$sNewSSID" ] ; then
-					echo_if_not_quiet "$sNewSSID"
+					echo_non_quiet "$sNewSSID"
 					_new_short_ssid="$( printf "%s" "$sNewSSID" | sed -e 's,.*/,,' -e 's/"//g'  )"
 					reply_to_mqtt_log OK "$sNewSSID"
 					h_line "$homie/publicwifi/ssidshort" 	"$_new_short_ssid"
@@ -1195,10 +1227,10 @@ EOF
 				if echo "$ssh_data" | grep -A 9 -w '6e:a3:09:ea:31:e00' | grep -w "SSID:.$sSsidBase"
 				then
 					# client0   ESSID: "muenchen.freifunk.net/welt"
-					echo_if_not_quiet "To be upped..."
+					echo_non_quiet "To be upped..."
 					[ -z "$ifresult" ] && cmdsToDo="ffup${cmdsToDo:+,$cmdsToDo}"
 				else	
-					echo_if_not_quiet "To be downed..."
+					echo_non_quiet "To be downed..."
 					[ "$ifresult" ] && cmdsToDo="ffdown${cmdsToDo:+,$cmdsToDo}"
 				fi
 				dbg "cmdsToDo=" "$cmdsToDo"
@@ -1247,10 +1279,10 @@ EOF
 					ffotherssid1)	_shortssid="uml_nord" 	;;
 					ffotherssid2)	_shortssid="uml_west"	;;
 					ffotherssid_*) _shortssid="$( echo ${cmd#ffotherssid_} | tr -d '}{)( ,.=' )"
-						[ -z "$_shortssid" ] && echo_if_not_quiet "Empty shortssid: ${cmd#ffotherssid_}" && continue
+						[ -z "$_shortssid" ] && echo_non_quiet "Empty shortssid: ${cmd#ffotherssid_}" && continue
 						;;
 					ffotherssid-*) _shortssid="$( echo "${cmd#ffotherssid-}" | tr -d '}{)( ,.=' )"
-						[ -z "$_shortssid" ] && echo_if_not_quiet "Empty shortssid: ${cmd#ffotherssid-}" && continue
+						[ -z "$_shortssid" ] && echo_non_quiet "Empty shortssid: ${cmd#ffotherssid-}" && continue
 						;;
 				esac
 				cmd="ffotherssid"
@@ -1263,7 +1295,7 @@ EOF
 				else
 					reply_to_mqtt_log ERROR "Illegal shortssid: $_shortssid"
 					_pms "/gluondata/gluon-domains" "$( get_gluon_domains_starred_cached $sTarget )"
-					echo_if_not_quiet "Illegal shortssid: $_shortssid" && continue
+					echo_non_quiet "Illegal shortssid: $_shortssid" && continue
 				fi
 				_esc_ssid="$( echo $otherssid | sed -e 's,/,\\/,' )" # escape slashes for awk matching
 				# echo ================
@@ -1276,12 +1308,12 @@ EOF
 
 				if [ "$ssh_rc" = 255 ] ; then
 					_log="target $sTarget not reachable (SSH retcode 255), aborting ffotherssid command...."
-					echo_if_not_quiet "$_log"
+					echo_non_quiet "$_log"
 					reply_to_mqtt_log ERROR "$_log"
 					continue
 				elif [ -z "$ssh_data" ] ; then
 					_log="commands for $cmd on host $sTarget returned empty string..."
-					echo_if_not_quiet "$_log"
+					echo_non_quiet "$_log"
 					reply_to_mqtt_log ERROR "$_log"
 					continue
 				else
@@ -1308,7 +1340,7 @@ EOF
 				dbg "RECONFIGURE:" "$ssh_data"
 				prev_ssid="$( echo "$ssh_data" | grep SSIDPREV | cut -d : -f 2 )"
 				new_ssid="$( echo "$ssh_data" | grep SSIDNEW | cut -d : -f 2 )"
-				echo_if_not_quiet "$sTarget: Ran gluon-reconfigure, previously $prev_ssid, then wifi up, then $new_ssid. id=$(id -nu)/$(id -u)\n"
+				echo_non_quiet "$sTarget: Ran gluon-reconfigure, previously $prev_ssid, then wifi up, then $new_ssid. id=$(id -nu)/$(id -u)\n"
 				if [ "$prev_ssid" != "$new_ssid" ] ; then
 					cmdsToDo="localclients${cmdsToDo:+,$cmdsToDo}"
 				fi
@@ -1336,23 +1368,23 @@ EOF
 				gluonversion="$(    echo "$ssh_data" | sed -n -e 5p )"
 				gluonrelease="$(    echo "$ssh_data" | sed -n -e 6p )"
 
-				echo_if_not_quiet		"$os_data"
+				echo_non_quiet		"$os_data"
 				_pms	"/gluondata/os-data" "$os_data"
 				h_line              "$homie/gluondata/os-data" "$os_data"
 
-				echo_if_not_quiet "$autoupdaterbranch"
+				echo_non_quiet "$autoupdaterbranch"
 				_pms "/gluondata/autoupdater-branch" "$autoupdaterbranch"
 				h_line              "$homie/gluondata/autoupdater-branch" "$autoupdaterbranch"
 
-				echo_if_not_quiet "$autoupdaterenabled"
+				echo_non_quiet "$autoupdaterenabled"
 				_pms "/gluondata/autoupdater-enabled" "$autoupdaterenabled"
 				h_line              "$homie/gluondata/autoupdater-enabled" "$autoupdaterenabled"
 
-				echo_if_not_quiet "$gluoncoredomain"
+				echo_non_quiet "$gluoncoredomain"
 				_pms "/gluondata/core-domain" "$gluoncoredomain"
 				h_line              "$homie/gluondata/core-domain" "$gluoncoredomain"
 
-				echo_if_not_quiet "$routermodel"
+				echo_non_quiet "$routermodel"
 				_pms "/gluondata/model" "$routermodel"
 				h_line              "$homie/gluondata/model" "$routermodel"
 
@@ -1360,16 +1392,16 @@ EOF
 				_pms "/gluondata/site" "$_val"
 				h_line              "$homie/gluondata/site" "$_val"
 
-				echo_if_not_quiet "$gluonversion"
+				echo_non_quiet "$gluonversion"
 				_pms "/gluondata/gluon-version" "${gluonversion##v}"
 				h_line              "$homie/gluondata/gluon-version" "${gluonversion##v}"
 				
-				echo_if_not_quiet "$gluonrelease"
+				echo_non_quiet "$gluonrelease"
 				_pms "/gluondata/release" "${gluonrelease##v}"
 				h_line                  "$homie/gluondata/release" "${gluonrelease##v}"
 
 				gluondomains="$( get_gluon_domains_starred_cached $sTarget )"
-				echo_if_not_quiet "$gluondomains"
+				echo_non_quiet "$gluondomains"
 				_pms "/gluondata/gluon-domains" "$gluondomains"
 				h_line              "$homie/gluondata/gluon-domains" "$gluondomains"
 
@@ -1385,7 +1417,7 @@ EOF
 					/^machine|^Hardware/ { FS=": " ; printf "{*linuxversion*:*%s*,*machine*:*%s*,%s}", linuxversion ,$2, substr(os_data,2,length(os_data)-2) ; exit 0 }
 					' )"
 				if [ "$_data" ] ; then
-					echo_if_not_quiet "$_data"
+					echo_non_quiet "$_data"
 					_pms "/$cmd" "$_data"
 				else
 					reply_to_mqtt_log ERROR "Command $cmd failed: no output."
@@ -1429,12 +1461,12 @@ EOF
 						cmdsToDo="${speedtestcmd}${cmdsToDo:+,$cmdsToDo}"
 						storage_cache_write "$sTarget.lastspdtestcmd" "$speedtestcmd" # cache bigger file speedtest for next time
 					else
-						echo_if_not_quiet "$speedMB"
+						echo_non_quiet "$speedMB"
 						_pms "/speedtest" "{*speedMb*:*$speedMB*,*filesize*:*$filesize*,*elapsedtime*:*$_val*,*unit*:*Mb/s*${sLastspeedtest}}"
 						storage_cache_write "$sTarget.lastspdtest" "$speedMB"
 					fi
 				else
-					echo_if_not_quiet "ERROR: $ssh_rc"
+					echo_non_quiet "ERROR: $ssh_rc"
 					reply_to_mqtt_log ERROR "{*ERROR*:*$ssh_rc*,*file*:*$_url*${sLastspeedtest}}"
 				fi
 				;;
@@ -1443,7 +1475,7 @@ EOF
 				echo "$ssh_data" | awk '
 					NR==1 { uptime=sprintf("%d", $1) }
 					NR==2 { printf "{*uptime*:*%s*,*load*:*%.2f*}", uptime ,$1 }' >/dev/null # uptime in seconds
-				echo_if_not_quiet "$ssh_data"
+				echo_non_quiet "$ssh_data"
 				_pms "/$cmd" "$ssh_data"
 				;;
 			printmap)
@@ -1485,7 +1517,7 @@ EOF
 						_details="$_what $_who" && [ "$_details" ] || _details="$_ipaddr"
 						_pms "$sitecode/$sArea/$_ipaddr" "{*lasthost*:*$sTarget*,*details*:*$_details*}"
 					done < "$localclientsfile"
-					echo_if_not_quiet "$localclients"
+					echo_non_quiet "$localclients"
 					_pms "$sitecode/$sTarget/publicwifi/localclients" "$localclients"
 					[ "$workonallclients" ] && nCollectedSumOfClients="$(( nCollectedSumOfClients + _lccount ))"
 					collectedclients="$collectedclients $( xargs < $localclientsfile )"
@@ -1517,7 +1549,7 @@ EOF
 						reply_to_mqtt_log ERROR "remote result empty (rc=$ssh_rc)"
 					else
 						storage_cache_write "$sTarget.$cmd" "$_val" # cache the whole data to support change detection some time
-						echo_if_not_quiet "$_val"
+						echo_non_quiet "$_val"
 						publish_to_mqtt "$sitecode/$sTarget/$cmd" "$_val"
 						if [ "$cmd" = "statistics" ] ; then
 							# node_id=$( jq -r .node_id $tmpfilemqtt )
@@ -1559,7 +1591,7 @@ EOF
 						else
 							empty
 						end ]' )"
-					echo_if_not_quiet "$_content"
+					echo_non_quiet "$_content"
 					publish_to_mqtt "${sitecode:-UNSET}/$sTarget/$cmd" "$_content"
 				else
 					reply_to_mqtt_log ERROR "remote result empty"
@@ -1569,7 +1601,7 @@ EOF
 			memory)
 				mqtt_allowed_get || continue
 				ssh_cmd 'free -t | tr -d -c "0-9 a-zA-Z:\n" ' > /dev/null
-				echo_if_not_quiet "$ssh_data"
+				echo_non_quiet "$ssh_data"
 				_data="$( echo "$ssh_data" | make_json_from_table_with_headers 1 )"
 				_pms "/$cmd" "$_data"
 				;;
@@ -1606,11 +1638,11 @@ EOF
 								printf "%s\t%s\t%s\t%s\n", "MAC", "signal", "channel", "SSID"
 								for (mac in ssid)  {  printf "%s\t%s\t%s\t%s\n", mac, signal[mac], channel[mac], ssid[mac] }
 							} ' )"
-					echo_if_not_quiet "$_data"
+					echo_non_quiet "$_data"
 					_pms "/$cmd" "$_data"
 					# reply_to_mqtt_log OK "$_data"
 				else
-					echo_if_not_quiet "ssh command $cmd failed (rc=$ssh_rc)"
+					echo_non_quiet "ssh command $cmd failed (rc=$ssh_rc)"
 					reply_to_mqtt_log ERROR "rc=$ssh_rc // $_data"
 				fi
 				continue
@@ -1622,7 +1654,7 @@ EOF
 				# exit 0
 				;;
 			*)
-				echo_if_not_quiet "Illegal command=$cmd"
+				echo_non_quiet "Illegal command=$cmd"
 				mqtt_allowed_set || error_and_exit "Unknown command: $cmd"
 				error "Unknown command: $cmd"
 			esac
@@ -1653,7 +1685,7 @@ if [ "$nCollectedSumOfClients" ] ; then
 		fi
 		_data="$( awk -F" " -v id="$sArea" -v lccount="$nCollectedSumOfClients" 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lccount, id } { printf comma "{*addr*:*%s*,*name*:*%s*}", $1 , ($4=="")? $1 : $4 $5 $6 $7 ; comma="," } END { printf "]}" }' < "$clientcollectionfile" |
 			shorten_ethernet_addr_in_json ${bDoAllOfIt:+skip} )"
-		echo_if_not_quiet "$( make_json_from_starred "$_data" | json_pp )"
+		echo_non_quiet "$( make_json_from_starred "$_data" | json_pp )"
 		_pms "$sitecode/$sArea/alllocalclients" "$_data"
 	fi
 fi
