@@ -39,7 +39,8 @@ if cCmv busybox ; then
 	alias tr="busybox tr"
 	alias xargs="busybox xargs -r"
 fi
-	alias e="echo" # /bin/echo needed for color generalized interpretation, in case -e not understood
+	[ "$(ech"o" -e)" = "-e" ] && alias ECHO="echo" || alias ECHO="echo -e" # some echo's know -e, some not. /bin/echo would be needed for color generalized interpretation, in case -e not understood
+	alias e="ech"o 
 	# alias e="printf \"%b %b %b\\n\""
 	alias l="loc"al # special quoting needed when compressing script for reduced storage
 	alias c="con"tinue
@@ -95,7 +96,7 @@ sort_and_tail_file() {
 	[ "$bMoreVerbose" ] && dbg "sort_and_tail_file($1,$2,$3): lines: $( wc -l < "$1" )"
 	}
 
-tail_file() {
+cTail() {
 	_nx
 	local _fnt="$dTmp/tailfile"
 
@@ -115,7 +116,7 @@ cUciQuery() { # query/show (possibly) many UCI values from a host and return the
 	return $ssh_rc
 	}
 
-get_uci_on_host() {
+cUciGet() {
 	cSsh "{ uci get $1 ; ${2:+uci get $2 ;} ${3:+uci get $3 ;} } 2>&1" >$fNul
 	e "$ssh_data"
 	return $ssh_rc
@@ -154,7 +155,7 @@ get_os_data_semi_starred_cached() {
 	printf "%b" "$_result"
 	}
 
-get_sitecode_cached() { # $1=host $2=cachetimeout
+cGetSitecode() { # $1=host $2=cachetimeout
 	local _data="$( cCacheRead "$1.sSite" "${2:-10}" )" # the site code should be stable...
 	if [ -z "$_data" ] ; then
 		cSsh "[ -d $dGluon ] && cat $dGluon/site.json" >$fNul || return $?
@@ -167,14 +168,14 @@ get_sitecode_cached() { # $1=host $2=cachetimeout
 	printf "%s" "$_data"
 	}
 
-get_most_frequent_sitecode() {
+cMostFrequentSitecode() {
 		_nx ; set +o noglob # needed here
 		local _data="$( cat "$dCache"/*.sSite.cached 2>$fNul | sort | uniq -c | awk 'NR==1 { print $2 }' )"
 		e "${_data:-LOCAL}"
 		[ "$_data" ] || return 1
 	}
 
-get_hostname_cached() { # $1=host $2=cachetimeout
+cGetHostname() { # $1=host $2=cachetimeout
 	_nx
 	local _key="${1:-$sTarget}.hostname"
 	ssh_data="$( cCacheRead "$_key" "${2:-9}" )"
@@ -216,17 +217,17 @@ cGetPubIF() { # $1=host $2=cachetimeout  ## TODO ## -1 for forced reloading
 	fi
 }
 
-cTableToJSON() { # table is piped in
+cTableToJSON() { # table is piped in. numerical values are made unquoted. $1: optional number of missing headers, e.g. 1 in free -t
 	_nx
 	awk -v missingHeaders="${1:-0}" 'BEGIN { OFS=""
 			getline
-			for (i=1; i<=NF; i++) names[i] = $i     # read headers
+			for (i=1; i<=NF; i++) names[i+missingHeaders] = $i     # read the headers
 			printf "{"
 		} {
 			printf comma " *%s*:{", gensub(":", "", 1, tolower($1)) # remove any ":"
 			for(i=2;i<=NF;i++) {
-				quote=($i ~ /^[0-9]+$/) ? "" : "*"
-				printf "*%s*:%s%d%s%s" , names[i-missingHeaders] , quote, $i, quote, i == NF ? "" : ","
+				dq=($i ~ /^-?[0-9]+$[0-9.]*$/) ? "" : "*" # FIXME: Check: Is 34. really a JSON number ?
+				printf "*%s*:%s%d%s%s" , names[i] , dq, $i, dq, i == NF ? "" : ","
 			}
 			printf "}"
 			comma=","
@@ -234,14 +235,14 @@ cTableToJSON() { # table is piped in
 		END { print " }" } '
   }
 
-del_simple_json_attr() { # $1: attr, $2: JSON-string  # but only covers very simple cases, i.e. with quotes or not  :(
+cDelSimpleJsonAttr() { # $1: attr, $2: JSON-string  # but only covers very simple cases, i.e. with quotes or not  :(
     # jq -c "del($1)" <<< "$2"
 	attr="$1"
 	#                     a) not the last in line (,)                b) only one or last in line   
 	echo "$2" | sed -E -e "s;\"$attr\":(\"[^\"]*\"|[^,}]*)[ ]*,;;" -e "s;[ ]*,[ ]*\"$attr\":(\"[^\"]*\"|[^,}]*)[ ]*};;"
 }
 
-first_json_attr() { # take string and extract the value of the first attribute if JSON, whole string otherwise. eliminating any non-alpha chars
+cFirstJsonAttr() { # take string and extract the value of the first attribute if JSON, whole string otherwise. eliminating any non-alpha chars
 	_nx
 	local m="$*" # if [ "$1" ] ; then attr="$*" ; else attr="$(cat)" ; fi      # $1 or stdin
 	if [ "${m#{}" != "$m" ]  ; then
@@ -250,7 +251,7 @@ first_json_attr() { # take string and extract the value of the first attribute i
 		e "$m" # non-JSON
 	fi
 }
-# set -x ; x='{ eins:"first" , zwei="second" }' ; first_json_attr "$x" ; first_json_attr "blabla,bla:blub" ; exit # TEST 
+# set -x ; x='{ eins:"first" , zwei="second" }' ; cFirstJsonAttr "$x" ; cFirstJsonAttr "blabla,bla:blub" ; exit # TEST 
 
 make_json_array_from_words() {
 	_nx
@@ -310,7 +311,7 @@ cStoreRead() { # read key/value pair from cache or user storage  (1:searchkey, 2
 			[ "$_val" ] || _result="#EMPTY#"
 		fi
 	fi
-	dbg STORE_READ "($1,$2,${3#/var/log},${4%ed})=\"$( shorten_string "$_val" 23 )\",$_result)"
+	dbg STORE_READ "($1,$2,${3#/var/log},${4%ed})=\"$( cShortenString "$_val" 23 )\",$_result)"
 	echo "$_val"
 	[ "$_val" ] # return 1 if empty, 0 otherwise
   }
@@ -333,7 +334,7 @@ fi
 
 cErr()   {
 	_nx
-	echo "${OnRed}ERROR$Rst: $*" 1>&2
+	ECHO "${OnRed}ERROR$Rst: $*" 1>&2
 	[ -t 2 ] || logger -p daemon.error -t "$sName $sTarget" "$*"
 	}
 
@@ -348,7 +349,7 @@ cEcho() { # output stuff unless to be quit
 	[ "$bQuiet" ] && return
 	local _out="$*"
 	[ "$1" = "${1#\{\*}"  -o  "$1" = "${1#\[\*}" ] || _out="$( cStarredToJSON "$*" )" # expand (only) "starred" pseudo-JSON
-	e "$Cyan$_out$Rst"
+	ECHO "$Cyan$_out$Rst"
 	logger -p daemon.info -t "$sName $sTarget" "$_out"
 	}
 
@@ -356,12 +357,12 @@ dbg() { # output its args to stderr if option -v was set
 	_nx
 
 	[ "$bVerbose" ] || return 1 
-	{ [ $# = 2 ] && echo "$Yellow$1:$Rst" "$2" || echo "${Yellow}debug$Rst" "$*" ; } 1>&2
+	{ [ "$#" = 2 ] && ECHO "$Yellow$1:$Rst" "$2" || ECHO "${Yellow}debug$Rst" "$*" ; } 1>&2
 	[ "$bMoreVerbose" ] && logger -p daemon.info -t "$sName $sTarget" "$*"
 	return 0 
 	}
 
-shorten_string() { # shorten string $1 to at most $2 chars plus ....
+cShortenString() { # shorten string $1 to at most $2 chars plus ....
 	_nx
 	printf "%.${2:-5}s%s" "$1" "$( [ ${#1} -gt "${2:-5}" ] && printf "..." )"
 	}
@@ -385,12 +386,13 @@ shorten_ethernet_addr_in_json() { # remove some bytes für anonymization
 
 cTrust() { # for now: only trusting a broker on the same host...
 	_nx
-	[ "$cmdsToDo" != bridge ] && return 0 # local commands are always trusted
+	[ "$cmdsToDo" != bridge ] && return 0 # local commands lines are always trusted
 	[ "$hMqtt" != localhost ] && { cEcho "Untrusted MQTT $1 command ignored: $cmd" ; return 1 ; } # only trusting localhost for get/read
-	return 0
+	return 0 # FIXME: covered by catchall
 	}
 alias cTrustGET="cTrust GET || continue"
 alias cTrustSET="cTrust SET || continue" # FIXME: logic not implemented consistently
+alias cTrustNOMQTT="cTrust NOMQTT || continue" # FIXME: covered by catchall
 
 bMosqFile="$( [ -r $HOME/.config/mosquitto_pub ] && echo yes)"
  
@@ -807,7 +809,7 @@ do
 		sTarget=$( e "$ffhost" | awk -- '{ print gensub("-[a-z]$", "", 1, gensub("\\..*", "", 1, tolower($0) ) ) }' ) 
 	fi
 
-	[ "$sSite" ] || sSite="$( get_sitecode_cached "$sTarget" || get_most_frequent_sitecode )" # cant do it earlier: Need a $sTarget to determine a default...
+	[ "$sSite" ] || sSite="$( cGetSitecode "$sTarget" || cMostFrequentSitecode )" # cant do it earlier: Need a $sTarget to determine a default...
 	fTmpMqtt="$dTmp/mqtt.$ffhost"
 	sNewSSID=""
 
@@ -909,7 +911,7 @@ do
 					continue
 				elif [ "$sPipeType" = MQTT ] ; then
 					_prefix="$( e "$cmd" | awk -v FS=/ '{ print $1 "/" $2 }' )"
-					cmdopts="$( first_json_attr "$cmdopts" )" ; cmdopts="${cmdopts%(null)}"
+					cmdopts="$( cFirstJsonAttr "$cmdopts" )" ; cmdopts="${cmdopts%(null)}"
 					dbg READ "command: $cmd  $cmdopts  (prefix=$_prefix, sSite=$sSite)"
 					case "$_prefix" in
 					"homie/$sTarget"|"$sSite/$sTarget"|"$sSite/${mqttGroup:-$sTarget}")
@@ -956,7 +958,7 @@ do
 				cTrustSET
 				# _cmd="$sName -m localhost -c bridge -v"
 				_cmd="logger hi_there"
-				_ml="$( expr "${cmdopts:-12}" \* 3600 - 5 )" # Default: almost 12 hours
+				_ml="$( expr "${cmdopts:-12}" \* 3600 - 20 )" # Default: almost 12 hours
 				dbg AUTOSSH "maxlife=${_ml}s : ffhosts=$ffhosts" 
 				# if [ "${ffhosts#"$ffhost"}" != "$ffhosts" ] ; then # do it for all hosts at once, in the first iteration
 
@@ -976,7 +978,7 @@ do
 					[ "$bVerbose" ] && env | grep AUTOSSH | xargs 1>&2 
 					# set -x #  manage_gluon_mqtt -m localhost -c bridge -v
 					if [ "variant1" ] ; then
-						cSsh "$cMPub -h localhost -t $sSite/$sTarget/debug -m check_local_mqtt_port_1 && $sName -m localhost -c memory" 
+						cSsh "date | $cMPub -r -h localhost -t $sSite/$sTarget/debug -l && $sName -m localhost -c memory" 
 						_msg="${cmdopts:+($cmdopts)) }"
 						if [ $ssh_rc = 0 ] ; then
 							cMqttReply OK "${_msg}already had MQTT listener - doing nothing."
@@ -1081,7 +1083,7 @@ do
 				[ $ssh_rc -ne 0 ] && { cEcho "cSsh failed: $_cmd, aborting ..." ; continue ; }
 
 				# now comes a Gluon-specific part - determine Gluon by checking for the UCI entry autoupdater_branch
-				autoupdater_branch="$( get_uci_on_host "autoupdater.settings.branch" )"
+				autoupdater_branch="$( cUciGet "autoupdater.settings.branch" )"
 				dbg "autoupdater_branch=$autoupdater_branch"
 				if [ -z "$autoupdater_branch" -o -z "$bDoAllOfIt" ] ; then  # is probably Non-Freifunk					
 					cEcho "Done installing for target $sTarget (autoupdater_branch=$autoupdater_branch,bDoAllOfIt=$bDoAllOfIt)..."
@@ -1206,8 +1208,9 @@ EOF
 					dbg FILECOPY "scp $fPath copied to /tmp and linked to /sbin instead"
 					cMqttReply OK "path=/tmp/$fBase"
 				else
-					dbg FILECOPY "scopying $fPath to /sbin or /tmp both failed."			
-					cMqttReply ERROR "path=/sbin and /tmp"
+					_msg="scopying $fPath to /sbin or /tmp both failed."
+					dbg FILECOPY "$_msg"			
+					cMqttReply ERROR "$_MSG"
 				fi
 				cSsh "$fBase -m $hPubMqtt -c echo+FILECOPY ; sleep 1 ; [ -r .config/mosquitto_pub ] && $fBase -c echo+FILECOPY" 2>$fNul
 				#DELETE_BEGIN#
@@ -1384,7 +1387,7 @@ EOF
 				# further checks for allowed and legal  SSID values amongst gluon domains ....
 				if [ "$_shortssid" = OFFLINE -o "$_shortssid" != "${_shortssid#MYHOSTNAME}" ] || expr "$( get_gluon_domains_starred_cached "$sTarget" )" : ".*\*${_shortssid}[*]" >$fNul ; then
 					# cMqttReply ONGOING "Setting short SSID: $_shortssid"
-					_shortssid="$( e "$_shortssid" | sed -e "s/MYHOSTNAME/$( get_hostname_cached "$sTarget" )/" )"
+					_shortssid="$( e "$_shortssid" | sed -e "s/MYHOSTNAME/$( cGetHostname "$sTarget" )/" )"
 					cMqttReply ONGOING "Setting SSID suffix: $_shortssid"
 					otherssid="$sSsidBase/$_shortssid"
 				else
@@ -1437,7 +1440,7 @@ EOF
 				cmdsToDo="ffstatus${cmdsToDo:+,$cmdsToDo}" # ... implicitly followed by a ffstatus
 				;;
 			sSite)
-				_data="$( get_sitecode_cached "$sTarget" 0 )"
+				_data="$( cGetSitecode "$sTarget" 0 )"
 				if [ -z "$_data" ] ; then
 					cMqttReply ERROR
 				else
@@ -1665,10 +1668,10 @@ EOF
 				fi
 				;;
 			showsite)
-				# cSsh gluon-show-site >$fNul
-				if cSsh gluon-show-site >$fNul ; then # former: [ "$ssh_data" ]
-					cMqtt "$sSite/$sTarget/$cmd" "$( e $ssh_data | tee $fTmpMqtt | xargs )"
-					[ "$bQuiet" ] || json_pp < $fTmpMqtt
+				cTrustGET
+				if cSsh gluon-show-site >$fNul ; then
+					cMqtt "$sSite/$sTarget/$cmd" "$ssh_data"
+					[ "$bQuiet" ] || printf "%b" "$ssh_data" | json_pp
 				else
 					cMqttReply ERROR "result empty (rc=$ssh_rc)"
 					cErr "ssh to $sSshUser failed."
