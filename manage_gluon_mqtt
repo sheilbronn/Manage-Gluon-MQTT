@@ -814,7 +814,7 @@ do
 	sNewSSID=""
 
 	_string="" && [ "$sSshUser" = "${sSshUser%${sTarget}-e}" -a "$sSshUser" = "${sSshUser%${sTarget}}" ] && _string="($sTarget) "
-	[ "$bVerbose" -o "$bGiveHost" ] && e "\n######## ${sSshUser#root@} $_string//${commands:+ $commands //} $*" "########"
+	[ "$bVerbose" -o "$bGiveHost" ] && ECHO "\n######## ${sSshUser#root@} $_string//${commands:+ $commands //} $*" "########"
 	if [ "$sUciQuery" ] ; then
 		_val="$( cUciQuery "$sUciQuery" )"
 		if [ "$bDoAllOfIt" ] ; then
@@ -1775,7 +1775,7 @@ EOF
 done
 
 if [ "$nCollectedSumOfClients" ] ; then
-	[ "$bVerbose" -o "$bGiveHost" ] && echo "\n######  ALL CLIENTS " "$@" "######"
+	[ "$bVerbose" -o "$bGiveHost" ] && ECHO "\n######  ALL CLIENTS " "$@" "######"
 	cMqtt "$sArea/publicwifi/allclientscount" "$nCollectedSumOfClients"
 
 	if [ "$fCollection" ] ; then
