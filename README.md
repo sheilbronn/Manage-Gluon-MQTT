@@ -1,6 +1,6 @@
 # Manage-Gluon-MQTT
 
-Monitor and control Freifunk Nodes (Gluon) by MQTT
+Monitor and control Freifunk Nodes (Gluon) via MQTT
 
 ## manage_gluon_mqtt
 
@@ -15,7 +15,8 @@ Supported functions/return information:
 * Query fingerprints and number of locally connected Freifunk clients (Wifi)
 * Query static and dynamic [Gluon](https://gluon.readthedocs.io/en/latest/) data (returned as [JSON](https://de.wikipedia.org/wiki/JavaScript_Object_Notation)): _nodeinfo_, _neighbours_, _statistics_ as well as the output from `gluon-show-site`.
 * Query static and dynamic [OpenWrt](https://openwrt.org) config data
-* Run a simple speed test
+* Establish an autossh tunnel for MQTT port forwarding on the current host.
+* Run a simple speed test.
 * Reboot the Freifunk node.
 
 IMPORTANT: This script would be benefit from some refactoring, the code is provided as is.
@@ -35,11 +36,11 @@ D. Local management as a daemon on the node: This script listens to **MQTT messa
 
 Other aspects:
 
-* [Home assistant](https://www.home-assistant.io/docs/mqtt/discovery/) and [Homie](https://homieiot.github.io/specification/) auto-discovery for important topics.
+* [Home assistant](https://www.home-assistant.io/docs/mqtt/discovery/) and [Homie](https://homieiot.github.io/specification/) auto-discovery for the most important topics.
 * MQTT discovery is tested with the [OpenHAB MQTT binding](https://www.openhab.org/addons/bindings/mqtt/) and [HoDD](https://github.com/rroemhild/hodd)
-* Script should run on [bash](https://de.wikipedia.org/wiki/Bash_(Shell)) as well as [ash](https://en.wikipedia.org/wiki/Almquist_shell) (ash is used in [OpenWrt](https://openwrt.org/) as the default shell). Dash is used to trigger script verification in Visual Studio Code (VSC).
+* Script should run on [bash](https://de.wikipedia.org/wiki/Bash_(Shell)) as well as [ash](https://en.wikipedia.org/wiki/Almquist_shell) (ash is used in [OpenWrt](https://openwrt.org/) as the default shell). However, dash is used to trigger script verification in Visual Studio Code (VSC).
 * If the Freifunk node has very limited memory, e.g. on [4/32 devices](https://openwrt.org/supported_devices/openwrt_on_432_devices), B might be preferred over C or D.
-* In order to install the Mosquitto packages, the package installation tool [opkg](https://openwrt.org/docs/guide-user/additional-software/opkg) is needed on Freifunk (Gluon) devices. opkg might not be available on [devices with limited memory](https://openwrt.org/supported_devices/openwrt_on_432_devices): Use use case A and B as a workaround.
+* In order to install the Mosquitto packages using the install command (see below), the package installation tool [opkg](https://openwrt.org/docs/guide-user/additional-software/opkg) is needed on Freifunk (Gluon) devices. opkg might not be available on [devices with limited memory](https://openwrt.org/supported_devices/openwrt_on_432_devices): Use use case A and B as a workaround.
 * Remote management via a Freifunk "edge" node acting as a SSH proxy to other Freifunk nodes works well, e.g. use the [ProxyJump directive](https://www.redhat.com/sysadmin/ssh-proxy-bastion-proxyjump) in your `.ssh/config`.
 * The script can install itself plus some other prerequisites. See below.
 
@@ -67,23 +68,25 @@ N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluo
 ### Command-line options / Invocation
 
 * -c (commands): One or more management commands to be executed (comma-separated), see below for the details.
-* -s (server): If the script is not run locally on the Freifunk node itself (localhost), the SSH names of one or more other Freifunk nodes maybe passed with -s (comma-seperated)
+* -s (server): If the script is not run locally on the (Freifunk) node itself (localhost), the SSH names of one or more other Freifunk nodes maybe passed with -s (comma-seperated)
 * -G (give): In the output add an informative line with host and command (useful für multiple commands and hosts)
 * -g (group): group.
     If running as a daemon (D), also listen to MQTT messages for a MQTT group as well.
 * -v (verbose): more, verbose output from the script as well as intermediate steps. Additional -v's add more verbosity.
-* -x (execute): each shell command is echoed to stdout before execution (for debugging)
+* -x (exec): each shell command is echoed to stdout before execution (for debugging)
 * -q (quiet): no output on stdout
 * -h (host): name or IP adress of the MQTT broker.
     The public test broker test.mosquitto.org may be abbreviated as -h test and iot.eclipse.ors as -h eclipse.
     If no broker is given, mosquitto_pub and mosquitto_sub will use their defaults (see their manual pages).
 * -m (mqtt): use MQTT or not (currently only implied by -p)
-* -p : support Homie or Home-Assistant auto-discovery
+* -p : support Home-Assistant (HASS) and Homie auto-discovery via MQTT
 
 Supported commands for the -c option are:
 
 * *bridge*: Script will become a daemon waiting for MQTT commands, subsequent commands are ignored (Use case D)
 * *noop*: Do nothing (for testing purposes)
+* *echo*: Just echo the received command options
+* *date*: Return the current system date (for testing purposes)
 * *install*: Install if necessary the Mosquitto package, a firewall rule, a sample crontab entry, and the script itself (to /sbin).
 * *sh*: Invoke a remote SSH shell on the remote host (limited to A,B for security reasons!)
 * *homie-update*: Issue all auto-discovery announcements as well as the values.
@@ -96,7 +99,7 @@ Supported commands for the -c option are:
 * *ffgluonreconfigure*: Reset to configured values and states
 * *gluondata*: Lots of Gluon configuration data
 * *machine-data*: Version and CPU info of the node
-* *speedtest*: Get a larger file, measure the time it takes and calculate download speed im MB/s
+* *speedtest*: Get a large file, measure the time it takes and calculate download speed im MB/s
 * *status*: Load and uptime of the node
 * *localclients*: Amount and fingerprints of clients attached to the node
 * *nodeinfo* ...
