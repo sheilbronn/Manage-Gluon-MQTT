@@ -32,9 +32,10 @@ fNul=/dev/null
 #	exit 0
 
 cCmv()	{ command -v "$@" >$fNul ;} # find out whether a command exists
-cLower() { { [ "$*" ] && echo "$*" || cat ;} | awk -- '{ print tolower($0) }' ;}
+cLower() { { [ "$*" ] && echo "$*" || cat ;} | awk '{print tolower($0)}' ;}
 alias trd="tr -d"
 alias cSanitize="trd -c A-Za-z0-9_.,\ -" # remove special, leave spaces and ,._-
+alias cOut='echo "$ssh_data"'
 
 if cCmv busybox ; then
 	alias awk="busybox awk"
@@ -108,7 +109,7 @@ cTail() {
 	}
 
 cExtractVals() {
-	local _tmp="$(e "$@" | xargs -n 1 )"
+	local _tmp="$(e "$@" | xargs -n 1)"
 	_tmp="${_tmp#*=}"
 	# dbg "cExtractVals returns: <$_tmp>" 1>&2
 	e "$_tmp"
@@ -116,21 +117,21 @@ cExtractVals() {
 
 cUciQuery() { # query/show (possibly) many UCI values from a host and return them all
 	cSsh "uci show $1"
-	e "$ssh_data"
+	cOut
 	return $ssh_rc
 	}
 
 cUciGet() {
 	cSsh "{ uci get $1 ; ${2:+uci get $2;} ${3:+uci get $3;} } 2>&1"
-	e "$ssh_data"
+	cOut
 	return $ssh_rc
 	}
 
 query_and_extract_uci_on_host() { # query the FIRST of possibly many UCI values from a host and return its value
 	cSsh "uci show $1"
-	local _tmp="$(e "$ssh_data" | xargs -n 1 )" && _tmp="${_tmp#*=}" # FIXME for ash !
+	local _tmp="$(cOut|xargs -n 1 )" && _tmp="${_tmp#*=}" # FIXME for ash !
 	dbg "query_and_extract_uci_on_host returns: <$_tmp>" 1>&2
-	e "$ssh_data"
+	cOut
 	return $ssh_rc
 	}
 
@@ -141,13 +142,13 @@ get_os_data_semi_starred_cached() {
 		cSsh "cat /usr/lib/os-release" || return $?  # cancel func
 		if [ "$ssh_data" ] ; then
 			cCWrite $1.os_data_lined "$ssh_data" # keep it for now, dont need it yet
-			_result="$(e "$ssh_data" | awk -F= '
-				BEGIN { lim="{*os*:{" } END { printf "}}" }
+			_result="$(cOut|awk -F= '
+				BEGIN { lim="{*os*:{" } END {printf "}}"}
 				{ printf lim "*" tolower($1) "*:" gensub("\"", "*", "g", $2)  ; lim="," }' )" # generate new value
 			 cCWrite $1.os_data	"$_result"  # cache new values if successfully obtained
-			 cCWrite $1.os_pretty_name	"$(e "$ssh_data" |  awk -F=  '/^PRETTY_NAME=/ { print gensub("\"", "", "g", $2) }' )"
-			 cCWrite $1.os_name	"$(e "$ssh_data" |  awk -F=  '/^NAME=/ { print gensub("\"", "", "g", $2) }' )"
-			 cCWrite $1.os_id	"$(e "$ssh_data" |  awk -F=  '/^ID=/ { print gensub("\"", "", "g", $2) }' )"
+			 cCWrite $1.os_pretty_name	"$(cOut|awk -F=  '/^PRETTY_NAME=/ {print gensub("\"", "", "g", $2) }' )"
+			 cCWrite $1.os_name	"$(cOut|awk -F=  '/^NAME=/ {print gensub("\"", "", "g", $2) }' )"
+			 cCWrite $1.os_id	"$(cOut|awk -F=  '/^ID=/ {print gensub("\"", "", "g", $2) }' )"
 		fi
 	fi
 	printf %b "$_result"
@@ -175,7 +176,7 @@ cGetSitecode() { # $1=host $2=cachetimeout
 
 cMostFrequentSite() {
 		cX ; set +o noglob # needed here
-		local _data="$(cat "$dCache"/*.site.cached 2>$fNul | sort | uniq -c | awk '{print $2 ; exit}' )"
+		local _data="$(cat "$dCache"/*.site.cached 2>$fNul | sort | uniq -c | awk '{print $2;exit}' )"
 		e "${_data:-UNKNOWN}"
 	}
 
@@ -198,13 +199,13 @@ cGetPubIF() { # $1=host $2=cachetimeout  ## TODO ## -1 for forced reloading
 	if [ -z "$_dataall" ] ; then
 		# should find a better solution based on iw ...:
 		cSsh "command -v iwinfo >$fNul && iwinfo" || return $?
-		_dataall="$(e "$ssh_data" | sed -e 's/^  */;/' -e 's/   */;/' | awk '/^$/ { print l ; l="" ; next } { l=l $0 ; next }' )"
+		_dataall="$(cOut|sed -e 's/^  */;/' -e 's/   */;/' | awk '/^$/ {print l;l="";next} {l=l$0 ;next}' )"
 		dbg REMOTE "iwinfo returned: '$_dataall'"
 		if echo "$_dataall" | grep -q "Mode: Master;.*;Encryption: none" ; then #  .... cache result only if at least one public Freifunk if is up and running
 			cCWrite $_key "$_dataall"
 		fi
 	fi
-	sPubIfs="$(e "$_dataall" | awk -F";" '/;Mode: Master/ && /;Encryption: none/ { printf $1 " " }' )"
+	sPubIfs="$(e "$_dataall" | awk -F";" '/;Mode: Master/ && /;Encryption: none/ {printf $1 " "}' )"
 	# setting global variables $sPubIfs, $sPubIf0, $sPubIf1 and sSsidBase as side effects...
 	if [ -z "$sPubIfs" ] ; then
 		sPubIfs="ERROR" ; sPubIf0="" ; sPubIf1=""
@@ -212,10 +213,10 @@ cGetPubIF() { # $1=host $2=cachetimeout  ## TODO ## -1 for forced reloading
 		sSsidBase=""
 		return 1
 	else
-		sPubIf0="$(e "$sPubIfs" | awk '{ print $1 }' )" # 1st interface
-		sPubIf1="$(e "$sPubIfs" | awk '{ print $2 }' )" # 2nd interface if any (e.g. 5 Ghz)
+		sPubIf0="$(e "$sPubIfs" | awk '{print $1}' )" # 1st interface
+		sPubIf1="$(e "$sPubIfs" | awk '{print $2}' )" # 2nd interface if any (e.g. 5 Ghz)
 		dbg PUBLIC "interface(s): ssPubIf0=$sPubIf0,sPubIf1=$sPubIf1 (sPubIfs=$sPubIfs)"
-		sSsidBase="$(e "$_dataall" | awk -F";" '/;Mode: Master/ && /;Encryption: none/ { print $2 ; exit }' | trd \" | awk -F": " '{ print gensub("/.*", "", "g", $2) }' )"
+		sSsidBase="$(e "$_dataall" | awk -F";" '/;Mode: Master/ && /;Encryption: none/ {print $2;exit}' | trd \" | awk -F": " '{print gensub("/.*", "", "g", $2) }' )"
 		return 0
 	fi
 }
@@ -236,7 +237,7 @@ cTableToJSON() { # table is to be piped in. numerical values are made unquoted. 
 			printf "}"
 			lim=",\n"
 		}
-		END { print "}" } '
+		END {print "}"} '
   }
   # { echo spalte1 spalte2 ; echo a1 12 13 ; echo b1 b2;} | cTableToJSON 1 ; exit
 
@@ -260,7 +261,7 @@ cFirstJsonAttr() { # take string and extract the value of the first attribute if
 
 cWordsToJsonArry() {
 	cX
-	awk 'BEGIN { printf "[" } { printf lim "*" $0 "*" ; lim="," } END { printf "]" }'
+	awk 'BEGIN {printf "["} {printf lim "*" $0 "*" ; lim="," } END {printf "]"}'
   }
 
 cGetGluonDomainsStarred() {
@@ -337,10 +338,14 @@ if [ -t 1 ] ; then
 	Reg="${TC}22;24m" ; RegF="${TC}39m" ; RegB="${TC}49m" ; Rst="${TC}0m" # Reset all coloring and style
 fi
 
+cLogger() {
+		logger -p daemon.$1 -t "$sMe $hTarget" "$2"
+	}
+
 cErr() {
 	cX
 	ECHO "${OnRed}ERROR$Rst: $*" 1>&2
-	[ -t 2 ] || logger -p daemon.error -t "$sMe $hTarget" "$*"
+	[ -t 2 ] || cLogger error "$*"
 	}
 
 cErrAndExit() {
@@ -352,12 +357,12 @@ cErrAndExit() {
 cEcho() { # output stuff unless to be quiet
 	cX
 	[ "$bQuiet" ] && return
-	local _out="$*"
+	# local _out="$*"
 	# [ "$1" = "${1#\{\*}" ] && ECHO EINS
 	# [ "$1" = "${1#\{\*}" ] && ECHO ZWEI
 	# FIXME:  [ "$1" = "${1#\{\*}" -a "$1" = "${1#\[\*}" ] && _out="$( cStarredToJSON "$*" | json_pp )"  # expand (only) "starred" pseudo-JSON
-	ECHO "$Cyan$_out$Rst"
-	logger -p daemon.info -t "$sMe $hTarget" "$_out"
+	ECHO "$Cyan$*$Rst"
+	cLogger info "$*"
 	}
 
 dbg() { # output its args to stderr if option -v was set
@@ -365,7 +370,7 @@ dbg() { # output its args to stderr if option -v was set
 
 	[ "$bVerbose" ] || return 1
 	{ [ "$#" = 2 ] && ECHO "$Yellow$1:$Rst" "$2" || ECHO "${Yellow}debug$Rst" "$*" ;} 1>&2
-	[ "$bVeryVerbose" ] && logger -p daemon.info -t "$sMe $hTarget" "$*"
+	[ "$bVeryVerbose" ] && cLogger info "$*"
 	return 0
 	}
 
@@ -408,32 +413,32 @@ cMqtt() {
 	[ $cMPub = : ] && return
 	dbg PUB_MQTT "$1  $2 ${3:+OPTIONS=$3}${bVeryVerbose:+ (hMqtt=$hMqtt;hTarget=$hTarget)}"
 	local _topic="$1"
-	[ "$1" != "${1#/}" ] && _topic="$( awk -v arg="$1" -v repl="$sSite/$hTarget/" -- 'BEGIN { print gensub("^/",repl,1,arg) }' )" # ... expand shortcuts starting with "/"
+	[ "$1" != "${1#/}" ] && _topic="$( awk -v arg="$1" -v repl="$sSite/$hTarget/" 'BEGIN {print gensub("^/",repl,1,arg) }' )" # ... expand shortcuts starting with "/"
 	for h in $hMqtt ; do
 		$cMPub ${h:+-h $h} ${sMID:+-i $sMID} -t "$_topic" -m "$2" -i "${sSite}_$hTarget" $3	|| dbg "$cMPub(host=$h): rc=$?" #  $3  passed without quotes on purpose
 	done
 	}
 
 cStarredToJSON() {
-	awk -v a="$*" -- 'BEGIN { print gensub("*", "\"", "g", gensub("\"", "'\''","g",a) ) }' # " => ' , then * => "
+	awk -v a="$*" 'BEGIN { print gensub("*", "\"", "g", gensub("\"", "'\''","g",a) ) }' # " => ' , then * => "
 	}
 
 cMqttStarred() {		# cMS(expandableTopic,message,moreMsoquittoOptions)
 	cX
-	if [ "$hMqtt" -o "$homie" -o "$bMosqFile" ] && [ $cMPub != : ]  ; then
-		cMqtt "$1" "$(cStarredToJSON "$2")" "$3" # ...  replace double quotes by single quotes and stars by double quotes
-	fi
+	[ "$hMqtt" -o "$homie" -o "$bMosqFile" ] && [ $cMPub != : ] &&
+		cMqtt "$1" "$(cStarredToJSON "$2" )" "$3" # ...  replace double quotes by single quotes and stars by double quotes
 	}
 	alias cMS=cMqttStarred
 
 cMqttReply() {
 	cX
-	# local _cmd="$(e "$cmd" | sed -e 's/[0-9]*$//' )" # remove any trailing digits from current command
-	local _cmd="$( awk -v arg="$cmd" -- 'BEGIN { print gensub("[0-9]*$","",1,arg) }' )" # remove any trailing digits from command
+	# local _cmd="$(awk -v arg="$cmd" 'BEGIN { print gensub("[0-9]*$","",1,arg) }' )" # remove any trailing digits from command
+	local _cmd="${cmd%%[0-9]*}" # remove any trailing digits from command
 	cMS /$_cmd/log "{*status*:*$1*${2:+,*details*:*$2*}${3:+,$3}${fPipe:+, *daemon*:*yes*}}"
-	[ "$1" != OK -a "$1" != ONGOING ] && logger -p daemon.error -t "$sMe $hTarget" "$1: $2 $3"
-	dbg REPLIED "$1 :: $2 :: $3"
-}
+	[ "$1" != OK -a "$1" != ONGOING ] && cLogger info "$1: $2 $3"
+	dbg REPLIED "$1: $2 : $3"
+	}
+	alias cMR=cMqttReply
 
 # Parameters for hass_announce:
 # $1: MQTT "base topic" for states of all the device(s), e.g. "rtl/433" or "ffmuc"
@@ -582,7 +587,7 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 		fi
 		dbg announce_disco ": WILL ANNOUNCE ... (\$1=$1, \$2=$2, bForceMQTTAnnounce=$bForceMQTTAnnounce)"
 		os_data="$(get_os_data_semi_starred_cached $hTarget 1 )" # refresh data from host if old or no data available
-		ad_devname="$(e "$1" | awk -- '{ print toupper(substr($i,1,1)) substr($i,2) }' )"
+		ad_devname="$(e "$1" | awk '{print toupper(substr($i,1,1)) substr($i,2) }' )"
 		ad_fwid="$(cCRead $hTarget.os_id 9 )"
 		ad_fwname="$(cCRead $hTarget.os_name 9 )"
 		ad_fwversion="$(cCRead $hTarget.os_pretty_name 9 )"
@@ -618,7 +623,7 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 
 		_gluondomains=$(cCRead $hTarget.gluondomains 9 )
 		if [ "$_gluondomains" ] ; then
-			_wifi_domains="$(e "$_gluondomains" | trd "][*" | awk -F= '{ printf lim $1  ; lim="," }' )" # rough hack...
+			_wifi_domains="$(e "$_gluondomains" | trd "][*" | awk -F= '{ printf lim $1 ; lim="," }' )" # rough hack...
 			dbg wifi_domains "$_wifi_domains"
 				# 1: root, 2: name, 3: retained, 4: settable, 5: datatype, 6: unit, 7: format
 			h_multi publicwifi/ssidshort "Public WiFi short SSID" false true enum "" "$_wifi_domains" # rough hack...
@@ -779,7 +784,7 @@ fi
 for d in /var/log /tmp ; do # find a suitable writable dir. Prefer /var/log over /tmp on openhabian (because of zram).
 	dCache=$d/${sMe%.sh}.$(id -nu)
 	dTmp=$dCache/$$
-	dbg "Trying dTmp=$dTmp"
+	dbg dTmp $dTmp
 	[ -d "$dCache" ] || { mkdir -p "$dCache" 2>$fNul ; chmod o-rwx "$dCache" ;} && mkdir $dTmp && break || id # ... && chmod o-rwx $dTmp
 done
 
@@ -804,18 +809,18 @@ do
 			# cEcho "root@$ffhost:" "$@" 1>&2
 			cX
 			ssh_msg=""
-			_r="$(ssh -T "root@$ffhost" -q "$@" )"
+			_r="$(ssh "root@$ffhost" -q "$@" )"
 			ssh_rc=$?
 			ssh_data="$(echo "$_r" | trd '`' )"
 			if [ $ssh_rc -gt 0 ] ; then
 				[ $ssh_rc -eq 255 ] && ssh_msg="UNREACHABLE"
-				dbg SSH " -T root@$ffhost RETURNED $ssh_rc ($ssh_msg)" 1>&2
-				logger -p daemon.error -t "$sMe $hTarget" "$* = $ssh_rc"
+				dbg SSH " root@$ffhost RETURNED $ssh_rc ($ssh_msg)" 1>&2
+				cLogger error "$* = $ssh_rc"
 			fi
 			return $ssh_rc
   		  }	
 		# remove any trailing "-<letter>"  also the domain name
-		hTarget=$(e "$ffhost" | awk -- '{ print gensub("-[a-z]$", "", 1, gensub("\\..*", "", 1, tolower($0) ) ) }' )
+		hTarget=$(e "$ffhost" | awk '{print gensub("-[a-z]$", "", 1, gensub("\\..*", "", 1, tolower($0) ) ) }' )
 	fi
 	_string="" && [ "$sSshUser" = "${sSshUser%${hTarget}-e}" -a "$sSshUser" = "${sSshUser%${hTarget}}" ] && _string="($hTarget) "
 	[ "$bVerbose" -o "$bGiveHost" ] && ECHO "\n######## ${sSshUser#root@} $_string//${commands:+ $commands //} $*" "########"
@@ -835,7 +840,7 @@ do
 				cErrAndExit "key :$sUciQuery: returned more than one line!"
 			else
 				cSsh "uci set $sUciQuery=$sUciVal && uci commit $sUciQuery"
-				echo "$ssh_data"
+				cOut
 			fi
 		fi	
 	else
@@ -859,14 +864,14 @@ do
 			_last_will_options="--will-qos 0 --will-topic $sSite/$hTarget/bridge/log --will-payload {\"status\":\"OFF\"}"
 			cMqttSub -F "MQTT %t %p" -R $_subscriptions $_last_will_options > $fPipe &  #  pipe non-stale commands from MQTT broker
 			readonly nPidMosquitto=$!
-			cmd="bridge" && cMqttReply ON "Subscribed $( awk -v arg="$_subscriptions" -- 'BEGIN { print gensub("-t ","","g",arg) }' )"
+			cmd="bridge" && cMR ON "Subscribed $( awk -v arg="$_subscriptions" 'BEGIN {print gensub("-t ","","g",arg)}' )"
 			
 			_ms=5 #  pipe periodic stuff into the pipe to make it wakeup at most every $_ms seconds
 			while sleep $_ms ; do [ -r "$fSleep" ] && nMqttSleep="$(awk "{ print \$1<$_ms ? 0 : \$1-$_ms ;exit}" "$fSleep" )" ; echo PERIODIC noop "${nMqttSleep}secs" ; sleep "$nMqttSleep" || true ; done  > $fPipe  &
 			readonly nPidPeriodic=$!
 			
 			if cCmv ubus ; then  #  .. and enable a listener for the ubus bus:
-				( ubus listen & echo $! > $dTmp/ubusPid ) | awk -- '{ print "UBUS LISTEN " $0 ; fflush() }' > $fPipe &
+				( ubus listen & echo $! > $dTmp/ubusPid ) | awk '{print "UBUS LISTEN " $0 ; fflush()}' > $fPipe &
 				readonly nPidUbus="$(cat $dTmp/ubusPid)"
 				dbg UBUS "Background ubus listen pid is: $(pgrep -lfa "ubus listen")"
 				ubus send $sMe '{"debug":"started"}'
@@ -875,7 +880,7 @@ do
 			dbg "Started procs: nPidMosquitto=$nPidMosquitto,nPidPeriodic=$nPidPeriodic,nPidUbus=$nPidUbus,fPipe=$fPipe"
 			
 			trap_function() {
-					cmd="bridge" && cMqttReply ONGOING "trapped signal."
+					cmd="bridge" && cMR ONGOING "trapped signal."
 					rm -f $fPipe
 					kill $nPidPeriodic $nPidMosquitto $nPidUbus 2>$fNul || true
  					dbg "$sMe: killed $nPidMosquitto $nPidPeriodic $nPidUbus, sent MQTT, now stopping at $(date )"
@@ -897,10 +902,10 @@ do
 				if [ "$_rc" -ne 0 ] ; then
 					if [ -p $fPipe ] ; then
 						_msg="Read error from pipe (rc=$_rc)"
-						cMqttReply ERROR "$_msg"
+						cMR ERROR "$_msg"
 						cErrAndExit "$_msg: $( ls $fPipe 2>&1 )"
 					else
-						cMqttReply OFF "Exiting (read_rc=$_rc)."
+						cMR OFF "Exiting (read_rc=$_rc)."
 						exit 0
 					fi
 				fi				
@@ -915,7 +920,7 @@ do
 					[ "$cmdopts" != noop ] && cmdsToDo="ffstatus,statistics,bridge"
 					continue
 				elif [ "$sPipeType" = MQTT ] ; then
-					_prefix="$(e "$cmd" | awk -v FS=/ '{ print $1 "/" $2 }' )"
+					_prefix="$(e "$cmd" | awk -v FS=/ '{print $1 "/" $2}' )"
 					cmdopts="$( cFirstJsonAttr "$cmdopts" )" ; cmdopts="${cmdopts%(null)}"
 					dbg READ "command: $cmd  $cmdopts  (prefix=$_prefix, sSite=$sSite)"
 					case "$_prefix" in
@@ -941,7 +946,7 @@ do
 						ffotherssid*)		cmd="ffotherssid_$cmdopts" ;;
 						esac
 						;;
-					*) cmd="$(e "$cmd" | awk -v FS=/ 'NF && NF-1 { print ( $(NF-1) ) }' )"
+					*) cmd="$(e "$cmd" | awk -v FS=/ 'NF && NF-1 {print ($(NF-1)) }' )"
 						;; # extract last part of topic, must have at least one /
 					esac
 					cmd=${cmd%/get} && cmd=${cmd%/GET}
@@ -962,7 +967,6 @@ do
 			autossh)
 				cTrustSET
 				_cmd="$sMe -m localhost -c bridge ${mqttGroup:+-g $mqttGroup}"
-				# _cmd="logger hi_there"
 				_ml="$((${cmdopts:-12} * 3600 - 20))" # Default = almost 12 hours
 				dbg AUTOSSH "maxlife=${_ml}s : ffhosts=$ffhosts"
 				# if [ "${ffhosts#"$ffhost"}" != "$ffhosts" ] ; then # do it for all hosts at once, in the first iteration
@@ -986,17 +990,17 @@ do
 						cSsh "date | $cMPub -r -h localhost -t $sSite/$hTarget/debug -l && $sMe -m localhost -c memory"
 						_msg="${cmdopts:+($cmdopts) }"
 						if [ $ssh_rc = 0 ] ; then
-							cMqttReply OK "${_msg}already had MQTT listener - doing nothing."
+							cMR OK "${_msg}already had MQTT listener - doing nothing."
 						else
 							_msg="${_msg}check returned $ssh_rc ($ssh_msg) -"
 							if [ $ssh_rc = 127 ] ; then
 								_msg="${_msg} (mosquitto_pub not found?) - doing nothing."
 								dbg AUTOSSH "$_msg"
-								cMqttReply ERROR "$_msg"
+								cMR ERROR "$_msg"
 							elif [ $ssh_rc = 255 ] ; then
 								_msg="${_msg} doing nothing."
 								dbg AUTOSSH "$_msg"
-								cMqttReply ERROR "$_msg"
+								cMR ERROR "$_msg"
 							else
 								_msg="${_msg} will start autossh and run check"
 								dbg AUTOSSH "$_msg"
@@ -1005,7 +1009,7 @@ do
 								_pid="$(cat $AUTOSSH_PIDFILE)"
 								dbg AUTOSSH "pid=$_pid"
 								cSsh "$cMPub -h localhost -t $sSite/$hTarget/debug -m check_local_mqtt_port_2"
-								cMqttReply OK "Command $cmd $cmdopts executed."
+								cMR OK "Command $cmd $cmdopts executed."
 							fi
 						fi
 					else
@@ -1013,7 +1017,7 @@ do
 						# dbg AUTOSSH "pid=$nPidAutoSSH for: $ffhosts"
 						sleep 10
 						trap_autossh() {
-							cmd="autossh" && cMqttReply ONGOING "exiting."
+							cmd="autossh" && cMR ONGOING "exiting."
 							set -x
 							jobs
 							wait $nPidAutoSSH
@@ -1026,13 +1030,13 @@ do
 				;;
 			bridge|noop|ignore|echo|date)
 				dbg COMMAND "cmd=$cmd,$cmdopts,($(date +%T))"
-				[ $cmd = echo ] && cMqttReply OK "Command $cmd($cmdopts) on $(cat $fHost)"
-				[ $cmd = date ] && cMqttReply OK "Command $cmd($cmdopts): $(date) (ID=$(sh -c "echo \$\$"))"
+				[ $cmd = echo ] && { cMR OK "Command $cmd($cmdopts) on $(cat $fHost)" ; [ "$cmdopts" = TESTERROR ] && cErr "Test error" ; }
+				[ $cmd = date ] && cMR OK "Command $cmd($cmdopts): $(date) (ID=$(sh -c "echo \$\$"))"
 				;;
 			loop)
 				cTrustGET
 				cmdopts="${cmdopts:-5}"
-				cMqttReply ONGOING "$cmd'ing $cmdopts times"
+				cMR ONGOING "$cmd'ing $cmdopts times"
 				if [ 2 -le "$cmdopts" -a "$cmdopts" -lt 11 ]  ; then
 					_cmd='cSsh date -u +%s'
 					$_cmd ; startval="$ssh_data" && cEcho "$startval"
@@ -1040,9 +1044,9 @@ do
 						$_cmd
 						dbg "$ssh_data"
 					done && cEcho "$ssh_data"
-					cMqttReply OK "Command $cmd: Performed $cmdopts-times /bin/date in $(( ssh_data - startval)) seconds: $startval-$ssh_data"
+					cMR OK "Command $cmd: Performed $cmdopts-times /bin/date in $(( ssh_data - startval)) seconds: $startval-$ssh_data"
 				else
-					cMqttReply ERROR "Command $cmd: Invalid parameter '$cmdopts'"
+					cMR ERROR "Command $cmd: Invalid parameter '$cmdopts'"
 				fi
 				;;
 			install)
@@ -1112,7 +1116,7 @@ do
 						firewall.any_mqtt.proto='tcp'
 EOF
 					cSsh "[ -d $dGluon ] && gluon-reconfigure" || dbg "Failed to find $dGluon or gluon-reconfigure..."
-					echo "$ssh_data"
+					cOut
 				fi
 				
 				if [ "$bDoExperiment" ] ; then # dont skip for now
@@ -1145,7 +1149,7 @@ EOF
 						firewall.mesh_mqtt.proto='tcp'
 EOF
 					cSsh "[ -d $dGluon ] && gluon-reconfigure" || dbg "Failed to find $dGluon or gluon-reconfigure..."
-					echo "$ssh_data"
+					cOut
 				fi
 				
 				_pubcmd="$cMPub -h $hPubMqtt" # caution: Freifunk/Gluon seems to need IPV6 connectivity, not all brokers have it!
@@ -1176,7 +1180,7 @@ EOF
 				# ... still not implemented: installing it as an MQTT daemon on Gluon ...
 				fRC=/etc/rc.local
 				cSsh "cat $fRC"
-				if echo "$ssh_data" | grep $sMe ; then
+				if cOut|grep $sMe ; then
 					dbg MODIFY "The $fRC line containing '$sMe' was found above... Leaving $fRC unmodified."
 				else
 					cEcho "$fRC entry with '$sMe' not found... adding a simple one... pls modify it later!!"
@@ -1212,14 +1216,14 @@ EOF
 				#DELETE_END#
 				if scp -p ${bQuiet:+-q} "$fPath" "$sSshUser:/sbin/$fBase" ; then
 					dbg FILECOPY "$fPath copied to $sSshUser:/sbin/$fBase"
-					cMqttReply OK "path=/sbin/$fBase"
+					cMR OK "path=/sbin/$fBase"
 				elif scp -p "$fPath" "$sSshUser:/tmp/$fBase" && cSsh "rm /sbin/$fBase ; ln -s /tmp/$fBase /sbin" ; then
 					dbg FILECOPY "scp $fPath copied to /tmp and linked to /sbin instead"
-					cMqttReply OK "path=/tmp/$fBase"
+					cMR OK "path=/tmp/$fBase"
 				else
 					_msg="scopying $fPath to /sbin or /tmp both failed."
 					dbg FILECOPY "$_msg"			
-					cMqttReply ERROR "$_MSG"
+					cMR ERROR "$_msg"
 				fi
 				cSsh "$fBase -m $hPubMqtt -c echo+FILECOPY ; sleep 1 ; [ -r .config/mosquitto_pub ] && $fBase -c echo+FILECOPY" 2>$fNul
 				#DELETE_BEGIN#
@@ -1228,7 +1232,7 @@ EOF
 				;;
 			sh)
 				cTrustNOMQTT
-				cMqttReply ONGOING "Starting shell."
+				cMR ONGOING "Starting shell."
 				ssh "$sSshUser"
 				;;
 			homie-update|disco-update|discovery-update)
@@ -1247,16 +1251,16 @@ EOF
 				cGetPubIF # also sets sPubIfs and sSsidBase
 				dbg PREPARING "$cmd on host $hTarget (if=$sPubIf0,$sPubIf1) ..."
 				cSsh "{ iw dev $sPubIf0 del ${sPubIf1:+; iw dev $sPubIf1 del >$fNul} ;} 2>&1"
-				_tmp="$(e "$ssh_data" | xargs)"
+				_tmp="$(cOut|xargs)"
 
 				if [ $ssh_rc -eq 237 -o $ssh_rc -eq 1 ] ; then
-					cMqttReply OK "$_tmp (_rc=$ssh_rc)"
+					cMR OK "$_tmp (_rc=$ssh_rc)"
 					h_line publicwifi/clientscount 0  && _tmp=""
 				elif [ -z "$_tmp" -a $ssh_rc != 0 ] ; then
-					cMqttReply ERROR "tempstr=$_tmp (_rc=$ssh_rc)"
+					cMR ERROR "tempstr=$_tmp (_rc=$ssh_rc)"
 					h_line publicwifi/clientscount 0  && _tmp=""
 				else
-					cMqttReply OK "tempstr=$_tmp"
+					cMR OK "tempstr=$_tmp"
 				fi
 				dbg FFDOWN "Now running ffstatus"
 				cmdsToDo="ffstatus${cmdsToDo:+,$cmdsToDo}"
@@ -1269,21 +1273,21 @@ EOF
 				ssh_data=""
 				if [ $cmd = ffup ] ; then
 					cTrustSET
-					cMqttReply ONGOING "RUNNING $cmd"
+					cMR ONGOING "RUNNING $cmd"
 					cSsh "wifi up && sleep $nWifiSleep && $_cmd"
 				elif [ "$sNewSSID" ] ; then
 					ssh_rc=0
 					dbg REUSED "sNewSSID=$sNewSSID..."
 				else
-					cMqttReply ONGOING "RUNNING $cmd (iwinfo)"
+					cMR ONGOING "RUNNING $cmd (iwinfo)"
 					cSsh "$_cmd"
 				fi
 				if [ -z "$sNewSSID" ] ; then # ... was cached or if not cached, not unreachable
-					sNewSSID="$(e "$ssh_data" | sed -e '/ESSID:/s/[^:]*: //' -e 's/\"//g' -e '1q' )" # coerce iwinfo and uci to get results
+					sNewSSID="$(cOut|sed -e '/ESSID:/s/[^:]*: //' -e 's/\"//g' -e '1q' )" # coerce iwinfo and uci to get results
 					if [ $ssh_rc = 0 -a "${ssh_data#"$sPubIf0"}" != "${ssh_data}"  ] ; then
 						dbg SUCCESS "tempstr=$ssh_data"
 						# cEcho "$sNewSSID"
-						sChannel24="$(e "$ssh_data" | awk '$3 ~ /Channel:/ { print $4 }' )"
+						sChannel24="$(cOut|awk '$3 ~ /Channel:/ {print $4}' )"
 						cMS 	/publicwifi/state	ON
 						h_line	publicwifi/state	true
 						cMS 	/radio/channel24 	"$sChannel24"
@@ -1292,12 +1296,12 @@ EOF
 						if [ "$ssh_data" ] ; then
 							dbg "rc=$ssh_rc for command $cmd, ssh_data: $ssh_data"
 							if [ $ssh_rc = 255 ] || echo "$_tmp" | grep -w -q -E "open failed|connect failed" ; then # unreachable
-								cMqttReply OFF "rc=$ssh_rc ($ssh_msg)"
+								cMR OFF "rc=$ssh_rc ($ssh_msg)"
 								( sleep 60 ; echo PERIODIC noop "sooner" )  > $fPipe  & # inject for sooner retry
 							elif [ "${ssh_data#sPubIf0}" = "${ssh_data}" ] ; then
-								cMqttReply OFF "rc=$ssh_rc (interface missing or down)"
+								cMR OFF "rc=$ssh_rc (interface missing or down)"
 							else
-								cMqttReply ERROR "rc=$ssh_rc // $(e "$ssh_data" | xargs ) "
+								cMR ERROR "rc=$ssh_rc // $(cOut|xargs) "
 							fi
 						fi
 						cMS 	/publicwifi/state	OFF
@@ -1309,14 +1313,14 @@ EOF
 				if [ "$sNewSSID" ] ; then
 					cEcho "$sNewSSID"
 					_ssid="$( printf %s "$sNewSSID" | sed -e 's,.*/,,' -e 's/"//g'  )"
-					cMqttReply OK "$sNewSSID"
+					cMR OK "$sNewSSID"
 					cMS		/publicwifi/ssidshort "$_ssid"
 					h_line	publicwifi/ssidshort "$_ssid"
 					cMS 	/publicwifi/ssid "$sNewSSID"
 					h_line	publicwifi/ssid "$sNewSSID"
 					sNewSSID="" # delet cached SSID
 				else	
-					cMqttReply ERROR "SSID is empty (rc=$ssh_rc,msg=$ssh_msg)"
+					cMR ERROR "SSID is empty (rc=$ssh_rc,msg=$ssh_msg)"
 				fi
 				;;
 			ffcond)
@@ -1324,9 +1328,9 @@ EOF
 				cTrustGET
 				cGetPubIF # also sets sPubIfs and sSsidBase
 				cSsh '{ for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | tee $dCache/wifis ; echo ++++++++++++ ; iwinfo | grep sPubIf0'
-				ifresult="$(e "$ssh_data" | grep -A 3 '++++++++++' | grep -m 2 "client0 *ESSID:" )"
-				cErrAndExit "UNFINISHED CODE"
-				if echo "$ssh_data" | grep -A 9 -w '6e:a3:09:ea:31:e00' | grep -w "SSID:.$sSsidBase"
+				ifresult="$(cOut|grep -A 3 '++++++++++' | grep -m 2 "client0 *ESSID:" )"
+				cErrAndExit "UNFINISHED CODE" # FIXME
+				if cOut|grep -A 9 -w '6e:a3:09:ea:31:e00' | grep -w "SSID:.$sSsidBase"
 				then
 					# client0   ESSID: "muenchen.freifunk.net/welt"
 					cEcho "To be upped..."
@@ -1347,11 +1351,11 @@ EOF
 				cmd="channel24"
 				if [ "$_val" ] ; then
 					if [ "$(e "$_val" | trd "[0-9]" )" ] || [ "$_val" -lt 1 -o "$_val" -gt 13 ] ; then
-						cMqttReply ERROR "Illegal channel value: $_val"
+						cMR ERROR "Illegal channel: $_val"
 						continue
 					else
 						_r0=wireless.radio0.channel
-						cMqttReply ONGOING "Setting $_r0=$_val (if=$sPubIf0,$sPubIf1)"
+						cMR ONGOING "Setting $_r0=$_val (if=$sPubIf0,$sPubIf1)"
 						cSsh "uci set $_r0=$_val && wifi up && sleep $nWifiSleep && iwinfo $sPubIf0 info | grep -w Channel 2>&1" # FIXME: ignoring any 2nd interface # iwinfo $sPubIf0 info
 						dbg "_result=****$ssh_data****"
 					fi
@@ -1366,11 +1370,13 @@ EOF
 				[ "$_val" ] || _val=$cmd
 				_val="${_val#fflimit-}"
 				cmd="limit"
+				cErrAndExit "UNIMPLEMENTED"  # FIXME
+				# FIXME: more code to be added
 				if [ "$_val" -lt 100 -a "$_val" -ne 0 ] ; then
-					cMqttReply ERROR "Illegal channel value: $_val"
+					cMR ERROR "Illegal limit value: $_val"
 					continue
 				fi
-				cMqttReply ONGOING "Setting wireless.radio0.channel=$_val"
+				cMR ONGOING "Setting wireless.radio0.channel=$_val"
 				_val="$(e "$_val" | trd -c "0-9" )" # for security reasons
 				cSsh "uci set wireless.radio0.channel=$_val && wifi up && sleep $nWifiSleep && iwinfo $sPubIf0 info | grep -w Channel 2>&1" # FIXME: ignoring any 2nd interface # iwinfo $sPubIf0 info
 				dbg "_result=****$ssh_data****"
@@ -1391,13 +1397,13 @@ EOF
 				dbg _shortssid "$_shortssid"
 				cmd="ffotherssid"
 				# further checks for allowed and legal  SSID values amongst gluon domains ....
-				if [ "$_shortssid" = OFFLINE -o "$_shortssid" = MYHOSTNAME ] || expr "$( cGetGluonDomainsStarred $hTarget )" : ".*\*${_shortssid}[*]" >$fNul ; then
+				if [ "$_shortssid" = OFFLINE -o "$_shortssid" = MYHOSTNAME ] || expr "$(cGetGluonDomainsStarred $hTarget)" : ".*\*${_shortssid}[*]" >$fNul ; then
 					# _shortssid="$(e "$_shortssid" | sed -e "s/MYHOSTNAME/$(cGetHostname $hTarget)/" )"
-					cMqttReply ONGOING "Intended SSID suffix: $_shortssid"
+					cMR ONGOING "Intended SSID suffix: $_shortssid"
 					otherssid="$sSsidBase/$_shortssid"
 					dbg INTENDEDSSID "$otherssid"
 				else
-					cMqttReply ERROR "Illegal shortssid: $_shortssid"
+					cMR ERROR "Illegal shortssid: $_shortssid"
 					cMS /gluondata/gluon-domains "$(cGetGluonDomainsStarred $hTarget)"
 					cEcho "Illegal shortssid: $_shortssid"
 					continue
@@ -1417,10 +1423,10 @@ EOF
 				if [ -z "$ssh_data" ] ; then
 					_log="error: $ssh_rc ($ssh_msg) OR ssh data empty, aborting ffotherssid command...."
 					cEcho "$_log"
-					cMqttReply ERROR "$_log"
+					cMR ERROR "$_log"
 				else
-					prev_ssid="$(e "$ssh_data" | grep -m 1 SSIDPREV: | cut -d: -f2 | xargs )"
-					sNewSSID="$( e "$ssh_data" | grep -m 1 SSIDNEW:  | cut -d: -f2 | xargs )"
+					prev_ssid="$(cOut|grep -m 1 SSIDPREV: | cut -d: -f2 | xargs)"
+					sNewSSID="$(cOut|grep -m 1 SSIDNEW:  | cut -d: -f2 | xargs)"
 					_log="previous=$prev_ssid, new=$sNewSSID"
 					if [ "$prev_ssid" = "$sNewSSID" ] ; then
 						_log="$_log (no change)"
@@ -1428,7 +1434,7 @@ EOF
 						sNewSSID=""
 					fi
 					dbg "$_log"
-					cMqttReply OK "$_log"
+					cMR OK "$_log"
 					cmdsToDo="ffstatus${cmdsToDo:+,$cmdsToDo}" # ... implicitly followed by a ffstatus
 				fi
 				;;
@@ -1436,12 +1442,12 @@ EOF
 				cTrustSET
 				cGetPubIF # sets sPubIf* and sSsidBase
 
-				cMqttReply ONGOING "Affected Interface(s): $sPubIfs"
+				cMR ONGOING "Affected Interface(s): $sPubIfs"
 				# 6 seconds needed for interface!
 				cSsh "iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; gluon-reconfigure | tail -3 ; wifi up  ; sleep $nWifiSleep ; iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDNEW/' -e '1q' "
 				dbg RECONFIGURE "$ssh_data"
-				prev_ssid="$(e "$ssh_data" | grep SSIDPREV | cut -d: -f 2 )"
-				new_ssid="$(e "$ssh_data" | grep SSIDNEW | cut -d: -f 2 )"
+				prev_ssid="$(cOut|grep SSIDPREV | cut -d: -f 2 )"
+				new_ssid="$(cOut|grep SSIDNEW | cut -d: -f 2 )"
 				cEcho "$hTarget: Ran gluon-reconfigure, previously $prev_ssid, then wifi up, then $new_ssid. id=$(id -nu)/$(id -u)\n"
 				if [ "$prev_ssid" != "$new_ssid" ] ; then
 					cmdsToDo="localclients${cmdsToDo:+,$cmdsToDo}"
@@ -1451,35 +1457,34 @@ EOF
 			site)
 				cTrustGET
 				cGetSitecode $hTarget FRESH
-				[ "$sSite" ] && echo "$sSite" || { sSite=UNKNOWN ; cMqttReply ERROR ;} #FIXME: MQTT reply missing
+				[ "$sSite" ] && echo "$sSite" || { sSite=UNKNOWN ; cMR ERROR ;} #FIXME: MQTT reply missing
 				;;
 			gluondata)
 			  os_data="$( get_os_data_semi_starred_cached $hTarget 1 )"
 			  if [ -z "$os_data" ] ; then
-			  	cMqttReply ERROR "Empty OS data"
+			  	cMR ERROR "Empty OS data"
 			  else
 			    # get all infos in one call (line by line):
 				cSsh "{ uci get autoupdater.settings.branch && uci get autoupdater.settings.enabled && uci get gluon.core.domain ;
 					lua -e 'print(require(\"platform_info\").get_model())' ; cat $dGluon/gluon-version ; cat $dGluon/release ;} 2>&1"
 	
 				cEchoPub os-data "$os_data"	
-				cEchoPub autoupdater-branch 	"$(e "$ssh_data" | sed -n 1p )"
-				cEchoPub autoupdater-enabled	"$(e "$ssh_data" | sed -n -e 2s/0/false/ -e 2s/1/true/ -e 2p )"
-				cEchoPub core-domain	"$(e "$ssh_data" | sed -n 3p )"
-				cEchoPub model	"$(e "$ssh_data" | sed -n 4p )"
-				cEchoPub gluon-version	"$(e "$ssh_data" | sed -n 5p )"				
-				cEchoPub release	"$(e "$ssh_data" | sed -n 6p )" "$(e "$ssh_data" | sed -n -e 's/^v//' -e 6p )"
+				cEchoPub autoupdater-branch 	"$(cOut|sed -n 1p )"
+				cEchoPub autoupdater-enabled	"$(cOut|sed -n -e 2s/0/false/ -e 2s/1/true/ -e 2p )"
+				cEchoPub core-domain	"$(cOut|sed -n 3p )"
+				cEchoPub model	"$(cOut|sed -n 4p )"
+				cEchoPub gluon-version	"$(cOut|sed -n 5p )"				
+				cEchoPub release	"$(cOut|sed -n 6p )" "$(cOut|sed -n -e 's/^v//' -e 6p )"
 				cEchoPub gluon-domains	"$(cGetGluonDomainsStarred $hTarget)"
 				cEchoPub site	$sSite
-
-			  	cMqttReply OK
+			  	cMR OK
 			  fi
 			  ;;
 			machine-data)
 				os_data="$(get_os_data_semi_starred_cached $hTarget 1)"
 				dbg os_data "$os_data"
 				cSsh "cat /proc/version /proc/cpuinfo"
-				_data="$(e "$ssh_data" | awk -v os_data="$os_data" '
+				_data="$(cOut|awk -v os_data="$os_data" '
 					NR==1 { linuxversion=$3 ; FS=": " }
 					/^machine|^Hardware/ { FS=": " ; printf "{*linuxversion*:*%s*,*machine*:*%s*,%s}", linuxversion ,$2, substr(os_data,2,length(os_data)-2) ; exit 0 }
 					' )"
@@ -1487,7 +1492,7 @@ EOF
 					cEcho "$_data"
 					cMS /$cmd "$_data"
 				else
-					cMqttReply ERROR "Command $cmd failed: no output."
+					cMR ERROR "Command $cmd failed: no output"
 				fi
 				;;
 			speedtest|speedtest0*)
@@ -1505,26 +1510,26 @@ EOF
 					speedtest0000)	_url=100MB.zip ;;
 					speedtest00000)	_url=1GB.zip ;;
 					*)				cErr "speedtestcmd '$speedtestcmd' to excessive or failed!"
-									cMqttReply ERROR "Last result ${_val}s or file size ${filesize}B too small."
+									cMR ERROR "Last result ${_val}s or file size ${filesize}B too small"
 									cCWrite $hTarget.lastspdcmd speedtest0
 									continue
 				esac
 				_url="http://speedtest.tele2.net/$_url"
 				# dbg SPEEDTEST "$_url ..."
-				cMqttReply ONGOING "Will try $_url"
+				cMR ONGOING "Will try $_url"
 				cSsh "date -u +%s; wget $_spparam -O - $_url | wc -c ; date -u +%s"
 				# _val="$ssh_data"
 				# dbg speedtest "*$ssh_data*, rc=$ssh_rc"
 				if [ $ssh_rc = 0 ] ; then
-					starttime="$(e "$ssh_data" | sed -n 1p )"
-					filesize="$(e "$ssh_data" | sed -n 2p )"
-					endtime="$(	 e "$ssh_data" | sed -n 3p )"
+					starttime="$(cOut|sed -n 1p )"
+					filesize="$(cOut|sed -n 2p )"
+					endtime="$(	cOut|sed -n 3p )"
 					_val="$(( endtime - starttime ))"
 					speedMB="$( awk "BEGIN { printf \"%.1f\" , $filesize*8 / ($_val+0.000001) / 1048576}" )"
 					if [ "$_val" -lt 11 -o "$filesize" -lt 10000 ] ; then
 						speedtestcmd="${speedtestcmd}0" # try next bigger size
 						dbg "Result time ${_val}s or file size ${filesize}B too small, redoing with $speedtestcmd"
-						cMqttReply ONGOING "Result ${_val}s for file size ${filesize}B too small. Retrying larger file." "*speedMb*:*$speedMB*"
+						cMR ONGOING "Result ${_val}s for file size ${filesize}B too small. Retrying larger file." "*speedMb*:*$speedMB*"
 						cmdsToDo="${speedtestcmd}${cmdsToDo:+,$cmdsToDo}"
 						cCWrite $hTarget.lastspdcmd "$speedtestcmd" # cache bigger file speedtest for next time
 					else
@@ -1534,12 +1539,12 @@ EOF
 					fi
 				else
 					cEcho "ERROR: $ssh_rc"
-					cMqttReply ERROR "{*ERROR*:*$ssh_rc*,*file*:*$_url*${sLastSpeed}}"
+					cMR ERROR "{*ERROR*:*$ssh_rc*,*file*:*$_url*${sLastSpeed}}"
 				fi
 				;;
 			status)
 				cSsh "cat /proc/uptime /proc/loadavg"
-				_tmp="$(echo "$ssh_data" | awk '
+				_tmp="$(cOut|awk '
 					NR==1 { uptime=sprintf("%d", $1) }
 					NR==2 { printf "{*uptime*:%s,*load*:%.2f}", uptime ,$1 }' )" # uptime in seconds
 				cEcho "$ssh_data"
@@ -1548,7 +1553,7 @@ EOF
 			printmap)
 				cTrustGET
 				cSsh "print_map.sh" || continue # Freifunk node info as JSON for non-Gluon systems, e.g. from Ulm
-				echo "$ssh_data" | json_pp
+				cOut|json_pp
 				cMS /$cmd "$ssh_data"
 				;;
 			localclients)
@@ -1561,11 +1566,11 @@ EOF
 				if [ $ssh_rc != 0 ] ;  then
 					_msg="Connection $sSshUser failed (rc=$ssh_rc)"
 					cErr "$_msg"
-				  	cMqttReply ERROR "$_msg"
+				  	cMR ERROR "$_msg"
 				else
-					echo "$ssh_data" | awk '$3 == "[....W.]" { printf "%s\n", $1 }' | sort > $fClients
+					cOut|awk '$3 == "[....W.]" {printf "%s\n", $1}' | sort > $fClients
 				
-					awk -- "{ print strftime(\"%Y-%m-%d_%H:%M:%S \") \$0 \" $hTarget\" ; fflush() ; next }" $fClients >> $fCollection
+					awk "{ print strftime(\"%Y-%m-%d_%H:%M:%S \") \$0 \" $hTarget\" ; fflush() ; next }" $fClients >> $fCollection
 					dbg "***" " fCollection=$fCollection ***" && cat $fCollection
 					
 					dbg "**1" " fClients=$fClients ***" && cat "$fClients"
@@ -1599,15 +1604,15 @@ EOF
 				# [ ! -d "$dGluon" ] && dbg "Not on Gluon: Skipping cmd $cmd on host $hTarget" && continue
 				ssh_rc=0
 				ffnodeip="$(cCRead $hTarget.nodeip 30)"
-				[ -z "$ffnodeip" ] && cSsh "if [ -d $dGluon ] ; then ip -f inet6 -o addr show dev $ifipv6 ; else echo NONGLUON ; fi" && ffnodeip="$(e "$ssh_data" | awk -e '{ print gensub("/.*", "", "1", $4) ; exit 0 }' )"
+				[ -z "$ffnodeip" ] && cSsh "if [ -d $dGluon ] ; then ip -f inet6 -o addr show dev $ifipv6 ; else echo NONGLUON ; fi" && ffnodeip="$(cOut|awk -e '{ print gensub("/.*", "", "1", $4) ; exit 0 }' )"
 				if [ $ssh_rc = 1 -o "$ffnodeip" = NONGLUON ] ; then
 					cErr "Command $cmd aborted, ssh_rc=$ssh_rc, remote call: $ssh_data"
-				  	cMqttReply ERROR "Remote node IP undeterminable"
+				  	cMR ERROR "Remote node IP undeterminable"
 					[ $ssh_rc = 1 ] && cCWrite $hTarget.nodeip NONGLUON
 					continue
 				elif [ $ssh_rc != 0 ] ; then
 					cErr "Remote node IP :$ffnodeip: empty / ssh_rc=$ssh_rc ($ssh_msg). Cmd $cmd aborted..."
-				  	cMqttReply ERROR " of remote node undeterminable"
+				  	cMR ERROR "IP of remote node undeterminable"
 					continue
 				fi
 				cCWrite $hTarget.nodeip "$ffnodeip" # cache the value
@@ -1620,7 +1625,7 @@ EOF
 				dbg "Had called $cGNI $ffnodeip (rc=$ssh_rc,_rsize=$_rsize)"
 				if [ "$_rsize" -le 1 ]  ;  then
 					cErr "Connection or gluon-neighbour-info failed: Command $cmd on node ip $ffnodeip failed..."
-					cMqttReply ERROR "result empty (rc=$ssh_rc,ssh_data=$ssh_data)"
+					cMR ERROR "result empty (rc=$ssh_rc,ssh_data=$ssh_data)"
 				else
 					cCWrite $hTarget.$cmd "$ssh_data" # cache the whole data to support change detection some time
 					cEcho "$ssh_data"
@@ -1651,7 +1656,7 @@ EOF
 					cMqtt "$sSite/$hTarget/$cmd" "$ssh_data"
 					[ "$bQuiet" ] || printf %b "$ssh_data" | json_pp
 				else
-					cMqttReply ERROR "result empty (rc=$ssh_rc)"
+					cMR ERROR "result empty (rc=$ssh_rc)"
 					cErr "ssh to $sSshUser failed."
 				fi
 				;;
@@ -1659,18 +1664,18 @@ EOF
 				cTrustGET
 				cSsh 'free -t | trd -c "0-9 a-zA-Z:\n"'
 				cEcho "$ssh_data"
-				cMS /$cmd "$(e "$ssh_data" | cTableToJSON 1 )"
+				cMS /$cmd "$(cOut|cTableToJSON 1)"
 				;;
 			mountsizes|mountsizes_prev)
 				cTrustGET
 				[ $cmd != "mountsizes_prev" ] && cSsh "df -Ph -T" # little workaround to have 2 datas when using "install"
 				cmd="mountsizes"
 				if [ $ssh_rc -ne 0 ] ; then
-					cMqttReply ERROR "result empty (rc=$ssh_rc)"
+					cMR ERROR "result empty (rc=$ssh_rc)"
 					cErr "ssh to $sSshUser for $cmd failed."
 				else
 #				elif cCmv jq ; then		
-					_data="$(e "$ssh_data" )"
+					_data="$ssh_data"
 					cEcho "$_data"
 					_data="$(e "$_data" | sed -e 's/\([0-9]\)\.0K/\1K/g' | grep -E '^/|overlay' | awk 'BEGIN{print"["} END{print"]"} { print lim "{*mountpoint*:*" $7 "*,*type*:*"$2"*,*filesystem*:*"$1"*,*spaceavail*:*"$5"*,*spaceused*:*"$4"*,*percentused*:*"$6 "*,*spacetotal*:*" $3 "*}" ; lim="," }' )"
 #					_data="$(e "$_data" | jq -R -s '
@@ -1682,7 +1687,7 @@ EOF
 					cMqtt "${sSite:-UNSET}/$hTarget/$cmd" "$_data"
 #				else	
 #					_l="jq missing"
-#					cMqttReply ERROR "$_l"
+#					cMR ERROR "$_l"
 #					cErr "$_l for $cmd"
 				fi
 				;;
@@ -1692,12 +1697,12 @@ EOF
 				;;
 			reboot)
 				cTrustSET
-				cMqttReply ONGOING "Will run /sbin/reboot."
+				cMR ONGOING "Will run /sbin/reboot."
 				if cSsh "/sbin/reboot" ; then
-					cMqttReply OK # might not even get here if run locally ...
+					cMR OK # might not even get here if run locally ...
 				else
 					cErr "reboot for $sSshUser failed (rc=$ssh_rc)"
-					cMqttReply ERROR "call failed (rc=$ssh_rc)"
+					cMR ERROR "call failed (rc=$ssh_rc)"
 				fi
 				;;
 			wifiscan)
@@ -1725,10 +1730,10 @@ EOF
 							} ' )"
 					cEcho "$_data"
 					cMS /$cmd "$_data"
-					# cMqttReply OK "$_data"
+					# cMR OK "$_data"
 				else
 					cEcho "ssh command $cmd failed (rc=$ssh_rc)"
-					cMqttReply ERROR "rc=$ssh_rc // $_data"
+					cMR ERROR "rc=$ssh_rc // $_data"
 				fi
 				continue
 
@@ -1750,7 +1755,7 @@ EOF
 	then
 		# ... everything that's left in "$@" is taken as shell commands, too....
 		cSsh "$@"
-		echo "$ssh_data"
+		cOut
 	fi
 done
 
