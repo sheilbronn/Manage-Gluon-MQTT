@@ -90,22 +90,14 @@ cHelp() {
    Either, automatic (e.g. key-based) access to the Freifunk node using SSH or remote execution is possible." 1>&2
 }
 
-sort_and_tail_file() {
+cSortAndTailFile() {
 	cX
-	local _fn="$1"
-	local _fno=$dTmp/tf
-	local _colno="${3:-1}"
+	local fTmp=$dTmp/tf
+	local nCol="${3:-1}"
 
-	[ -r "$_fn" ] && [ -w "$_fn" ] && sort -k $((_colno+1)) "$_fn" | uniq -f "$_colno" | tail -"${2:-20}" | sort -k $((_colno+1)) > $_fno &&
-			cat "$_fno" > "$_fn" && rm -f "$_fno"
-	[ "$bVeryVerbose" ] && dbg "sort_and_tail_file($1,$2,$3): lines: $(wc -l <"$1" )"
-	}
-
-cTail() {
-	cX
-	local _fnt=$dTmp/tf
-
-	[ -r "$1" ] && [ -w "$1" ] && tail -"${2:-20}" "$1" > "$_fnt" && cat "$_fnt" > "$1" && rm -f "$_fnt"
+	[ -r "$1" ] && [ -w "$1" ] && sort -k $((nCol+1)) "$1" | uniq -f "$nCol" | tail -"${2:-20}" | sort -k $((nCol+1)) > $fTmp &&
+			cat "$fTmp" > "$1" && rm -f "$fTmp"
+	[ "$bVeryVerbose" ] && dbg "cSortAndTailFile($1,$2,$3): lines: $(wc -l <"$1")"
 	}
 
 cExtractVals() {
@@ -115,43 +107,23 @@ cExtractVals() {
 	e "$_tmp"
 	}
 
-cUciQuery() { # query/show (possibly) many UCI values from a host and return them all
-	cSsh "uci show $1"
-	cOut
-	return $ssh_rc
-	}
+cGetOSData() {
+	local _val="$(cCRead $1.os_data 1 )"
 
-cUciGet() {
-	cSsh "{ uci get $1 ; ${2:+uci get $2;} ${3:+uci get $3;} } 2>&1"
-	cOut
-	return $ssh_rc
-	}
-
-query_and_extract_uci_on_host() { # query the FIRST of possibly many UCI values from a host and return its value
-	cSsh "uci show $1"
-	local _tmp="$(cOut|xargs -n 1 )" && _tmp="${_tmp#*=}" # FIXME for ash !
-	dbg "query_and_extract_uci_on_host returns: <$_tmp>" 1>&2
-	cOut
-	return $ssh_rc
-	}
-
-get_os_data_semi_starred_cached() {
-	local _result="$(cCRead $1.os_data 1 )"
-
-	if [ -z "$_result" ] ; then
+	if [ -z "$_val" ] ; then
 		cSsh "cat /usr/lib/os-release" || return $?  # cancel func
 		if [ "$ssh_data" ] ; then
 			cCWrite $1.os_data_lined "$ssh_data" # keep it for now, dont need it yet
-			_result="$(cOut|awk -F= '
+			_val="$(cOut|awk -F= '
 				BEGIN { lim="{*os*:{" } END {printf "}}"}
 				{ printf lim "*" tolower($1) "*:" gensub("\"", "*", "g", $2)  ; lim="," }' )" # generate new value
-			 cCWrite $1.os_data	"$_result"  # cache new values if successfully obtained
+			 cCWrite $1.os_data	"$_val"  # cache new values if successfully obtained
 			 cCWrite $1.os_pretty_name	"$(cOut|awk -F=  '/^PRETTY_NAME=/ {print gensub("\"", "", "g", $2) }' )"
 			 cCWrite $1.os_name	"$(cOut|awk -F=  '/^NAME=/ {print gensub("\"", "", "g", $2) }' )"
 			 cCWrite $1.os_id	"$(cOut|awk -F=  '/^ID=/ {print gensub("\"", "", "g", $2) }' )"
 		fi
 	fi
-	printf %b "$_result"
+	printf %b "$_val"
 	}
 
 cGetSitecode() { # $1=host $2=cachetimeout
@@ -586,7 +558,7 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 			return 0
 		fi
 		dbg announce_disco ": WILL ANNOUNCE ... (\$1=$1, \$2=$2, bForceMQTTAnnounce=$bForceMQTTAnnounce)"
-		os_data="$(get_os_data_semi_starred_cached $hTarget 1 )" # refresh data from host if old or no data available
+		os_data="$(cGetOSData $hTarget 1 )" # refresh data from host if old or no data available
 		ad_devname="$(e "$1" | awk '{print toupper(substr($i,1,1)) substr($i,2) }' )"
 		ad_fwid="$(cCRead $hTarget.os_id 9 )"
 		ad_fwname="$(cCRead $hTarget.os_name 9 )"
@@ -829,7 +801,8 @@ do
 	fTmpMqtt="$dTmp/mqtt.$ffhost"
 	sNewSSID=""
 	if [ "$sUciQuery" ] ; then
-		_val="$(cUciQuery "$sUciQuery")"
+		cSsh "uci show $1"
+		_val="$ssh_data"
 		if [ "$bDoAll" ] ; then
 			echo "$_val"
 		else
@@ -888,7 +861,7 @@ do
 			trap 'trap_function' INT QUIT TERM SEGV
 		fi
 		# NB: OpenHab Homie autodiscovery doesn't like uppercase characters at the beginning...
-		[ "$homie" ] && os_data="$(get_os_data_semi_starred_cached $hTarget 1 )" && homie="$(cLower $hTarget)" &&
+		[ "$homie" ] && os_data="$(cGetOSData $hTarget 1 )" && homie="$(cLower $hTarget)" &&
 			 [ "$cmdsToDo" != "homie-delete" ] && announce_disco "$homie"
 
 		dbg LOOP "START (cmdsToDo=$cmdsToDo)"
@@ -1064,7 +1037,7 @@ do
 					fCopy="$0"
 				fi
 
-				os_data="$(get_os_data_semi_starred_cached $hTarget 1)"
+				os_data="$(cGetOSData $hTarget 1)"
 				dbg "$os_data"
 
 				cSsh "df -Ph -T" ; _sizedata="$ssh_data" # TODO: duplicated code from "mountsizes", cache result for later
@@ -1095,15 +1068,15 @@ do
 				[ $ssh_rc -ne 0 ] && { cEcho "cSsh failed: $_cmd, aborting ..." ; continue ;}
 
 				# now comes a Gluon-specific part - determine Gluon by checking for the UCI entry autoupdater_branch
-				autoupdater_branch="$(cUciGet autoupdater.settings.branch)"
-				dbg autoupdater_branch "$autoupdater_branch"
-				if [ -z "$autoupdater_branch" -o -z "$bDoAll" ] ; then  # is probably Non-Freifunk					
-					cEcho "Done installing for target $hTarget (autoupdater_branch=$autoupdater_branch,bDoAll=$bDoAll)..."
+				cSsh "uci get autoupdater.settings.branch"
+				dbg autoupdater_branch "$ssh_data"
+				if [ -z "$ssh_data" -o -z "$bDoAll" ] ; then  # is probably Non-Freifunk					
+					cEcho "Done installing for target $hTarget (autoupdater_branch=$ssh_data,bDoAll=$bDoAll)..."
 					ssh_data="$_sizedata" # inject the previously saved size data
 					cmdsToDo="mountsizes_prev${cmdsToDo:+,$cmdsToDo},mountsizes"
-					continue # exit here
+					continue # exit install here
 				fi
-				cCWrite $hTarget.autoupdater_branch "$autoupdater_branch"
+				cCWrite $hTarget.autoupdater_branch "$ssh_data"
 				
 				if [ "" ] ; then # skip for now
 					cEcho "autoupdater config found ... assuming Gluon node ... add firewall rules for incoming MQTT..."
@@ -1460,7 +1433,7 @@ EOF
 				[ "$sSite" ] && echo "$sSite" || { sSite=UNKNOWN ; cMR ERROR ;} #FIXME: MQTT reply missing
 				;;
 			gluondata)
-			  os_data="$( get_os_data_semi_starred_cached $hTarget 1 )"
+			  os_data="$( cGetOSData $hTarget 1 )"
 			  if [ -z "$os_data" ] ; then
 			  	cMR ERROR "Empty OS data"
 			  else
@@ -1481,7 +1454,7 @@ EOF
 			  fi
 			  ;;
 			machine-data)
-				os_data="$(get_os_data_semi_starred_cached $hTarget 1)"
+				os_data="$(cGetOSData $hTarget 1)"
 				dbg os_data "$os_data"
 				cSsh "cat /proc/version /proc/cpuinfo"
 				_data="$(cOut|awk -v os_data="$os_data" '
@@ -1764,7 +1737,7 @@ if [ "$nCollectedSumOfClients" ] ; then
 	cMqtt "$sArea/publicwifi/allclientscount" $nCollectedSumOfClients
 
 	if [ "$fCollection" ] ; then
-		sort_and_tail_file "$fCollection" 18 1
+		cSortAndTailFile "$fCollection" 18 1
 		dbg fCollection "$fCollection:" && cat "$fCollection"
 		if cCmv join && [ -r $fMacIDs ]; then
 			_ccwn_fn="${fCollection}_with_names"
