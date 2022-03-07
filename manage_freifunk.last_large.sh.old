@@ -1,0 +1,612 @@
+#!/usr/bin/env ash
+# shellcheck shell=ash
+
+# password=$(cat password_file)
+# uci set wireless.@wifi-iface[0].encryption=psk
+# uci set wireless.@wifi-iface[0].key="$password"
+# uci commit wireless
+# wifi
+
+# echo $SHLVL
+
+# Some local settings, ....
+ffhost1="Alt-Solln.fritz.box"            ## FF MUC #r 192.168.178.63   
+ffhost2="TL-WR710N-A-Freifunk.fritz.box" ## FF oag #u 192.168.178.111
+ffhost5="dionysos-e"                     ## dionysos ueber Alt-Solln
+ffhost6="hera-e"                         ## hera ueber Alt-Solln
+ffhost7="odysseus-e"                     ##  ueber Alt-Solln
+ffhost8="dionysos-e"                     ##  ueber Alt-Solln
+ffhost9="archimedes-e"                   ##  ueber Alt-Solln
+ffssid1="muenchen.freifunk.net/muc_sued"               
+ffssid1="6e:a3:09:ea:31:e0"               
+# ffssid8="muenchen.freifunk.net/muc_sued"               
+# ffssid8="7a:15:ce:0b:36:90"               # Dionysos
+# ffssid9="muenchen.freifunk.net/muc_sued"               
+# ffssid9="62:77:91:c6:73:d0"               # Archimedes
+ffssid2="ostallgaeu.freifunk.net"
+ffssid2="12:fe:ed:4b:a0:14"
+wifisleep="7" # seconds to sleep after "wifi up"
+uci_opt_ssid1="wireless.wan_radio0"
+uci_opt_ssid2="wireless.radio0_lan"
+ff_if_pub1="client0"
+ff_if_priv1="wlan0-1"
+ff_if_pub2="wlan0-1"
+ff_if_priv2="wlan0-2"
+phonefile="/srv/openhab2-conf/phones"
+
+# By design! This will limit security and escaping problems
+set -o noglob
+scriptname="${0##*/}"
+
+ssid_len=9
+ifipv6="bat0"
+ffssid=".*"
+uci_opt_ssid="$uci_opt_ssid1"
+ff_if_pub="$ff_if_pub1"
+ff_if_priv="$ff_if_priv1"
+
+# ping Alt-Solln and up/down own public if accordingly
+# ( ping -c 3 2001:608:a01:103:62e3:27ff:febd:b8ba && echo yes ) || echo no    
+# ( ping -c 3 2001:608:a01:103:62e3:27ff:febd:b8be && ( ( iwinfo | fgrep client0 ) || ( wifi up ; echo wifi upped. ) )  ) || ( iw dev client0 del ; echo if downed )
+# scan repeatedly for Alt-Solln's public Wifi and up/down own public if accordingly:
+# ( { for i in 1 1 1 1 2 ; do iw dev mesh0 scan ; sleep $i ; done } | fgrep -w '6e:a3:09:ea:31:e1' && ( ( iwinfo | fgrep client0 ) || ( wifi up ; echo wifi upped. ) )  ) || ( iw dev client0 del ; echo if downed )
+# ( { for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | egrep -A 9 -w '6e:a3:09:ea:31:e0' | grep SSID:.muenchen.freifunk.net/muc_sued && ( ( iwinfo | fgrep client0 ) || ( wifi up ; echo wifi upped. ) )  ) || ( iwinfo | fgrep client0 && iw dev client0 del ; echo if downed )
+
+show_help() {
+	cat << EOF
+   Usage: $scriptname ...
+   Execute arbitrary as well as predefined commands on Freifunk routers using uci and filter Wifi scans.
+   Automatic (e.g. key-based) access to the Freifunk node using SSH is assumed.
+EOF
+}
+
+sort_and_tail_file() {
+	local __tmpfile="$prefixtmp.tailfile.$$"
+	local __fn="$1"
+	local __tailcnt=${2:-20}
+	local __colno=${3:-1}
+
+	# NB: No protection against race condition on "$1" !!
+	# cat $__fn > $__tmpfile.x
+	[ -r "$__fn" ] && [ -w "$__fn" ] && sort -k "$(( $__colno + 1 ))" "$__fn" | uniq -f "$__colno" | tail -"$__tailcnt" | sort  -k "$(( $__colno + 1 ))" > $__tmpfile \
+		&& cat "$__tmpfile" > "$__fn" && rm -f "$__tmpfile"	
+	# set +o noglob
+}
+
+tail_file() {
+	local __tmpfile="$prefixtmp.tailfile.$$"
+	local __fn="$1"
+	local __tailcnt=${2:-20}
+
+	set -o noglob
+	# NB: No protection against race condition on "$1"
+	[ -r "$__fn" ] && [ -w "$__fn" ] && tail -"$__tailcnt" "$__fn" > $__tmpfile && cat "$__tmpfile" > "$__fn" && rm -f "$__tmpfile"	
+	set +o noglob
+}
+
+extract_uci_values() {
+	# set -x
+	# echo "extract_uci_values got: <$*>" 1>&2
+	# echo aaa "$*" bbb | xargs -n 1 | sed 's/.*=//g' 1>&2
+	local __fresult="$( echo "$@" | xargs -r -n 1 | sed 's/.*=//g' )"
+	# echo "extract_uci_values returns: <$__fresult>" 1>&2
+	echo "$__fresult"
+}
+
+query_uci_on_host() {
+	local __lines="$( $ssh_cmd "uci show $1" )"
+	# echo "lines: $__lines" 1>&2
+	echo "$__lines"
+}
+
+get_uci_on_host() {
+	local __lines="$( $ssh_cmd "uci get $1" )"
+	echo "$__lines"
+}
+
+query_and_extract_uci_on_host() {
+	local __fresult="$($ssh_cmd "uci show $1" | xargs -r -n 1 | sed 's/.*=//g' )"
+	# echo "extract_uci_values returns: <$__fresult>" 1>&2
+	echo "$__fresult"
+}
+
+error_and_exit() {
+	echo "$scriptname: $*" 1>&2
+	exit 1
+}
+
+publish_to_mqtt() {
+	# echo "$ffhostbasename"
+	{ [ -n "$mqtthost" ] && [ "$cmd_mospub" = "true" ] ; } || { $cmd_mospub -h $mqtthost -t "ffmuc/$1" -m "$2" $3 ; }
+}
+
+# Initialize our own variables:
+OPTIND=1         # Reset in case getopts has been used previously in the shell.
+quiet=""
+verbose=""
+
+all_of_lines=""
+password_key_skip=""
+commands="" # commands="mesh-id"
+option_to_query=""
+write_val=""
+trans_pos=0
+trans_char="_"
+tempo_speed=""
+do_mqtt () { return 1 ; } # by default, dont do mqtt, unless option -m is given
+if command -v "mosquitto_pub" >/dev/null ; then
+	cmd_mospub="mosquitto_pub"
+else
+	cmd_mospub="true" 
+	echo "WARNING: mosquitto_pub is missing!" 2>&1
+fi 
+
+if [ -r /lib/gluon/gluon-version ] ; then # on Gluon   (need to made more granular for OpenWrt..)
+	gluon="y"
+	mqtthost="test.mosquitto.org"
+	jsonfilter="jsonfilter -e"
+	json_pp="cat"
+	ffhosts="localhost"
+	phonefile="/tmp/phones"
+else                                      # on rest-of-world (e.g. Raspi)
+	gluon=""
+	mqtthost="localhost"
+	jsonfilter="jq -r"
+	json_pp="json_pp"
+	ffhosts="$ffhost1"
+	phonefile="/srv/openhab2-conf/phones"
+fi
+
+prefixtmp="/tmp/ffmf.$(id -nu)"
+debugfile="$prefixtmp.debug"
+tmpfilemqtt="$debugfile.$$"
+clientcollection="$prefixtmp.clients"
+echo "$0" > $debugfile 
+
+if [ $# -eq 0 ]
+then
+        show_help
+        exit 1 # was 0
+fi
+
+# https://wiki.bash-hackers.org/howto/getopts_tutorial
+while getopts "?h:gqv1256789at:skf:m:n:c:o:w:p:z:A:V:J:" opt   #    "?h:gqv1256789at:skmn:c:o:w:p:z:A:V:J:" 
+do
+    case "$opt" in
+    \?) show_help
+        exit 1
+        ;;
+    h)  ffhosts="$OPTARG" # work on named Freifunk node
+		if [ "$ffhosts" = "*" -o "$ffhosts" = "+" ] ; then
+			ffhosts="alt-solln,hera-e,archimedes-e,phoebe-e,odysseus-e,dionysos-e,ulmer"
+			collectedsumofclients=0 # start collecting if non-empty string in collectedsumofclients
+			collectedclients=""
+		fi
+	    ffssid="$ffssid1"
+        ;;
+    g)  givehost=yes
+		;;
+    q)  quiet=yes
+		;;
+    v)  verbose=yes
+		set -o xtrace
+        ;;
+    1)  ffhost="$ffhost1" # switch to first Freifunk host
+				# uci_opt_ssid="$uci_opt_ssid1"
+				# ff_if_pub="$ff_if_pub1"
+				# ff_if_priv="$ff_if_priv1"
+				ffssid="$ffssid1"
+        ;;
+    5)  ffhost="$ffhost5" # work on Dionysos
+				ffssid="$ffssid1"
+        ;;
+    6)  ffhost="$ffhost6" # work on Hera
+				ffssid="$ffssid1"
+        ;;
+    7)  ffhost="$ffhost7" # work on Odysseus
+				ffssid="$ffssid1"
+        ;;
+    8)  ffhost="$ffhost8" # switch to eighth Freifunk host
+				uci_opt_ssid="$uci_opt_ssid1"
+				ff_if_pub="$ff_if_pub1"
+				ff_if_priv="$ff_if_priv1"
+				ffssid="$ffssid1"
+        ;;
+    9)  ffhost="$ffhost9" # switch to nineth Freifunk host
+				uci_opt_ssid="$uci_opt_ssid1"
+				ff_if_pub="$ff_if_pub1"
+				ff_if_priv="$ff_if_priv1"
+				ffssid="$ffssid1"
+        ;;
+    2)  ffhost="$ffhost2" # switch to second Freifunk host
+				uci_opt_ssid="$uci_opt_ssid2"
+				ff_if_pub="$ff_if_pub2"
+				ff_if_priv="$ff_if_priv2"
+				ffssid="$ffssid2"
+				ifipv6="br-freifunk"
+        ;;
+    a)  all_of_lines=yes
+		;;
+    t)  tempo_speed="$OPTARG" 
+        ;;
+	s)  option_to_query="$uci_opt_ssid".ssid
+		;;
+	k)  password_key_skip=yes
+		option_to_query="$uci_opt_ssid".ssid
+		;;
+	f)  filetocopy="$OPTARG"
+		;;
+	m)  mqtthost="$OPTARG"
+		;;
+	n)  ffssid="$OPTARG"
+		;;
+    c)  commands="$OPTARG" # arg of the current option
+        ;;
+    o)  option_to_query="$OPTARG"
+		# echo option_to_query="$option_to_query"
+        ;;
+    w)  write_val="$OPTARG"
+		# echo write_val="$write_val"
+        ;;
+    p)  trans_pos="$OPTARG"
+		# echo trans_pos="$trans_pos"
+		option_to_query="$uci_opt_ssid".ssid
+        ;;
+    z)  trans_char="$OPTARG"
+		# echo trans_char="$trans_char"
+        ;;
+	A)  trans_pos=7
+		[ "$OPTARG" ] && trans_char="$opt" || trans_char="_"
+		option_to_query="$uci_opt_ssid".ssid
+		;;
+	V)  trans_pos=8
+		[ "$OPTARG" ] && trans_char="$opt" || trans_char="_"
+		option_to_query="$uci_opt_ssid".ssid
+		;;
+	J)  trans_pos=9
+		[ "$OPTARG" ] && trans_char="$opt" || trans_char="_"
+		option_to_query="$uci_opt_ssid".ssid
+		;;
+    esac
+done
+
+shift "$((OPTIND-1))"   # Discard the options and sentinel --
+
+[ -n "$ffhost" ] && ffhosts="$ffhost" # A single host for ffhost overrules multiple ones from -h
+
+for ffhost in $(echo "$ffhosts" | tr -s "," " ") # ${ffhosts//,/ }   #  for each host 
+do
+	# set -v
+	ffuser="root@$ffhost"
+	if [ "$ffhost" = "localhost" ] ; then
+		ssh_cmd="sh -c"
+		ffhostbasename="$( uci get system.@system[0].hostname | tr "A-Z" "a-z" )" # tr on BusyBox is limited ...
+	else
+		ssh_cmd="ssh -T $ffuser" 
+		ffhostbasename=$( echo "$ffhost" | tr "A-Z" "a-z" | sed -e 's/\..*//' -e 's/-e$//' ) # remove trailing "-e"
+	fi
+	# mqttprefix="ffmuc/$ffhostbasename"
+
+	{ [ "$verbose" ] || [ "$givehost" ] ; } && echo "######  $ffuser / $ffhostbasename / $command / " "$@" "######"
+
+	# [ "$quiet" ] && printf "As %s. \n" $ffuser
+
+	if [ "$filetocopy" ] ; then
+		scp -p "$filetocopy" "$ffuser":/sbin
+
+	elif [ -n "$option_to_query" ]  ### test -n
+	then
+		uci_val="$(query_uci_on_host $option_to_query)"
+
+		if [ "$all_of_lines" ] ; then
+			echo "$uci_val"
+			exit 0
+		fi
+		
+		uci_val="$(extract_uci_values "$uci_val")"
+
+		if  [ "$trans_pos" -gt 0 ]   #   test "$trans_pos" -gt 0 
+		then
+			# mask the SSID with a new char at pos $trans_pos
+			[ "$quiet" ] || echo uci_val="$uci_val" 1>&2
+			uci_val_left=$( echo "$uci_val"__________ | cut -c 1-$(( trans_pos-1 )) )
+			uci_val_right=$( echo "$uci_val" | cut -c $(( trans_pos+1 ))-99 )
+			write_val="$uci_val_left$trans_char$uci_val_right"
+			[ "$quiet" ] || echo write_val="$write_val" 1>&2
+			[ "$password_key_skip" ] || wifi_password="3456$(echo "$write_val" | md5sum | cut -b 1-4 )"
+		fi
+
+		if [ -z "$write_val" ]
+		then
+			echo "$uci_val" # it was a query only!
+		elif [ "$( echo "$uci_val" | wc -l )" -gt 1 ] ; then
+			error_and_exit "key <$option_to_query> had returned more than one line!"
+		else
+			$ssh_cmd "uci set $option_to_query=$write_val" 
+			$ssh_cmd "uci commit $option_to_query" 
+			if [ -n "$wifi_password" ]
+			then
+				$ssh_cmd "uci set $uci_opt_ssid.key=$wifi_password" 
+				$ssh_cmd "uci commit $uci_opt_ssid.key" 
+				echo "changed wireless key..." 1>&2
+			fi
+			if echo "$option_to_query" | grep -q "^wireless.*" ; then
+				echo "wireless restart" 1>&2
+				$ssh_cmd "wifi"
+			fi
+			echo $option_to_query was changed: "$(query_uci_on_host $option_to_query)". 1>&2
+		fi
+	else
+
+		# if [[ -n "$command" ]]
+		# then
+		for command in $( echo "$commands" | tr -s "," " " ) #  on bash: ${commands//,/ }
+		do
+			case "$command" in
+			sh)
+				ssh $ffuser # start a shell
+				;;
+			ffdown)
+				# $ssh_cmd "ip link set $ff_if_pub down" # stop Freifunk public interface
+				# printf "Ran ip link set $ff_if_pub down\n" 
+				# $ssh_cmd "wifi down" # stop Freifunk public interface
+				$ssh_cmd "iw dev $ff_if_pub del" # stop Freifunk public interface
+				echo "$ffhostbasename: Ran wifi down: $ff_if_pub"
+				;;
+			ffup)
+				# $ssh_cmd "ip link set $ff_if_pub up" # start Freifunk public interface
+				new_ssid=$( $ssh_cmd "wifi up ; sleep $wifisleep ; iwinfo $ff_if_pub info | sed -e 's/[^:]*: //'  -e '1q' "  ) # start all wifi interfaces
+				# $ssh_cmd "wifi reload" # reload all wifi interfaces
+				echo "$ffhostbasename: Ran wifi up. Now $new_ssid. id=$(id -nu)/$(id -u)" 
+				publish_to_mqtt "$ffhostbasename/ssid" "$( printf "$new_ssid" | sed -e 's/\"//g' -e 's,.*/,,')"
+				;;
+			ffotherssid|ffotherssid1|ffotherssid2)
+				# $ssh_cmd "ip link set $ff_if_pub up" # start Freifunk public interface
+				otherssid="muenchen.freifunk.net/muc_cty"
+				otherkey="aaaaaaaa"
+				case "$command" in
+					ffotherssid1) otherssid="muenchen.freifunk.net/muc_cty" 	;;
+					ffotherssid2) otherssid="muenchen.freifunk.net/muc_nord"	;;
+				esac
+				result=$( $ssh_cmd "iwinfo $ff_if_pub info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; uci set wireless.client_radio0.ssid=$otherssid ; wifi up ; sleep $wifisleep ; iwinfo $ff_if_pub info | sed -e 's/: /:/' -e '1q' " 2>&1 )
+				#### uci set wireless.client_radio0.ssid=$otherkey ; uci set wireless.client_radio0.encryption=psk2 ; 
+				#### while true ; do sleep 1 ; date ; iwinfo client0 info | grep SSID ; done
+				### result=$( ssh -i ~/.ssh/id_rsa4096_ff -o ProxyCommand="ssh -v -W [2001:608:a01:103:ee08:6bff:fe33:6940]:%p alt-solln" root@[2001:608:a01:103:ee08:6bff:fe33:6940] uname -a )
+				# echo done
+				echo "$result" >> $debugfile
+				prev_ssid=$( printf "$result" | grep SSIDPREV: | cut -d : -f 2 )
+				new_ssid=$( printf "$result" | grep ESSID: | cut -d : -f 2 )
+				printf "%s: Set ssid=%s, then wifi up. Then $new_ssid. // id=$(id -nu)/$(id -u)\n" "$ffhostbasename" "$otherssid"
+				[ -n "$new_ssid" ] && publish_to_mqtt "$ffhostbasename/ssid" "$(printf "$new_ssid" | sed -e 's/\"//g' -e 's,.*/,,')"
+				;;
+			ffgluonreconfigure)
+				# $ssh_cmd "ip link set $ff_if_pub up" # start Freifunk public interface
+				# 6 seconds needed for interface!
+				result=$( $ssh_cmd "iwinfo $ff_if_pub info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; gluon-reconfigure | tail -3 ; wifi up  ; sleep $wifisleep ; iwinfo $ff_if_pub info | sed -e 's/: /:/' -e '1q' " )
+				prev_ssid=$( printf "$result" | grep SSIDPREV | cut -d : -f 2 )
+				new_ssid=$( printf "$result" | grep ESSID | cut -d : -f 2 )
+				printf "$ffhostbasename: Ran gluon-reconfigure,then wifi up, then $new_ssid. id=$(id -nu)/$(id -u)\n" 
+				[ -n "$new_ssid" ] && publish_to_mqtt "$ffhostbasename/ssid" "$(printf $new_ssid | sed -e 's/\"//g' -e 's,.*/,,' )"
+				;;
+			ffssid)
+				new_ssid=$( $ssh_cmd "iwinfo $ff_if_pub info" | sed -e 's/[^:]*: //' -e '1q'  )
+				echo "$new_ssid" >> $debugfile
+				# echo done
+				printf "$ffhostbasename: Has $new_ssid. (id=$( id -nu) $( id -u ) )\n" 
+				[ -n "$new_ssid" ] && publish_to_mqtt $ffhostbasename/ssid "$(printf $new_ssid | sed -e 's/\"//g' -e 's,.*/,,' )"
+				;;
+			mesh-id)
+				__result="$(query_uci_on_host wireless ) "  # might be different on different gluon versions ...
+				_result="$( echo  "$__result" | grep -i mesh_id )" # using backticks purposely kills single-quotes!
+				extract_uci_values $_result
+				# sed -e 's/^.*=.//' -e 's/.$//'
+				publish_to_mqtt "$ffhostbasename/$command" "$( extract_uci_values $_result )"
+				;;
+			branch)
+				newval=$( get_uci_on_host autoupdater.settings.branch )
+				echo "$newval"
+				publish_to_mqtt "$ffhostbasename/$command" "$newval"
+				;;
+			gluon-core-domain)
+				newval=$( get_uci_on_host gluon.core.domain )
+				echo "$newval"
+				publish_to_mqtt "$ffhostbasename/$command" "$newval"
+				;;
+			gluon-release)
+				newval=$( $ssh_cmd "cat /lib/gluon/release 2>&1" )
+				echo "$newval"
+				publish_to_mqtt "$ffhostbasename/$command" "$newval"
+				;;
+			gluon-version)
+				newval=$( $ssh_cmd "cat /lib/gluon/gluon-version 2>&1" )
+				echo "$newval"
+				publish_to_mqtt "$ffhostbasename/$command" "$newval"
+				;;
+			router-model)
+				newval=$( $ssh_cmd "lua -e 'print(require(\"platform_info\").get_model())'" ) # requires lua!
+				echo "$newval"
+				publish_to_mqtt "$ffhostbasename/$command" "$newval"
+				;;
+			proc-version)
+				newval=$( $ssh_cmd "cat /proc/version") # info on kernel and (OpenWRT) distribution
+				echo "$newval"
+				publish_to_mqtt "$ffhostbasename/$command" "$newval"
+				;; # machine and proc-version might differ !!
+			machine)  
+				newval=$( $ssh_cmd "cat /proc/cpuinfo" | grep '^machine' | sed 's/.*: //' ) # machine type
+				echo "$newval"
+				publish_to_mqtt "$ffhostbasename/$command" "$newval"
+				;;
+			uptime)
+				newval=$( $ssh_cmd "cat /proc/uptime"  | cut -f 1 -d "." ) # uptime in seconds
+				echo "$newval"
+				publish_to_mqtt $ffhostbasename/$command "$newval"
+				;;
+			load1)  
+				newval=$( $ssh_cmd "cat /proc/loadavg" | cut -f 1 -d "." ) # average load 1 minute
+				echo "$newval"
+				publish_to_mqtt $ffhostbasename/$command "$newval"
+				;;
+			printmap)  
+				$ssh_cmd "/usr/sbin/print_map.sh" # node info as JSON # non-Gluon
+				;;
+			localclients)  
+				touch $clientcollection && chmod g+w $clientcollection
+				localclientsfile="$clientcollection.$ffhostbasename"
+				[ -r $phonefile ] || touch $phonefile
+				
+				# set -x
+				$ssh_cmd "batctl translocal" > $localclientsfile.debug
+				if [ $? = 0 ]
+				then
+					awk '$3 == "[....W.]" { printf "%s\n", $1 }' $localclientsfile.debug | sort > $localclientsfile # | join -a 1 - "$phonefile" 
+				
+					( date ; cat $localclientsfile ) >> $debugfile
+					# set -x
+					# cat $localclientsfile
+					# xargs -r -L1 bash -c 'date "+%Y-%m-%d_%T.%3N $0 '$ffhostbasename'"' < $localclientsfile >> $clientcollection
+					awk -- "{ print strftime(\"%Y-%m-%d_%H:%M:%S \") \$0 \" $ffhostbasename\" ; fflush() ; next }" $localclientsfile >> $clientcollection
+					
+					sort_and_tail_file "$clientcollection" 18 1
+					command -v join >/dev/null && sort -k 2 $clientcollection | join -1 2 -2 1 -a 1 - $phonefile | sort -r -k 1 | uniq -w 17 | sort -k 2 > "$clientcollection"_with_names
+					_lcount=$( wc -l < $localclientsfile )
+					# echo $_lcount
+
+					localclients=$( sed -e 's/ /,/' $localclientsfile | awk -F, -v lcount="$_lcount" -v hname="$ffhostbasename" 'BEGIN { printf "{\"count\":\"%s\",\"localclients\":[", lcount } { printf "{\"addr\":\"%s\",\"name\":\"%s\"}%s", $1, ($2=="")?$1:$2, ( NR<=(lcount-1) ) ? "," : "" } END { printf "],\"host\":\"%s\"}",hname }'  )
+				
+					# mosquitto_sub -v -t \# | xargs -r -d$'\n' -L1 bash -c 'date "+%Y-%m-%d %T.%3N $0"'
+					echo "$localclients"
+					publish_to_mqtt "$ffhostbasename/localclients" "$localclients"
+					[ "$collectedsumofclients" ] && collectedsumofclients=$(( collectedsumofclients + _lcount ))
+					collectedclients="$collectedclients $( xargs <  $localclientsfile  )"
+					# "$( sort -u $clientcollection.$ffhostbasename  | jq -R . | jq -c -s . )"
+					# sort -u $clientcollection.tmp $clientcollection | jq -R . | jq -c -s . | tee $clientcollection.json | $cmd_mospub -h $mqtthost -t "ffmuc/ALL/localclients" -s
+					# cat $clientcollection.tmp >> $clientcollection
+				else
+					echo "$$scriptname: Connection to $ffuser failed. Stopping for this node..." 1>&2
+				fi
+				;;
+			nodeinfo|neighbours|statistics)  
+				tmpfilejson="$prefixtmp.$ffhostbasename.$command.tmp"
+				tmpfile_routerip="$prefixtmp.$ffhostbasename.routerip"
+				# ffrouterip="fe80::ee08:6bff:fe33:6940"   #hera
+				# ffrouterip="fe80::62e3:27ff:febd:b8be" # alt-solln
+				if [ -r $tmpfile_routerip ] 
+				then
+					ffrouterip=$( cat $tmpfile_routerip ) && [ -n "$ffrouterip" ] && \
+						$ssh_cmd "gluon-neighbour-info -i br-client -p 1001 -r $command -d $ffrouterip" | tee $tmpfilemqtt
+						wc -l $tmpfilemqtt
+						returnsize=$( wc -l $tmpfilemqtt )
+				else
+					ffrouterip=$( $ssh_cmd "ifconfig $ifipv6" | awk -e '/inet6/ { print gensub("/.*","",1,$3) ; exit 0 }' | tee $tmpfile_routerip ) && \
+						$ssh_cmd "gluon-neighbour-info -i br-client -p 1001 -r $command -d $ffrouterip" | tee $tmpfilemqtt
+				fi
+				returnsize=$( wc -l < $tmpfilemqtt )
+				find "$tmpfile_routerip" -size -26c -exec rm '{}' \; # delete the file if too small
+
+				if [ -z "$ffrouterip" ]
+				then
+					echo "$scriptname: router IP :$ffrouterip: empty. Command $command failed..." 1>&2
+					rm -f $tmpfile_routerip
+				elif [ $returnsize -eq 0 ] 
+				then
+					echo "$scriptname: Connection to $ffuser or gluon-neighbour-info failed. Command $command on node ip $ffrouterip failed..." 1>&2
+					rm -f $tmpfile_routerip
+				else
+					publish_to_mqtt "$ffhostbasename/$command" "$( cat $tmpfilemqtt )"
+					[ "$command" = "statistics" ] && {
+						# node_id=$( jq -r .node_id $tmpfilemqtt )
+						# publish_to_mqtt "ffmuc/$ffhostbasename/nodeid" "$node_id" "-r"
+						### publish_to_mqtt "ffmuc/$node_id/$command"  "$( cat $tmpfilemqtt )"  "-r"
+						# publish_to_mqtt "ffmuc/$ffhostbasename/ipv6" "$ffrouterip" "-r"
+						### publish_to_mqtt "ffmuc/$node_id/ipv6"      "$ffrouterip" "-r"
+
+						[ -z "$gluon" ] && clients=$( $jsonfilter ".clients.wifi" < $tmpfilemqtt )
+						[ -n "$gluon" ] && clients=$( $jsonfilter "@.clients.wifi" < $tmpfilemqtt )
+						# cat $tmpfilemqtt
+						publish_to_mqtt "$ffhostbasename/clients" "$clients"
+						[ "$collectedsumofclients" ] && collectedsumofclients=$(( collectedsumofclients + clients ))
+						# publish_to_mqtt "ffmuc/$node_id/clients" "$clients"
+					}
+						[ -r $tmpfilejson.prev ] && mv -f $tmpfilejson.prev $tmpfilejson.old
+						[ -r $tmpfilejson      ] && mv -f $tmpfilejson $tmpfilejson.prev
+					$json_pp < $tmpfilemqtt > $tmpfilejson
+					chmod g+w $tmpfilejson
+					#  rm $tmpfilemqtt
+					find "$tmpfilemqtt" -mtime +1 -exec rm '{}' \; 
+				fi
+
+				# rm $tmpfilemqtt
+				# 33 * * * * /usr/local/bin/manage_gluon_mqtt -1 -c statistics
+				# 43 * * * * /usr/local/bin/manage_gluon_mqtt -1 -c neighbours
+				# 53 * * * * /usr/local/bin/manage_gluon_mqtt -1 -c nodeinfo
+				;;
+			show-site)  
+				tmpfilejson="$prefixtmp.$ffhostbasename.$command.old"
+				ffrouterip="fe80::62e3:27ff:febd:b8be"
+				
+				if [ -n "$( $ssh_cmd gluon-show-site | tee $tmpfilemqtt )" ]
+				then
+					node_id="$( jq -r .node_id $tmpfilemqtt )"
+					publish_to_mqtt "$ffhostbasename/$command" "$( cat $tmpfilemqtt )"
+					publish_to_mqtt "$node_id/$command"        "$( cat $tmpfilemqtt )"
+					json_pp < $tmpfilemqtt > $tmpfilejson
+					chmod g+w $tmpfilejson
+				else
+					echo "$scriptname: ssh to $ffuser" failed. Stopping...
+					exit 2
+				fi
+				# 33 * * * * /usr/local/bin/manage_gluon_mqtt -c statistics
+				# 43 * * * * /usr/local/bin/manage_gluon_mqtt -c neighbours
+				# 53 * * * * /usr/local/bin/manage_gluon_mqtt -c nodeinfo
+				;;
+			reboot)  
+				$ssh_cmd "/sbin/reboot"
+				;;
+			scandirty)  
+				# relies on the following entry in root's crontab:
+				# SHELL=/bin/bash
+				# * * * * * { /sbin/iw dev wlan0 scan ; sleep 2 ; /sbin/iw dev wlan0 scan ; sleep 2 ; /sbin/iw dev wlan0 scan ; } | fgrep SSID  | cut -d ":" -f 2 | xargs -n 1 | sort -u > /tmp/wifis.txt
+				# { for i in 2 2 2 2 ; do /sbin/iw dev wlan0 scan ; sleep $i ; done } | fgrep SSID  | cut -d ":" -f 2 | xargs -n 1 | sort -u > /tmp/wifis.new ; mv /tmp/wifis.new /tmp/wifis.txt ; date >> /tmp/wifis.txt
+				# * * * * * { for i in 1 2 1 2 ; do /sbin/iw dev wlan0 scan ; sleep $i ; done } | egrep -w '^BSS|SSID'| sed -e 's/BSS *//' -e 's/(.*//' -e 's/\t*SSID: //' -e 's/^$/./' | xargs -L2 | sort -u > /tmp/wifis.new ; mv /tmp/wifis.new /tmp/wifis.txt ; date >> /tmp/wifis.txt
+
+				grep -w "$ffssid" /tmp/wifis.txt
+				rm -f /tmp/wifis.txt.hint
+				exit 0
+				;;
+			*)
+				error_and_exit "Unknown command <$command>"
+			esac
+		done
+	fi
+	
+	if [ $# -gt 0 ]
+	then
+		# ... everything that's left in "$@" is taken as shell commands, too....
+		$ssh_cmd "$@"
+	fi
+done
+
+echo "" >/dev/null
+
+myid="mifi"
+
+[ "$collectedsumofclients" ] && {
+	publish_to_mqtt "$myid/publicwifi/allclientscount" "$collectedsumofclients"
+	publish_to_mqtt "$myid/publicwifi/allclientscount" "$collectedsumofclients"
+}
+
+[ -n "$collectedclients" ] && {
+	echo collectedclients=$collectedclients
+	id=$( cat /proc/sys/kernel/hostname 2>/dev/null || hostname || true )
+	string="$( echo "$collectedclients" | xargs -n 1 | sort | awk -F, -v id="$id" -v lcount="$collectedsumofclients" 'BEGIN { printf "{\"count\":\"%s\",\"id\":\"%s\",\"localclients\":[", lcount, id } { printf "{\"addr\":\"%s\"}%s", $1 , ( NR<=(lcount-1) ) ? "," : "" } END { printf "]}" }' )"
+	publish_to_mqtt "$myid/alllocalclients" "$string"
+}
+
+# Interfaces up / down
+# ostallgaeu
+# iwinfo wlan0-1 info > ESSID: "ostallgaeu.freifunk.net"
+# ip link set wlan0-1 down
+
+exit 0
+# End of main.

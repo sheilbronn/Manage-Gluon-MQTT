@@ -1,0 +1,229 @@
+#!/bin/sh
+
+# password=$(cat password_file)
+# uci set wireless.@wifi-iface[0].encryption=psk
+# uci set wireless.@wifi-iface[0].key="$password"
+# uci commit wireless
+# wifi
+
+# Global predefined settings
+ffhost1="Alt-Solln.fritz.box"            ## FF MUC #r 192.168.178.53
+ffhost2="TL-WR710N-A-Freifunk.fritz.box" ## FF oag #u 192.168.178.111
+uci_opt_ssid1="wireless.wan_radio0"
+uci_opt_ssid2="wireless.radio0_lan"
+ff_if_pub1="client0"
+ff_if_pub2="wlan0-1"
+
+ssid_len=9
+
+ffhost="$ffhost1"
+uci_opt_ssid="$uci_opt_ssid1"
+ff_if_pub="$ff_if_pub1"
+
+show_help() {
+	cat << EOF
+   Usage: ${0##*/} ...
+   Execute arbitrary and predefined commands on Freifunk routers using uci.
+   Automatic (e.g. key-based) access to the Freifunk using ssh is assumed.
+EOF
+}
+
+extract_uci_values() {
+	# set -x
+	# echo "extract_uci_values got: <$*>" 1>&2
+	# echo aaa "$*" bbb | xargs -n 1 | sed 's/.*=//g' 1>&2
+	local __fresult="`echo $* | xargs -n 1 | sed 's/.*=//g' `"
+	# echo "extract_uci_values returns: <$__fresult>" 1>&2
+	echo "$__fresult"
+}
+
+query_uci_on_host() {
+	local __lines="`ssh \"$ffuser\" uci show \"$1\" `"
+	# echo "lines: $__lines" 1>&2
+	echo "$__lines"
+}
+
+error_and_exit() {
+	echo "${0##*/}: $*" 1>&2
+	exit 1
+}
+
+# A POSIX variable
+OPTIND=1         # Reset in case getopts has been used previously in the shell.
+
+# Initialize our own variables:
+user="root"
+quiet=0
+verbose=0
+all_of_lines=0
+password_key_skip=0
+command=""
+option_to_query=""
+write_val=""
+trans_pos=0
+trans_char="_"
+tempo_speed=""
+
+if (($# == 0)); then
+        show_help
+        exit 1 # was 0
+fi
+
+# https://wiki.bash-hackers.org/howto/getopts_tutorial
+while getopts "h?qv12at:skc:o:w:p:z:A:V:J:" opt; do
+    case "$opt" in
+    h|\?)
+        show_help
+        exit 1
+        ;;
+    q)  quiet=1
+		;;
+    v)  verbose=1
+		set -x
+        ;;
+    1)  ffhost="$ffhost1" # switch to first Freifunk host
+				uci_opt_ssid="$uci_opt_ssid1"
+				ff_if_pub="$ff_if_pub1"
+        ;;
+    2)  ffhost="$ffhost2" # switch to second Freifunk host
+				uci_opt_ssid="$uci_opt_ssid2"
+				ff_if_pub="$ff_if_pub2"
+        ;;
+    a)  all_of_lines=1
+		;;
+    t)  tempo_speed="$OPTARG" 
+        ;;
+	s)  option_to_query="$uci_opt_ssid".ssid
+		;;
+	k)  password_key_skip=1
+		option_to_query="$uci_opt_ssid".ssid
+		;;
+    c)  command="$OPTARG" # arg of the current option
+        ;;
+    o)  option_to_query="$OPTARG"
+		# echo option_to_query="$option_to_query"
+        ;;
+    w)  write_val="$OPTARG"
+		# echo write_val="$write_val"
+        ;;
+    p)  trans_pos="$OPTARG"
+		# echo trans_pos="$trans_pos"
+		option_to_query="$uci_opt_ssid".ssid
+        ;;
+    z)  trans_char="$OPTARG"
+		# echo trans_char="$trans_char"
+        ;;
+	A)  trans_pos=7
+		(( "$OPTARG" )) && trans_char="$opt" || trans_char="_"
+		option_to_query="$uci_opt_ssid".ssid
+		;;
+	V)  trans_pos=8
+		(( "$OPTARG" )) && trans_char="$opt" || trans_char="_"
+		option_to_query="$uci_opt_ssid".ssid
+		;;
+	J)  trans_pos=9
+		(( "$OPTARG" )) && trans_char="$opt" || trans_char="_"
+		option_to_query="$uci_opt_ssid".ssid
+		;;
+    esac
+done
+
+shift "$((OPTIND-1))"   # Discard the options and sentinel --
+
+ffuser="$user@$ffhost"
+
+(( ! $quiet )) && printf "Running as %s...\n" "$ffuser"
+
+if [[ "$option_to_query" != "" ]]
+then
+	uci_val="$(query_uci_on_host $option_to_query)"
+
+	if (( $all_of_lines )) ; then
+		echo "$uci_val"
+		exit 0
+	fi
+	
+	uci_val="$(extract_uci_values "$uci_val")"
+
+	if (( "$trans_pos" > 0 )) ; then
+		# mask the SSID with a new char at pos $trans_pos
+		(( $quiet )) || echo uci_val="$uci_val" 1>&2
+		uci_val_left=`echo "$uci_val"__________ | cut -c 1-$(($trans_pos-1))` 
+		uci_val_right=`echo "$uci_val" | cut -c $(($trans_pos+1))-99` 
+		write_val="$uci_val_left$trans_char$uci_val_right"
+		(( $quiet )) || echo write_val=$write_val 1>&2
+		(( $password_key_skip )) || wifi_password="3456""`echo $write_val | md5sum | cut -b 1-4 `"
+	fi
+
+	if [[ "$write_val" == "" ]] ; then
+		echo "$uci_val" # it was a query only!
+	elif (( `echo "$uci_val" | wc -l` > 1 )) ; then
+		error_and_exit "key <$option_to_query> had returned more than one line!"
+	else
+		ssh "$ffuser" "uci set $option_to_query=$write_val" 
+		ssh "$ffuser" "uci commit $option_to_query" 
+		if [[ "$wifi_password" != "" ]] ; then
+			ssh "$ffuser" "uci set $uci_opt_ssid.key=$wifi_password" 
+			ssh "$ffuser" "uci commit $uci_opt_ssid.key" 
+			echo "changed wireless key..." 1>&2
+		fi
+		if [[ "$option_to_query" =~ ^wireless.* ]] ; then
+			echo "wireless restart" 1>&2
+			ssh "$ffuser" "wifi"
+		fi
+		echo $option_to_query was changed: "$(query_uci_on_host $option_to_query)". 1>&2
+	fi
+fi
+	
+if [[ "$command" != "" ]]; then
+    case "$command" in
+	sh)
+		ssh "$ffuser" # start a shell
+		;;
+	ffdown)
+		ssh "$ffuser" ip link set $ff_if_pub down # stop Freifunk public interface
+		;;
+	ffup)
+		ssh "$ffuser" ip link set $ff_if_pub up # start Freifunk public interface
+		;;
+	version)
+		ssh "$ffuser" cat /proc/version # info on kernel and (OpenWRT) distribution
+		;;
+	uptime)
+		ssh "$ffuser" cat /proc/uptime  | cut -f 1 -d "." # uptime in seconds
+		;;
+    load1)  
+		ssh "$ffuser" cat /proc/loadavg | cut -f 1 -d "." # average load 1 minute
+		;;
+    machine)  
+		ssh "$ffuser"  cat /proc/cpuinfo | grep '^machine' | sed 's/.*: //' # machine type
+		;;
+	printmap)  
+		ssh "$ffuser"  /usr/sbin/print_map.sh # node info as JSON
+		;;
+	*)
+		error_and_exit "Unknown command <$command>"
+    esac
+fi
+
+# Interfaces up / down
+# ostallgaeu
+# iwinfo wlan0-1 info > ESSID: "ostallgaeu.freifunk.net"
+# ip link set wlan0-1 down
+#
+#
+#
+# ffmuc
+#
+#
+#
+
+
+if (($# > 0)); then
+	# ... everything that's left in "$@" is taken as shell commands, too....
+	ssh "$ffuser" "$@"
+fi
+
+exit 0
+# End of main.
+
