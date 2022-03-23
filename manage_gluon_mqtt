@@ -33,10 +33,12 @@ fNul=/dev/null
 
 cCmv()	{ command -v "$@" >$fNul ;} # find out whether a command exists
 cLower() { { [ "$*" ] && echo "$*" || cat ;} | awk '{print tolower($0)}' ;}
+cPid() { sh -c 'echo $$' ;}
+# echo TEST: ; cPid ; cPid ; exit 
+
 alias trd="tr -d"
 alias cSanitize="trd -c A-Za-z0-9_.%,\ -" # remove special, leave spaces and ,._-
 alias cOut='echo "$ssh_data"'
-alias cPid="sh -c 'echo $$'"
 
 if cCmv busybox ; then
 	alias awk="busybox awk" # && cCmv goawk && alias awk=goawk # FIXME: remove experiment with goawk
@@ -87,9 +89,9 @@ alias cX="local - && set +x" # stop the local verbosity
 # ( { for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | egrep -A 9 -w '6e:a3:09:ea:31:e0' | grep SSID:.muenchen.freifunk.net/muc_sued && ( ( iwinfo | grep $sPubIf0 ) || ( wifi up ; echo wifi upped. ) ) ) || ( iwinfo | grep $sPubIf0 && iw dev $sPubIf0 del ; echo if downed )
 
 cHelp() {
-  echo "Usage: ${0##*/} ... -v -m hMqtt -c command ...
-   Execute arbitrary as well as predefined commands on Freifunk nodes using uci and other commands. Return values on stdout or MQTT.
-   Either, automatic (e.g. key-based) access to the Freifunk node using SSH or remote execution is possible." 1>&2
+  echo "Usage: ${0##*/} ... -v -m mqttserver -p -s host -c command ...
+   Execute arbitrary as well as predefined commands on Gluon/Freifunk/OpenWrt nodes using uci and other commands. Return values on stdout or MQTT.
+   Either automatic (e.g. key-based) access to the Freifunk node using SSH or remote execution is possible." 1>&2
 }
 
 cSortAndTailFile() {
@@ -158,9 +160,8 @@ cGetSitecode() { # $1=cachetimeout
 
 cMostFrequentSite() {
 		cX ; set +o noglob # needed here
-		set -x
-		local _data="$(cat "$dCache"/*.site.cached 2>$fNul | sort | uniq -c | awk '{print $2;exit}' )"
-		e "${_data:-UNKNOWN}"
+		_tmp="$(cat "$dCache"/*.site.cached 2>$fNul | sort | uniq -c | awk '{print $2;exit}' )"
+		e "${_tmp:-UNKNOWN}"
 	}
 
 cGetHostname() { # $1=host $2=cachetimeout
@@ -182,7 +183,7 @@ cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
 	local _data="$(cCRead $hTarget.ifs "${2:-9}")"
 	if [ -z "$_data" ] ; then
 		cSsh "command -v iwinfo >$fNul && iwinfo" || { cErr "iwinfo not found:" ; return $? ; } # only iwinfo works for this
-		_data="$(cOut|awk '/^$/ {print (l~/Mode: Master;.*;Encryption: none/?l:"");l="";next} {gsub("^ +",";") ; gsub("  +",";") ;l=l$0 ;next}' )"
+		_data="$( cOut |awk '/^$/ {print (l~/Mode: Master;.*;Encryption: none/?l:"");l="";next} {gsub("^ +",";") ; gsub("  +",";") ;l=l$0 ;next}' )"
 		dbg REMOTE "interfaces returned: $_data"
 		[ "$_data" ] && cCWrite $hTarget.ifs "$_data" #  .... cache result only if at least one public Freifunk if is up and running
 	fi
@@ -1600,7 +1601,7 @@ EOF
 					done <"$fClients"
 					cEcho "$(cStarredToJSON "$_data" | json_pp)"
 					cMS /publicwifi/localclients "$_data"
-					[ "$bWorkAllClients" ] && nCollectedSumOfClients="$(( nCollectedSumOfClients + _n ))"
+					[ "$bWorkAllClients" ] && nCollectedClients="$(( nCollectedClients + _n ))"
 					collectedclients="$collectedclients $(xargs <$fClients)"
 					collectedclients="${collectedclients% }" # trim any leading spaces
 				fi
@@ -1645,7 +1646,7 @@ EOF
 						#		hass_announce "$sSite" "$ad_devname" "$hTarget/$cmd"    "Public Wifi RX bytes"   "value_json.traffic.rx" "counter"
 						# 		hass_announce "$sSite" "$ad_devname" "$hTarget/$cmd"    "Public Wifi TX bytes"   "value_json.traffic.tx" "counter"
 						cMS /clients "$_data"
-						[ "$bWorkAllClients" ] && nCollectedSumOfClients="$(( nCollectedSumOfClients + _data ))"
+						[ "$bWorkAllClients" ] && nCollectedClients="$(( nCollectedClients + _data ))"
 						# cMqtt "$sSite/$node_id/clients" "$_data"
 					fi
 					# [ -f $tmpfilejson      ] && mv -f $tmpfilejson $tmpfilejson.prev
@@ -1731,19 +1732,22 @@ EOF
 				fi
 				exit 0
 				;;
-			checker) # explore number of process started in pipe
+			checkprocs) # explore number of process started in pipe
+				cTrustNOMQTT
 				_n=20
 				_d=$(cPid)
 				for i in $(seq $_n) ; do
 					# echo %s $i | awk '{print}'
 					# echo %s $i | awk '{print}'
-					history | awk '{print}'
+					# history | awk '{print}' > /dev/null
 					# cat $fNul | cat | awk '{print}'
+					# date | awk '{print}'
+					printf y
 				done
-				dbg $cmd "$(awk "BEGIN {print ( $(cPid) - $_d - 3) / $_n }" )" # number of processes started for command in for loop
+				dbg $cmd "$(awk "BEGIN {print ( $(cPid) - $_d - 4) / $_n }" )" # number of processes started for one command in the for loop above
 				;;
 			wifiscan)
-				cTrustGET
+				cTrustNOMQTT
 				# relies on the following entry in root's crontab, since only root is allowed to do a full wifi scan
 				# SHELL=/bin/bash
 				# * * * * * { /sbin/iw dev wlan0 scan ; sleep 2 ; /sbin/iw dev wlan0 scan ; sleep 2 ; /sbin/iw dev wlan0 scan ;} | fgrep SSID  | cut -d: -f 2 | xargs -n 1 | sort -u > /tmp/wifis.txt
@@ -1797,9 +1801,9 @@ EOF
 	fi
 done
 
-if [ "$nCollectedSumOfClients" ] ; then
+if [ "$nCollectedClients" -o "$bDoAll" ] ; then
 	[ "$bVerbose" -o "$bGiveHost" ] && ECHO "\n######  ALL CLIENTS " "$@" "######"
-	cMqtt "$sArea/publicwifi/allclientscount" $nCollectedSumOfClients
+	cMqtt "$sArea/publicwifi/allclientscount" $nCollectedClients
 
 	if [ "$fCollection" ] ; then
 		cSortAndTailFile "$fCollection" 18 1
@@ -1809,12 +1813,12 @@ if [ "$nCollectedSumOfClients" ] ; then
 			{ sort -k 2 "$fCollection" | join -1 2 -2 1 -a 1 - $fMacIDs | sort -r -k 1 |
 			uniq -w 17 | sort -k 2 > "$_ccwn_fn" ;} && dbg "$_ccwn_fn" "\n$(cat "$_ccwn_fn")"
 			# echo HELLO
-			[ "$bDoAll" ] && cMS "$sSite/$sArea/alllocalclients/debug" "$( { echo addr date node name p ; sort "$_ccwn_fn" ;} | cTableToJSON 0  )"
+			[ "$bDoAll" ] && cMS "$sSite/$sArea/alllocalclients/debug" "$( { echo addr date node name p ; sort "$_ccwn_fn" ;} | cTableToJSON )"
 			mv "$_ccwn_fn" "$fCollection"
 		fi
-		_data="$( awk -F" " -v id="$sArea" -v lccount=$nCollectedSumOfClients 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lccount, id } END {printf "]}"} { printf lim "{*addr*:*%s*,*name*:*%s*}", $1 , ($4=="")? $1 : $4 $5 $6 $7 ; lim="," }' < "$fCollection" |
+		_data="$( awk -F" " -v id="$sArea" -v lccount=$nCollectedClients 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lccount, id } END {printf "]}"} { printf lim "{*addr*:*%s*,*name*:*%s*}", $1 , ($4=="")? $1 : $4 $5 $6 $7 ; lim="," }' < "$fCollection" |
 			shorten_ethernet_addr_in_json ${bDoAll:+skip} )"
-		cEcho "$_data"
+		cEcho "$(cStarredToJSON "$_data" | json_pp)"
 		cMS "$sSite/$sArea/alllocalclients" "$_data"
 	fi
 fi
