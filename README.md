@@ -87,25 +87,29 @@ Supported commands for the -c option are:
 * *noop*: Do nothing (for testing purposes)
 * *echo*: Just echo the received command options
 * *date*: Return the current system date (for testing purposes)
-* *install*: Install if necessary the Mosquitto package, a firewall rule, a sample crontab entry, and the script itself (to /sbin).
-* *sh*: Invoke a remote SSH shell on the remote host (limited to A,B for security reasons!)
-* *homie-update*: Issue all auto-discovery announcements as well as the values.
-* *homie-delete*: Remove all retained messages for auto-discovery.
-* *ffstatus* ...
-* *ffdown* ...
-* *ffup*: Return the status of the public Freifunk wifi interface, or switch it down or up
-* *ffotherssid*: Change name of public Wifi interface (within community boundaries)
-* *ffchannel* : Change the WiFi channel of the public Freifunk wifi network (for the 2.4 Ghz channel only)
-* *ffgluonreconfigure*: Reset to configured values and states
-* *gluondata*: Lots of Gluon configuration data
-* *machine-data*: Version and CPU info of the node
+* _install_: Install if necessary the Mosquitto package, a firewall rule, a sample crontab entry, and then run _filecopy_.
+* _filecopy_: Install a reduced and optimized version of this script itself to /sbin.
+* _sh_: Invoke a remote SSH shell on the remote host (limited to A,B for security reasons!)
+* _discovery-update_: Issue all auto-discovery announcements as well as the values.
+* _discovery-delete_: Remove all retained messages for auto-discovery.
+* *wifistatus* ...
+* *wifidown* ...
+* *wifiup*: Return the status of the public Freifunk wifi interface, or switch it down or up
+* *wifissid*: Change name of public Wifi interface (within Freifunk community boundaries if applicable)
+* *channel24* : Change the WiFi channel of the public Freifunk wifi network (for the 2.4 Ghz channel only)
+* *limit*: limit throughput (ingress and egress)
+* *gluonreconfigure*: Reset to configured values and states
+* _site_: return site code of Freifunk network, e.g. "ffmuc"
+* _gluondata_: Lots of Gluon configuration data
+* _machine-data_: Version and CPU info of the  node
 * *speedtest*: Get a large file, measure the time it takes and calculate download speed im MB/s
 * *status*: Load and uptime of the node
 * *localclients*: Amount and fingerprints of clients attached to the node
 * *nodeinfo* ...
 * *neighbours* ...
-* *statistics*: JSON results from the invocation of `gluon-neighbour-info` with these commands as the resp. option.
-* *showsite*: JSON info from command `gluon-show-site`
+* _statistics_: JSON results from the invocation of `gluon-neighbour-info` with these commands as the resp. option.
+* _addresses_: show output of `ip -6 -j addr` (JSON).
+* _showsite_: JSON info from command `gluon-show-site`
 * *mountsizes*: show size, type and allocation of mounted partitions
 * *memory*: show output of "free -t" as JSON
 * *reboot*: Reboot the node (limited to A,B)
@@ -134,7 +138,7 @@ Remotely on a linux box at home (gluonnode ist the FF node):
 
 On the FF node itself:
 
-  ``$ manage_gluon_mqtt -m test.mosquitto.org -s gluonnode -c ffstatus``
+  ``$ manage_gluon_mqtt -m test.mosquitto.org -s gluonnode -c status``
 
 To run verbosely as a daemon on the target host:
 

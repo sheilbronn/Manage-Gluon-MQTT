@@ -11,25 +11,13 @@
 # Some fixed constants and prelimenary (fixed) settings ....
 # semi-hungarian notation for vars: i(n)teger, (s)tring, (d)irectory, (c)ommand, (b)oolean usage, (f)ile, (h)ost, (_) local meaning only
 
-# manage_gluon_mqtt -m localhost -v -c noop,ignore,echo,date,loop,filecopy,ffdown,ffup,ffstatus,ffcond,gluonreconfigure,site,gluondata,speedtest,status,printmap,localclients,nodeinfo,neighbours,statistics,showsite,memory
+# manage_gluon_mqtt -m localhost -v -c noop,ignore,echo,date,loop,filecopy,wifidown,wifiup,wifistatus,limit,ffcond,gluonreconfigure,site,gluondata,speedtest,status,printmap,localclients,nodeinfo,neighbours,statistics,showsite,memory
 
 nWifiSleep=7 # seconds to sleep after "wifi up"
 dGluon="/lib/gluon"
 sSite="" #  will be set to something like "ffmuc".... but you could also freeze it here
 fMacIDs="/srv/openhab-conf/phones" # file is only for presence detection in mapping known phones to known people at....
 fNul=/dev/null
-
-#	set -x
-#			trap_child() {
-#				echo 	trap_child
-#				sleep 1 &
-#			}		
-#			trap 'trap_child' CHLD
-#			sleep 3 &
-#			sleep 10
-#			sleep 6
-#			echo done
-#	exit 0
 
 cCmv()	{ command -v "$@" >$fNul ;} # find out whether a command exists
 cLower() { { [ "$*" ] && echo "$*" || cat ;} | awk '{print tolower($0)}' ;}
@@ -111,10 +99,10 @@ cExtractVals() {
 	e "$_tmp"
 	}
 
-cReplace() {
+cExpand() { # expand some shortcuts: $w: site, %s: host name of target, %g: intended MQTT group
 	[ "$*" ] && awk -v a="$*" "BEGIN {gsub(\"%w\",\"$sSite\",a);gsub(\"%s\",\"$hTarget\",a);gsub(\"%g\",\"$mqttGroup\",a);print a}"
 	}
-# echo $(cReplace w=%w s=%s g=%g) ; exit 0
+# echo $(cExpand w=%w s=%s g=%g) ; exit 0
 
 _helper() {
 		cOut|awk -F= "/^$1=/"' {gsub("\"","") ; print $2}' 
@@ -225,9 +213,9 @@ cTableToJSON() { # table is to be piped in. numerical values are made unquoted. 
 
 cDelSimpleJsonAttr() { # $1: attr, $2: JSON-string  # but only covers very simple cases, i.e. with quotes or not  :(
     # jq -c "del($1)" <<< "$2"
-	attr="$1"
-	#                     a) not the last in line (,)                b) only one or last in line
-	echo "$2" | sed -E -e "s;\"$attr\":(\"[^\"]*\"|[^,}]*)[ ]*,;;" -e "s;[ ]*,[ ]*\"$attr\":(\"[^\"]*\"|[^,}]*)[ ]*};;"
+	# attr="$1"
+	#                     a) not the last in line (,)            b) only one or last in line
+	echo "$2" | sed -E -e "s;\"$1\":(\"[^\"]*\"|[^,}]*)[ ]*,;;" -e "s;[ ]*,[ ]*\"$1\":(\"[^\"]*\"|[^,}]*)[ ]*};;"
 }
 
 cFirstJsonAttr() { # take string and extract the value of the first attribute if JSON, whole string otherwise. eliminating any non-alpha chars
@@ -837,7 +825,7 @@ do
 
 		if [ "$cmdsToDo" = bridge ] ; then
 			# prepare subscibing for MQTT messages...
-			mqttGroup="$(cReplace $mqttGroup)"
+			mqttGroup="$(cExpand $mqttGroup)"
 			fPipe=$dTmp/p
 			{ mkfifo $fPipe && chmod go-rwx $fPipe ;} || cErrAndExit "Could not create $fPipe (rc=$?)."
 			for t in $hTarget $mqttGroup ; do
@@ -911,12 +899,12 @@ do
 				elif [ "$sPipeType" = PERIODIC ] ; then
 					dbg "\nREAD" "TYPE=$sPipeType,$cmd,$cmdopts ($(date +%T))"
 					[ "$bVerbose" ] && cMS /bridge/state "{*TelePeriod*:$nMqttSleep}" # FIXME: might have been modified in subshell
-					[ "$cmdopts" != noop ] && cmdsToDo="ffstatus,statistics,bridge"
+					[ "$cmdopts" != noop ] && cmdsToDo="wifistatus,statistics,bridge"
 					continue
 				elif [ "$sPipeType" = MQTT ] ; then
 					_prefix="$(e "$cmd" | awk -v FS=/ '{print $1 "/" $2}' )"
 					cmdopts="$(cFirstJsonAttr "$cmdopts")"
-					cmdopts="$(cReplace "${cmdopts%(null)}")"
+					cmdopts="$(cExpand "${cmdopts%(null)}")"
 					dbg READ "command: $cmd  $cmdopts  (prefix=$_prefix, sSite=$sSite)"
 					case "$_prefix" in
 					"homie/$hTarget"|"$sSite/$hTarget"|"$sSite/${mqttGroup:-$hTarget}")
@@ -924,21 +912,21 @@ do
 						# cmd="$(e "$cmd" | awk -v FS=/ 'NF && NF-1 { print $3 ( $4 && $4 == "get" ? "" : "/" $4 ) ( $5 && $5 == "get" ? "" : "/" $5 ) }' )"
 						case "$cmd" in
 						localclients*|publicwifi/localclients*)				cmd="localclients" ;;
-						publicwifi/ssidshort/set) cmd="ffotherssid_$cmdopts" ;;
-						radio/channel24/set)		cmd="ffchannel24" ;;
-						publicwifi/state/set) 	{ [ "$cmdopts" = true  -o "$cmdopts" = ON  ] && cmd="ffup" ;} ||
-												{ [ "$cmdopts" = false -o "$cmdopts" = OFF ] && cmd="ffdown" ;} ||
+						publicwifi/ssidshort/set) cmd="wifissid_$cmdopts" ;;
+						radio/channel24/set)		cmd="channel24" ;;
+						publicwifi/state/set) 	{ [ "$cmdopts" = true  -o "$cmdopts" = ON  ] && cmd="wifiup" ;} ||
+												{ [ "$cmdopts" = false -o "$cmdopts" = OFF ] && cmd="wifidown" ;} ||
 												cErr "Illegal cmdopts=$cmdopts"
 											;;
-						ffstatus*|radio/channel24|publicwifi/state|publicwifi/ssidshort|publicwifi/ssid) cmd="ffstatus" ;;
-						ffup*)			cmd="ffup"   ;;
-						ffdown*)		cmd="ffdown" ;;
+						wifistatus*|radio/channel24|publicwifi/state|publicwifi/ssidshort|publicwifi/ssid) cmd="wifistatus" ;;
+						wifiup*)		cmd="wifiup"   ;;
+						wifidown*)		cmd="wifidown" ;;
 						echo*)			cmd="echo"   ;;
 						loop*)			cmd="loop"   ;;
-						sSite*)		cmd="sSite"  ;;
+						sSite*)			cmd="sSite"  ;;
 						gluon-data*)	cmd="gluondata" ;;
 						machine-data*)	cmd="machine-data" ;;
-						ffotherssid*)		cmd="ffotherssid_$cmdopts" ;;
+						wifissid*)	cmd="wifissid_$cmdopts" ;;
 						esac
 						;;
 					*) cmd="$(e "$cmd" | awk -v FS=/ 'NF && NF-1 {print ($(NF-1)) }' )"
@@ -989,16 +977,16 @@ do
 						else
 							_msg="${_msg}check returned $ssh_rc ($ssh_msg) -"
 							if [ $ssh_rc = 127 ] ; then
-								_msg="${_msg} (no mosquitto_pub?) - run -c install first!"
+								_msg="${_msg}(no mosquitto_pub?) - run -c install first!"
 								dbg AUTOSSH "$_msg"
 								cErr "$_msg"
 								cMR ERROR "$_msg:"
 							elif [ $ssh_rc = 255 ] ; then
-								_msg="${_msg} doing nothing."
+								_msg="${_msg}doing nothing."
 								dbg AUTOSSH "$_msg"
 								cMR ERROR "$_msg:"
 							else
-								_msg="${_msg} will start autossh and run check"
+								_msg="${_msg}will start autossh and run check"
 								dbg AUTOSSH "$_msg"
 								autossh -f -N -T ${bVeryVerbose:+-v} -R 1883:localhost:1883 $ffhost "$sMe -m localhost -c bridge ${mqttGroup:+-g $mqttGroup}"
 								sleep 3
@@ -1015,7 +1003,6 @@ do
 						sleep 10
 						trap_autossh() {
 							cmd="autossh" && cMR ONGOING "exiting."
-							set -x
 							jobs
 							wait $nPidAutoSSH
 							kill $nPidAutoSSH 2>$fNul || :
@@ -1028,14 +1015,14 @@ do
 				;;
 			bridge|noop|ignore|echo|date)
 				dbg COMMAND "cmd=$cmd,$cmdopts,($(date +%T))"
-				[ $cmd = echo ] && { cMR OK "Command $cmd($cmdopts=$(cReplace "$cmdopts")) on $(cat $fHost)" ; [ "$cmdopts" = TESTERROR ] && cErr "Test error" ; }
+				[ $cmd = echo ] && { cMR OK "Command $cmd($cmdopts=$(cExpand "$cmdopts")) on $(cat $fHost)" ; [ "$cmdopts" = TESTERROR ] && cErr "Test error" ; }
 				[ $cmd = date ] && { _msg="$(date) (PID=$(cPid))" ; cEcho "$_msg" ; cMR OK "Command $cmd($cmdopts): $_msg" ; }
 				;;
 			loop)
 				cTrustGET
 				cmdopts="${cmdopts:-5}"
 				cMR ONGOING "$cmd'ing $cmdopts times"
-				if [ 2 -le "$cmdopts" -a "$cmdopts" -lt 11 ]  ; then
+				if [ 2 -le "$cmdopts" -a 11 -ge "$cmdopts" ] ; then
 					_cmd='cSsh date -u +%s'
 					$_cmd ; startval="$ssh_data" && cEcho "$startval"
 					for i in $( seq $((cmdopts - 1)) ) ; do
@@ -1088,7 +1075,7 @@ do
 						cErrAndExit "ERROR: opkg / apt not found on $ffhost. Stopping..." || continue # never gets here afterwards
 						;;
 					esac
-					cEcho "Executing: $_cmd"
+					cEcho "Executing: $_cmd (please wait)"
 					cSsh "$_cmd" # || { cEcho "cSsh failed: $_cmd, aborting ..." ; continue ;}
 					dbg INSTALL "$ssh_data" || echo "Installer returned $ssh_data"
 				fi
@@ -1187,13 +1174,12 @@ EOF
 				else
 					cEcho "$fRC entry with '$sMe' not found... adding a simple one... pls modify it later!!"
 					_line="\( sleep 240 \; $sMe -c echo+BOOTED,machine-data,statistics -m $hPubMqtt,localhost \; \) \&"
-					# _line="echo hallo"
 					# sed -i -e '$s/exit 0/exit 0\naaa/g' rc.local
 					cSsh "sed -i sav -e  \"s/^exit 0/$_line\\nexit 0/\" $fRC ; 	${bVerbose:+echo $fRC is now: ; cat $fRC }"
 					cEcho "$ssh_data"
 				fi
 				;;
-			filecopy)
+			filecopy|selfcopy)
 				cTrustNOMQTT
 				fCopy="${fCopy:-$cmdopts}"
 				fCopy="${fCopy:-$0}"
@@ -1244,14 +1230,14 @@ EOF
 				cTrustGET
 				_cmd="cat /proc/uptime"
 				homieuptime="$( [ "$ffhost" = localhost ] && $_cmd || $0 -h "$ffhost" "$_cmd"  )" && hLine '$stats/uptime' "$(e "$homieuptime" | cut -d. -f1 )"
-				cmdsToDo="localclients,ffstatus,gluondata,machine-data,$cmdsToDo"
+				cmdsToDo="localclients,wifistatus,gluondata,machine-data,$cmdsToDo"
 				;;
 			homie-delete|disco-delete|discovery-delete)
 				cTrustSET
 				homie="$(cLower $hTarget)" # duplicated code...
 				announce_disco "$homie" -d
 				;;
-			ffdown) # stop Freifunk public interface
+			wifidown) # stop Freifunk public interface
 				cTrustSET
 				cGetPubIF # also sets sPubIfs and sSsidBase
 				dbg PREPARING "$cmd on host $hTarget (if=$sPubIf0,$sPubIf1) ..."
@@ -1267,25 +1253,25 @@ EOF
 				else
 					cMR OK "tempstr=$_tmp"
 				fi
-				dbg FFDOWN "Now starting ffstatus"
-				cmdsToDo="ffstatus${cmdsToDo:+,$cmdsToDo}"
+				dbg wifidown "Now starting wifistatus"
+				cmdsToDo="wifistatus${cmdsToDo:+,$cmdsToDo}"
 				;;
-			ffup|ffstatus)
-				cTrustGET 
+			wifiup|wifistatus|ffup|ffstatus)
+				cTrustGET
 				cGetPubIF || { cMR ERROR "public interfaces undeterminable:" ; continue ; } 
 				dbg PREPARING "$cmd on host $hTarget (if=$sPubIfs) ..."
 				# FIXME: stick to iw or iwinfo ?
 				_cmd="[ -d $dGluon ] && iw $sPubIf0 info || uci get wireless.client_radio0.ssid" # .. fallback to uci-setting ... and ignoring any 2nd interface for now
 				ssh_data=""
-				if [ $cmd = ffup ] ; then
+				if [ $cmd = wifiup ] ; then
 					cTrustSET
-					cMR ONGOING "RUNNING $_cmd"
+					cMR ONGOING "Running $_cmd"
 					cSsh "wifi up && sleep $nWifiSleep && $_cmd"
 				elif [ "$sNewSSID" ] ; then
 					ssh_rc=0
 					dbg REUSED "sNewSSID=$sNewSSID..."
 				else
-					cMR ONGOING "RUNNING $_cmd (iwinfo/iw)"
+					cMR ONGOING "Running $_cmd (iwinfo/iw)"
 					cSsh "$_cmd"
 				fi
 				if [ -z "$sNewSSID" ] ; then # ... was cached or if not cached, not unreachable
@@ -1342,20 +1328,21 @@ EOF
 				then
 					# client0   ESSID: "muenchen.freifunk.net/welt"
 					cEcho "To be upped..."
-					[ -z "$ifresult" ] && cmdsToDo="ffup${cmdsToDo:+,$cmdsToDo}"
+					[ -z "$ifresult" ] && cmdsToDo="wifiup${cmdsToDo:+,$cmdsToDo}"
 				else	
 					cEcho "To be downed..."
-					[ "$ifresult" ] && cmdsToDo="ffdown${cmdsToDo:+,$cmdsToDo}"
+					[ "$ifresult" ] && cmdsToDo="wifidown${cmdsToDo:+,$cmdsToDo}"
 				fi
 				dbg cmdsToDo "$cmdsToDo"
 				# ( ( iwinfo | fgrep client0 ) || ( wifi up ; echo wifi upped. ) )	) || ( iwinfo | fgrep client0 && iw dev client0 del ; echo if downed )
 				;;
-			ffchannel24|ffchannel24-*|radiochannel24set)   # FIXME: only implemented for 2.4Ghz (=first) radio
+			ffchannel24|ffchannel24-*|channel24|channel24-*|radiochannel24set)   # FIXME: only implemented for 2.4Ghz (=first) radio
 				cTrustGET
 				cGetPubIF 0 # sets sPubIfs, sSsidBase, and channel
 				_val="$cmdopts"
 				[ "$_val" ] || _val=$cmd
-				_val="${_val#ffchannel24-}" && _val="${_val#ffchannel24}"
+				_val="${_val#ffchannel24-}"	&& _val="${_val#ffchannel24}"
+				_val="${_val#channel24-}"	&& _val="${_val#channel24}"
 				cmd="channel24"
 				if [ "$_val" ] ; then
 					if [ "$(e "$_val" | trd "[0-9]" )" ] || [ "$_val" -lt 1 -o "$_val" -gt 13 ] ; then
@@ -1368,15 +1355,15 @@ EOF
 						dbg "_result=****$ssh_data****"
 					fi
 				fi
-				cmdsToDo="ffstatus${cmdsToDo:+,$cmdsToDo}" # ... implicitly followed by a ffstatus
+				cmdsToDo="wifistatus${cmdsToDo:+,$cmdsToDo}" # ... implicitly followed by a wifistatus
 				# FIXME: more code to be added
 				# ...
 				;;
-			fflimit|fflimit-*)
+			limit|limit-*)
 				cTrustSET
 				_tmp="$cmdopts"
 				[ "$_tmp" ] || _tmp=$cmd
-				_tmp=$(e "${_tmp#fflimit-}" | trd -c 0-9 ) # for security reasons
+				_tmp=$(e "${_tmp#limit-}" | trd -c 0-9 ) # for security reasons
 				cmd="limit"
 				# cErrAndExit "UNIMPLEMENTED"  # FIXME
 				if [ $_tmp -lt 50 -a $_tmp -ne 0 ] ; then
@@ -1389,19 +1376,19 @@ EOF
 				# FIXME: more code to be added
 				# ...
 				;;
-			ffotherssid|ffotherssid_*|ffotherssid-*)
+			wifissid|wifissid_*|wifissid-*)
 				# dbg "cmd=$cmd,cmdopts=$cmdopts"
 				cTrustGET
 				cGetPubIF # sets sPubIfs and sSsidBase
 				# _tmp="${cmdopts:-welt}"
-				_tmp="${cmd#ffotherssid_}"
-				_tmp="${_tmp#ffotherssid-}"
-				_tmp="${_tmp#ffotherssid}"
+				_tmp="${cmd#wifissid_}"
+				_tmp="${_tmp#wifissid-}"
+				_tmp="${_tmp#wifissid}"
 				_tmp="${_tmp:-$cmdopts}"
 				# [ -z "$_tmp" ] && cEcho "Empty shortssid from cmd=$cmd ($cmdopts), using welt"
 				_sssid="$(e "${_tmp:-welt}" | trd '}{)( ,=' )"
 				dbg _sssid "$_sssid"
-				cmd="ffotherssid"
+				cmd="wifissid"
 				# further checks for allowed and legal  SSID values amongst gluon domains ....
 				if [ "$_sssid" = OFFLINE -o "$_sssid" = MYHOSTNAME -o "$_sssid" = %s ] || expr "$(cGetGluonDomainsStarred $hTarget)" : ".*\*${_sssid}[*]" >$fNul ; then
 					cMR ONGOING "Intended SSID suffix: $_sssid"
@@ -1426,7 +1413,7 @@ EOF
 				dbg RESULT "=***$ssh_data***"
 
 				if [ -z "$ssh_data" ] ; then
-					_log="error: $ssh_rc ($ssh_msg) OR ssh data empty, aborting ffotherssid command...."
+					_log="error: $ssh_rc ($ssh_msg) OR ssh data empty, aborting wifissid command...."
 					cEcho "$_log"
 					cMR ERROR "$_log"
 				else
@@ -1440,24 +1427,23 @@ EOF
 					fi
 					dbg "$_log"
 					cMR OK "$_log"
-					cmdsToDo="ffstatus${cmdsToDo:+,$cmdsToDo}" # ... implicitly followed by a ffstatus
+					cmdsToDo="wifistatus${cmdsToDo:+,$cmdsToDo}" # ... implicitly followed by a wifistatus
 				fi
 				;;
 			gluonreconfigure)
 				cTrustSET
 				cGetPubIF # sets sPubIf* and sSsidBase
-
-				cMR ONGOING "Affected Interface(s): $sPubIfs"
+				cMR	ONGOING "Affected Interface(s): $sPubIfs"
 				# 6 seconds needed for interface!
 				cSsh "iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; gluon-reconfigure | tail -3 ; wifi up  ; sleep $nWifiSleep ; iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDNEW/' -e '1q' "
 				dbg RECONFIGURE "$ssh_data"
-				prev_ssid="$(cOut|grep SSIDPREV | cut -d: -f 2 )"
-				new_ssid="$(cOut|grep SSIDNEW | cut -d: -f 2 )"
+				prev_ssid="$(cOut	|grep SSIDPREV	| cut -d: -f 2 )"
+				new_ssid="$(cOut	|grep SSIDNEW	| cut -d: -f 2 )"
 				cEcho "$hTarget: Ran gluon-reconfigure, previously $prev_ssid, then wifi up, then $new_ssid. id=$(id -nu)/$(id -u)\n"
 				if [ "$prev_ssid" != "$new_ssid" ] ; then
 					cmdsToDo="localclients${cmdsToDo:+,$cmdsToDo}"
 				fi
-				cmdsToDo="ffstatus${cmdsToDo:+,$cmdsToDo}" # ... implicitly followed by a ffstatus
+				cmdsToDo="wifistatus${cmdsToDo:+,$cmdsToDo}" # ... implicitly followed by a wifistatus
 				;;
 			site)
 				cTrustGET
@@ -1724,7 +1710,7 @@ EOF
 					exit 0
 				else
 					for i in $(seq "${cmdopts:-5}") ; do 
-						# cMqtt /ffstatus/get $i
+						# cMqtt /wifistatus/get $i
 						# cMqtt /status/get $i 
 						cMqtt /date/get $i 
 						cEcho $i
