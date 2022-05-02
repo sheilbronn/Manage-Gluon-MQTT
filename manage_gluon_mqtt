@@ -171,7 +171,9 @@ cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
 	local _data="$(cCRead $hTarget.ifs "${2:-9}")"
 	if [ -z "$_data" ] ; then
 		cSsh "command -v iwinfo >$fNul && iwinfo" || { cErr "iwinfo not found:" ; return $? ; } # only iwinfo works for this
-		_data="$( cOut |awk '/^$/ {print (l~/Mode: Master;.*;Encryption: none/?l:"");l="";next} {gsub("^ +",";") ; gsub("  +",";") ;l=l$0 ;next}' )"
+		# echo "$ssh_data" > /tmp/x
+		# _data="$( { cOut ; echo "" ; } |awk '/^$/ {print (l~/Mode: Master;.*;Encryption: none/?l:"");l="";next} {gsub("^ +",";") ; gsub("  +",";") ;l=l$0 ;next}' )"
+		_data="$( { cOut ; echo "" ; } |awk '/^$/ {if (l~/Mode: Master;.*;Encryption: none/) print l;l="";next} {gsub("^ +",";") ; gsub("  +",";") ;l=l$0 ;next}' )"
 		dbg REMOTE "interfaces returned: $_data"
 		[ "$_data" ] && cCWrite $hTarget.ifs "$_data" #  .... cache result only if at least one public Freifunk if is up and running
 	fi
@@ -295,7 +297,7 @@ for d in /var/log /tmp ; do # find a suitable writable dir. Prefer /var/log over
 	[ -d "$dCache" ] || { mkdir -p "$dCache" 2>$fNul ; chmod o-rwx "$dCache" ;} && mkdir $dTmp && break || id # ... && chmod o-rwx $dTmp
 done
 
-cDirFromStoreType() { [ $1 = persisted ] && e $dUser || e $dCache ; }
+cDirFromStoreType() { [ $1 = cache ] && e $dCache || e $dUser; }
 
 cStoreWrite() { # write a key/value pair to a dir: key,value,dir,filesuffix
 	cX 
@@ -771,9 +773,9 @@ fCollection=""
 fSleep=$dTmp/sl
 
 ffhosts="$(e "${ffhosts:-localhost}" | tr -s "," " " | cLower)"
-for ffhost in $ffhosts # for each given host, maybe just one, or none=localhost...
+for hFull in $ffhosts # for each given host, maybe just one, or none=localhost...
 do
-	if [ "$ffhost" = localhost ] ; then
+	if [ "$hFull" = localhost ] ; then
 		sSshUser="NOUSER"
 		cSsh() {
 			ssh_msg=""
@@ -784,11 +786,12 @@ do
 		  }
 		hTarget="$sArea"
 	else
-		sSshUser="root@$ffhost"
+		sSshUser="root@$hFull"
 		cSsh() {
 			# cEcho "$sSshUser:" "$@" 1>&2
 			cX
 			ssh_msg=""
+			[ "$bVeryVerbose" ] && dbg SSH "Running $sSshUser: $*"
 			_r="$(ssh $sSshUser -q "$@")"
 			ssh_rc=$?
 			ssh_data="$(echo "$_r" | trd '`')"
@@ -801,13 +804,13 @@ do
 			return $ssh_rc
   		  }	
 		# remove any trailing "-<letter>"  also the domain name
-		hTarget=$(e "$ffhost" | awk '{ $0=tolower($0) ; gsub("\\..*","") ; gsub("-[a-z]$","") ; print }' )
+		hTarget=$(e "$hFull" | awk '{ $0=tolower($0) ; gsub("\\..*","") ; gsub("-[a-z]$","") ; print }' )
 	fi
 	_string="" && [ "$sSshUser" = "${sSshUser%${hTarget}-e}" -a "$sSshUser" = "${sSshUser%${hTarget}}" ] && _string="($hTarget) "
 	[ "$bVerbose" -o "$bGiveHost" ] && ECHO "\n######## ${sSshUser#root@} $_string//${commands:+ $commands //} $*" "########"
 
 	cGetSitecode # reusing value for all other nodes, too.
-	fTmpMqtt=$dTmp/mqtt.$ffhost
+	fTmpMqtt=$dTmp/mqtt.$hFull
 	sNewSSID=""
 	if [ "$sUciQuery" ] ; then
 		cSsh "uci show $1"
@@ -952,11 +955,22 @@ do
 			cmdopts="$(e "$cmdopts" | cSanitize)"
 			[ "$bVeryVerbose" ] && dbg COMMAND " $cmd ($cmdopts) (REMAIN: $cmdsToDo)"
 			case "$cmd" in
+			help) # really unstable implementation: grep out any case branches in $0 that look like a command ....
+				cTrustGET
+				_msg="$( awk '$1 ~ /^[a-z]{3,}[a-z|]+)/ { gsub(/)/,"",$1); gsub(/\|/," ",$1); if ($1=="help") doit="y" ; if (doit) printf $1 " " }' "$0")"
+				cEcho "$_msg"
+				cMR OK "Command $cmd($cmdopts): $_msg"				
+				;;
+			bridge|noop|ignore|echo|date)
+				dbg COMMAND "cmd=$cmd,$cmdopts,($(date +%T))"
+				[ $cmd = echo ] && { cMR OK "Command $cmd($cmdopts=$(cExpand "$cmdopts")) on $(cat $fHost)" ; [ "$cmdopts" = TESTERROR ] && cErr "Test error" ; }
+				[ $cmd = date ] && { _msg="$(date) (PID=$(cPid))" ; cEcho "$_msg" ; cMR OK "Command $cmd($cmdopts): $_msg" ; }
+				;;
 			autossh)
 				cTrustSET
 				_ml="$((${cmdopts:-12} * 3600 - 15	))" # Default = almost 12 hours
 				dbg AUTOSSH "maxlife=${_ml}s : ffhosts=$ffhosts"
-				# if [ "${ffhosts#"$ffhost"}" != "$ffhosts" ] ; then # do it for all hosts at once, in the first iteration
+				# if [ "${ffhosts#"$hFull"}" != "$ffhosts" ] ; then # do it for all hosts at once, in the first iteration
 
 					# AUTOSSH_GATETIME    # how long must an ssh session be established before we decide it really was established
 					#                       (in seconds). Default is 30 seconds; use of -f  flag sets this to 0.
@@ -993,7 +1007,7 @@ do
 							else
 								_msg="${_msg}will start autossh and run check"
 								dbg AUTOSSH "$_msg"
-								autossh -f -N -T ${bVeryVerbose:+-v} -R 1883:localhost:1883 $ffhost "$sMe -m localhost -c bridge ${mqttGroup:+-g $mqttGroup}"
+								autossh -f -N -T ${bVeryVerbose:+-v} -R 1883:localhost:1883 $hFull "$sMe -m localhost -c bridge ${mqttGroup:+-g $mqttGroup}"
 								sleep 3
 								_pid="$(cat $AUTOSSH_PIDFILE)"
 								dbg AUTOSSH "pid=$_pid"
@@ -1017,11 +1031,6 @@ do
 #DELETE_END#
 					fi
 				# fi
-				;;
-			bridge|noop|ignore|echo|date)
-				dbg COMMAND "cmd=$cmd,$cmdopts,($(date +%T))"
-				[ $cmd = echo ] && { cMR OK "Command $cmd($cmdopts=$(cExpand "$cmdopts")) on $(cat $fHost)" ; [ "$cmdopts" = TESTERROR ] && cErr "Test error" ; }
-				[ $cmd = date ] && { _msg="$(date) (PID=$(cPid))" ; cEcho "$_msg" ; cMR OK "Command $cmd($cmdopts): $_msg" ; }
 				;;
 			loop)
 				cTrustGET
@@ -1049,7 +1058,7 @@ do
 					continue # abort case
 				fi
 
-				if [ "$ffhost" != localhost -o "$(dirname "$0")" != /sbin ] && [ "$_user" = root ] ; then
+				if [ "$hFull" != localhost -o "$(dirname "$0")" != /sbin ] && [ "$_user" = root ] ; then
 					cEcho "Remote targetuser is $_user: Will try to copy this script to /sbin later..."
 					cmdsToDo="filecopy${cmdsToDo:+,$cmdsToDo}"
 					fCopy="$0"
@@ -1064,9 +1073,9 @@ do
 				# ... try to install mosquitto if not there yet
 				cSsh "command -v mosquitto_pub"
 				if [ "$ssh_data" ] ; then
-					cEcho "mosquitto_pub already installed on $ffhost..."
+					cEcho "mosquitto_pub already installed on $hFull..."
 				else
-					cEcho "mosquitto_pub not found on $ffhost... trying to determine install cmd ..."
+					cEcho "mosquitto_pub not found on $hFull... trying to determine install cmd ..."
 					cSsh "command -v opkg || command -v apt || echo nothing" 2>$fNul
 					_cmd="$(basename "$ssh_data")"
 					case "$_cmd" in
@@ -1077,12 +1086,13 @@ do
 						_cmd="$_cmd update && $_cmd install mosquitto-clients"
 						;;
 					nothing)
-						cErrAndExit "ERROR: opkg / apt not found on $ffhost. Stopping..." || continue # never gets here afterwards
+						cErrAndExit "ERROR: opkg / apt not found on $hFull. Stopping..." || continue # never gets here afterwards
 						;;
 					esac
 					cEcho "Executing: $_cmd (please wait)"
 					cSsh "$_cmd" # || { cEcho "cSsh failed: $_cmd, aborting ..." ; continue ;}
-					dbg INSTALL "$ssh_data" || echo "Installer returned $ssh_data"
+					_msg="$ssh_data (rc=$ssh_rc)"
+					dbg INSTALL "$_msg" || echo "Installer returned $_msg"
 				fi
 				[ $ssh_rc -ne 0 ] && { cEcho "cSsh failed: $_cmd, aborting ..." ; continue ;}
 
@@ -1234,7 +1244,7 @@ EOF
 			homie-update|disco-update|discovery-update)
 				cTrustGET
 				_cmd="cat /proc/uptime"
-				homieuptime="$( [ "$ffhost" = localhost ] && $_cmd || $0 -h "$ffhost" "$_cmd"  )" && hLine '$stats/uptime' "$(e "$homieuptime" | cut -d. -f1 )"
+				homieuptime="$( [ "$hFull" = localhost ] && $_cmd || $0 -h "$hFull" "$_cmd"  )" && hLine '$stats/uptime' "$(e "$homieuptime" | cut -d. -f1 )"
 				cmdsToDo="localclients,wifistatus,gluondata,machine-data,$cmdsToDo"
 				;;
 			homie-delete|disco-delete|discovery-delete)
@@ -1266,7 +1276,7 @@ EOF
 				cGetPubIF || { cMR ERROR "public interfaces undeterminable:" ; continue ; } 
 				dbg PREPARING "$cmd on host $hTarget (if=$sPubIfs) ..."
 				# FIXME: stick to iw or iwinfo ?
-				_cmd="[ -d $dGluon ] && iw $sPubIf0 info || uci get wireless.client_radio0.ssid" # .. fallback to uci-setting ... and ignoring any 2nd interface for now
+				_cmd="command -v iw >/dev/null 2>&1 && iw $sPubIf0 info 2>/dev/null || uci get wireless.client_radio0.ssid || uci get wireless.ap_gn_g.ssid" # .. fallback to uci-setting ... and ignoring any 2nd interface for now
 				ssh_data=""
 				if [ $cmd = wifiup ] ; then
 					cTrustSET
@@ -1615,7 +1625,7 @@ EOF
 				fi
 				cCWrite $hTarget.nodeip "$ffnodeip" # cache the value
 				_cGNI="gluon-neighbour-info -i br-client -p 1001 -r $cmd -d " # ipaddr will be appended ...
-				[ "$one_additional_option" ] && ffhost="$one_additional_option" # use other host to query the remote one ...
+				[ "$one_additional_option" ] && hFull="$one_additional_option" # use other host to query the remote one ...
 				cSsh "$_cGNI $ffnodeip"
 				_val="$ssh_data"
 				dbg "Had called $_cGNI $ffnodeip (rc=$ssh_rc,size=${#ssh_data})"
