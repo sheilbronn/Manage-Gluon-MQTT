@@ -56,7 +56,7 @@ sArea=$(cat $fHost 2>$fNul || hostname || e unknown)
 [ $sArea = openHABianPi -o $sArea = unknown ] && sArea="${sArea}-$( awk -F: '{print $5$6}' </sys/class/net/eth0/address )"
 sArea=$(cLower "$sArea") # lowercase only
 sSsidBase=UNKNOWN # would be an an error
-sPubIfs= # will be determined on first call, then cached
+sPubIfs= # will be determined on first call to every host, then cached
 nMqttSleep=1199 # 1190
 sHassPrefix=homeassistant/sensor
 hPubMqtt=test.mosquitto.org
@@ -143,7 +143,7 @@ cGetSitecode() { # $1=cachetimeout
 		fi
 	fi
 	sSite="$_data"
-	dbg cGetSitecode "sSite=$sSite" "\$1=$1"
+	dbg cGetSitecode "sSite=$sSite \$1=$1"
 	}
 
 cMostFrequentSite() {
@@ -341,7 +341,7 @@ cStoreRead() { # read key/value pair from cache or user storage  (1:key, 2:cache
 			[ "$_val" ] || _res="#EMPTY#"
 		fi
 	fi
-	dbg STORE_READ "($1,$2,${_fn#/var/log},${3%ed})=\"$(cShortenString "$_val" 23 )\",$_res)"
+	dbg STORE_READ "($1,$2,${_fn#/var/log},${3%ed})=\"$(cShortenString "$_val" 23)\",$_res)"
 	printf %s "$_val"
 	[ "$_val" ] # return 1 if empty, 0 otherwise
   }
@@ -670,8 +670,8 @@ sUciVal=""
 cMPub=mosquitto_pub
 cCmv $cMPub || { cMPub=":" ; dbg "Variable/command cMPub=*$cMPub* (: is dummy)." ; }
 
-jsonfilter=$(command -v jq ) || jsonfilter=$(command -v jsonfilter ) || cErrAndExit "jsonfilter or jq must be made available."
-jsonfilter=$(basename "$jsonfilter" )
+jsonfilter=$(command -v jq ) || jsonfilter=$(command -v jsonfilter) || cErrAndExit "jsonfilter or jq must be made available."
+jsonfilter=$(basename "$jsonfilter")
 cCmv json_pp || alias json_pp=cat
 # alias cBeautify="jq -Sm" ; cCmv jq || alias cBeautify="cat"
 
@@ -955,7 +955,7 @@ do
 			cmdopts="$(e "$cmdopts" | cSanitize)"
 			[ "$bVeryVerbose" ] && dbg COMMAND " $cmd ($cmdopts) (REMAIN: $cmdsToDo)"
 			case "$cmd" in
-			help) # really unstable implementation: grep out any case branches in $0 that look like a command ....
+			help) # really unstable implementation by grepping the script code for case branches that look like a command ....
 				cTrustGET
 				_msg="$( awk '$1 ~ /^[a-z]{3,}[a-z|]+)/ { gsub(/)/,"",$1); gsub(/\|/," ",$1); if ($1=="help") doit="y" ; if (doit) printf $1 " " }' "$0")"
 				cEcho "$_msg"
@@ -1077,24 +1077,24 @@ do
 				else
 					cEcho "mosquitto_pub not found on $hFull... trying to determine install cmd ..."
 					cSsh "command -v opkg || command -v apt || echo nothing" 2>$fNul
-					_cmd="$(basename "$ssh_data")"
-					case "$_cmd" in
+					_scmd="$(basename "$ssh_data")"
+					case "$_scmd" in
 					opkg)
-						_cmd="$_cmd update && $_cmd install mosquitto-client-nossl"
+						_scmd="$_scmd update && $_scmd install mosquitto-client-nossl"
 						;;
 					apt)
-						_cmd="$_cmd update && $_cmd install mosquitto-clients"
+						_scmd="$_scmd update && $_scmd install mosquitto-clients"
 						;;
 					nothing)
 						cErrAndExit "ERROR: opkg / apt not found on $hFull. Stopping..." || continue # never gets here afterwards
 						;;
 					esac
-					cEcho "Executing: $_cmd (please wait)"
-					cSsh "$_cmd" # || { cEcho "cSsh failed: $_cmd, aborting ..." ; continue ;}
+					cEcho "Executing: $_scmd (please wait)"
+					cSsh "$_scmd" # || { cEcho "cSsh failed: $_scmd, aborting ..." ; continue ;}
 					_msg="$ssh_data (rc=$ssh_rc)"
 					dbg INSTALL "$_msg" || echo "Installer returned $_msg"
 				fi
-				[ $ssh_rc -ne 0 ] && { cEcho "cSsh failed: $_cmd, aborting ..." ; continue ;}
+				[ $ssh_rc -ne 0 ] && { cEcho "cSsh failed: $_scmd, aborting ..." ; continue ;}
 
 				# now comes a Gluon-specific part - determine Gluon by checking for the UCI entry autoupdater_branch
 				cSsh "uci get autoupdater.settings.branch"
@@ -1271,30 +1271,32 @@ EOF
 				dbg wifidown "Now starting wifistatus"
 				cmdsToDo="wifistatus${cmdsToDo:+,$cmdsToDo}"
 				;;
-			wifiup|wifistatus|ffup|ffstatus)
+			wifiup|wifistatus|ffup|ffstatus) ## determine status of open/guest wifi network, n.b. ff... are being obsoleted
 				cTrustGET
 				cGetPubIF || { cMR ERROR "public interfaces undeterminable:" ; continue ; } 
 				dbg PREPARING "$cmd on host $hTarget (if=$sPubIfs) ..."
-				# FIXME: stick to iw or iwinfo ?
-				_cmd="command -v iw >/dev/null 2>&1 && iw $sPubIf0 info 2>/dev/null || uci get wireless.client_radio0.ssid || uci get wireless.ap_gn_g.ssid" # .. fallback to uci-setting ... and ignoring any 2nd interface for now
+				_scmd="command -v iw >$fNul 2>&1 && iw $sPubIf0 info || uci show wireless.client_radio0.ssid || uci show wireless.ap_gn_g.ssid" # .. fallback to uci-setting ... and ignoring any 2nd interface for now
 				ssh_data=""
 				if [ $cmd = wifiup ] ; then
 					cTrustSET
-					cMR ONGOING "Running $_cmd"
-					cSsh "wifi up && sleep $nWifiSleep && $_cmd"
+					cMR ONGOING "Running $_scmd"
+					cSsh "wifi up && sleep $nWifiSleep && $_scmd"
 				elif [ "$sNewSSID" ] ; then
 					ssh_rc=0
 					dbg REUSED "sNewSSID=$sNewSSID..."
 				else
-					cMR ONGOING "Running $_cmd (iwinfo/iw)"
-					cSsh "$_cmd"
+					cMR ONGOING "Running $_scmd"
+					# set -x
+					cSsh "$_scmd"
 				fi
+				ssh_data="$(cOut|tail -14)" # shorten away the long redundant error msg from stdout from iw
 				if [ -z "$sNewSSID" ] ; then # ... was cached or if not cached, not unreachable
-					sNewSSID="$(cOut|sed -n -e '/ESSID:/{s/[^:]*: //;s/\"//g;p;q}' -e '/ssid/{s/\tssid //;p;q}')" # coerced iw/iwinfo and uci to get results
-					if [ $ssh_rc = 0 ] && [ "${ssh_data#"$sPubIf0"}" != "${ssh_data}" -o "${ssh_data#"Interface $sPubIf0"}" != "${ssh_data}" ] ; then # works for both iw/iwinfo
+					# set -x
+					sNewSSID="$(cOut|sed -n -e '/\.ssid=/{s/.*=//;p;q}' -e '/ssid/{s/\tssid //;p;q}')" # coerced uci and iw output to get results # for iwinfo: -e '/ESSID:/{s/[^:]*: //;s/\"//g;p;q}' 
+					if [ $ssh_rc = 0 ] && [ "${ssh_data#"Interface $sPubIf0"}" != "${ssh_data}" -o "${ssh_data#wlan}" != "${ssh_data}" ] ; then
 						dbg SUCCESS "tempstr=$ssh_data"
 						# cEcho "$sNewSSID"
-						sChannel24="$(cOut|awk '$3=="Channel:" {print $4} $1=="channel" {print $2}' )" # works for both iw/iwinfo
+						sChannel24="$(cOut|awk '$1=="channel" {print $2}' )" # works for iw
 						cMS 	/publicwifi/state	ON
 						hLine	publicwifi/state	true
 						# cEchoPub radio/channel24 "$sChannel24"
@@ -1302,11 +1304,11 @@ EOF
 						hLine	radio/channel24	"$sChannel24"
 					else
 						if [ "$ssh_data" ] ; then
-							dbg "rc=$ssh_rc for command $cmd, ssh_data: $ssh_data"
-							if [ $ssh_rc = 255 ] || echo "$_tmp" | grep -w -q -E "open failed|connect failed" ; then # unreachable
+							dbg "command=$cmd, rc=$ssh_rc, ssh_data=$ssh_data"
+							if [ $ssh_rc = 255 ] || cOut | grep -w -q -E "open failed|connect failed" ; then # unreachable
 								cMR OFF "rc=$ssh_rc ($ssh_msg)"
 								( sleep 60 ; echo PERIODIC noop "sooner" )  > $fPipe  & # inject for sooner retry
-							elif [ "${ssh_data#sPubIf0}" = "${ssh_data}" ] ; then
+							elif [ "${ssh_data#"$sPubIf0"}" = "${ssh_data}" ] ; then
 								cMR OFF "rc=$ssh_rc (interface missing or down)"
 							else
 								cMR ERROR "rc=$ssh_rc // $(cOut|xargs)"
@@ -1378,7 +1380,7 @@ EOF
 				cTrustSET
 				_tmp="$cmdopts"
 				[ "$_tmp" ] || _tmp=$cmd
-				_tmp=$(e "${_tmp#limit-}" | trd -c 0-9 ) # for security reasons
+				_tmp=$(e "${_tmp#limit-}" | trd -c 0-9) # for security reasons
 				cmd="limit"
 				# cErrAndExit "UNIMPLEMENTED"  # FIXME
 				if [ $_tmp -lt 50 -a $_tmp -ne 0 ] ; then
@@ -1396,7 +1398,7 @@ EOF
 				cTrustGET
 				cGetPubIF # sets sPubIfs and sSsidBase
 				# _tmp="${cmdopts:-welt}"
-				set -x
+				# set -x
 				_tmp="${cmd#wifissid_}"
 				_tmp="${_tmp#wifissid-}"
 				_tmp="${_tmp#wifissid}"
@@ -1417,14 +1419,14 @@ EOF
 					continue
 				fi
 				# echo ================
-				echo cSsh ": set -x &&
-						_hn=\"\$(tr A-Z a-z <$fHost)\"  &&
+				cSsh ": set -x &&
+						_hn=\"\$(tr A-Z a-z <$fHost)\" &&
 						other=\"\$( printf %s \"$otherssid\" | sed -e \"s/MYHOSTNAME/\$_hn/\" -e \"s/%s/\$_hn/\" )\"  &&
 						otheresc=\"\$( ec\"ho\" \"\$other\" | sed -e 's,/,\\\\/,' )\"  &&
 						iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/'  -e '1q' | awk \"{print} /\$otheresc/ { exit(99) }\" &&
 						uci set wireless.client_radio0.ssid=\$other ${sPubIf1:+&& uci set wireless.client_radio1.ssid=\$other} &&
 				        wifi up && sleep $nWifiSleep ;
-						iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDNEW/' -e '1q' " 2>&1  # FIXME: ignoring any 2nd interface
+						iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDNEW/' -e '1q' " # FIXME: ignoring any 2nd interface
 				# echo ----------------
 				dbg RESULT "=***$ssh_data***"
 
@@ -1453,8 +1455,8 @@ EOF
 				# 6 seconds needed for interface!
 				cSsh "iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; gluon-reconfigure | tail -3 ; wifi up  ; sleep $nWifiSleep ; iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDNEW/' -e '1q' "
 				dbg RECONFIGURE "$ssh_data"
-				prev_ssid="$(cOut	|grep SSIDPREV	| cut -d: -f 2 )"
-				new_ssid="$(cOut	|grep SSIDNEW	| cut -d: -f 2 )"
+				prev_ssid="$(cOut	|grep SSIDPREV	| cut -d: -f2 )"
+				new_ssid="$( cOut	|grep SSIDNEW	| cut -d: -f2 )"
 				cEcho "$hTarget: Ran gluon-reconfigure, previously $prev_ssid, then wifi up, then $new_ssid. id=$(id -nu)/$(id -u)\n"
 				if [ "$prev_ssid" != "$new_ssid" ] ; then
 					cmdsToDo="localclients${cmdsToDo:+,$cmdsToDo}"
@@ -1476,12 +1478,12 @@ EOF
 					lua -e 'print(require(\"platform_info\").get_model())' ; cat $dGluon/gluon-version ; cat $dGluon/release ;} 2>&1"
 	
 				cEchoPub os-data "$os_data"	
-				cEchoPub autoupdater-branch 	"$(cOut|sed -n 1p )"
-				cEchoPub autoupdater-enabled	"$(cOut|sed -n -e 2s/0/false/ -e 2s/1/true/ -e 2p )"
-				cEchoPub core-domain	"$(cOut|sed -n 3p )"
-				cEchoPub model	"$(cOut|sed -n 4p )"
-				cEchoPub gluon-version	"$(cOut|sed -n 5p )"				
-				cEchoPub release	"$(cOut|sed -n 6p )" "$(cOut|sed -n -e 's/^v//' -e 6p )"
+				cEchoPub autoupdater-branch 	"$(cOut|sed -n 1p)"
+				cEchoPub autoupdater-enabled	"$(cOut|sed -n -e 2s/0/false/ -e 2s/1/true/ -e 2p)"
+				cEchoPub core-domain	"$(cOut|sed -n 3p)"
+				cEchoPub model	"$(cOut|sed -n 4p)"
+				cEchoPub gluon-version	"$(cOut|sed -n 5p)"				
+				cEchoPub release	"$(cOut|sed -n 6p )" "$(cOut|sed -n -e 's/^v//' -e 6p)"
 				cEchoPub gluon-domains	"$(cGetGluonDomainsStarred $hTarget)"
 				cEchoPub site	$sSite
 			  	cMR OK
@@ -1506,17 +1508,16 @@ EOF
 				cTrustGET
 				_spparam="${bVerbose:+-q}" ; _spparam="-q --no-check-certificate"
 				sLastSpeed="$(cCRead $hTarget.lastspd 1)" && sLastSpeed=",*lastSpeedMb*:$sLastSpeed"
-				speedtestcmd="$(cCRead $hTarget.lastspdcmd 2)" # prefer the previous one for at most 2 days
-				# make it at least as big as the previous max (cache will time out after 2 days anyway):
-				[ -z "$speedtestcmd" -o $cmd != "${cmd#"$speedtestcmd"}" ] && speedtestcmd=$cmd
-				case "$speedtestcmd" in
+				_spcmd="$(cCRead $hTarget.lastspdcmd 2)" # prefer the previous one for at most 2 days
+				[ -z "$_spcmd" -o $cmd = "speedtest0" -o $cmd != "${cmd#"$_spcmd"}" ] && _spcmd=$cmd # make it at least as big as the previous max (cache will time out after 2 days anyway):
+				case "$_spcmd" in
 					speedtest)	_url=1MB	;;
 					speedtest0)	_url=5MB	;;
 					speedtest00)	_url=10MB	;;
 					speedtest000)	_url=50MB	;;
 					speedtest0000)	_url=100MB	;;
 					speedtest00000)	_url=1GB	;;
-					*)				cErr "speedtestcmd '$speedtestcmd' to excessive or failed!"
+					*)				cErr "speedtestcmd '$_spcmd' too excessive or fetching failed!"
 									cMR ERROR "Last result ${_val}s or file size ${filesize}B too small"
 									cCWrite $hTarget.lastspdcmd speedtest0
 									continue
@@ -1529,17 +1530,21 @@ EOF
 				# _val="$ssh_data"
 				# dbg speedtest "*$ssh_data*, rc=$ssh_rc"
 				if [ $ssh_rc = 0 ] ; then
-					starttime="$(cOut|sed -n 1p )"
-					filesize="$(cOut|sed -n 2p )"
-					endtime="$(	cOut|sed -n 3p )"
+					starttime="$(cOut|sed -n 1p)"
+					filesize="$(cOut|sed -n 2p)"
+					endtime="$(	cOut|sed -n 3p)"
 					_val="$((endtime - starttime))"
 					speedMB="$( awk "BEGIN { printf \"%.1f\" , $filesize*8 / ($_val+0.000001) / 1048576}" )"
-					if [ "$_val" -lt 11 -o "$filesize" -lt 10000 ] ; then
-						speedtestcmd="${speedtestcmd}0" # try next bigger size
-						dbg "Result time ${_val}s or file size ${filesize}B too small, redoing with $speedtestcmd"
+					if [ "$filesize" -lt 10000 ] ; then
+						dbg "File size ${filesize}B for $_url too small, will abort."
+						_spcmd="speedtest000000" # head for abort
+						cmdsToDo="${_spcmd}${cmdsToDo:+,$cmdsToDo}"
+					elif [ "$_val" -lt 11 ] ; then
+						_spcmd="${_spcmd}0" # try next bigger size
+						dbg "Result time ${_val}s for file size ${filesize}B too small, redoing with $_spcmd"
 						cMR ONGOING "Result ${_val}s for file size ${filesize}B too small. Retrying larger file." "*speedMb*:*$speedMB*"
-						cmdsToDo="${speedtestcmd}${cmdsToDo:+,$cmdsToDo}"
-						cCWrite $hTarget.lastspdcmd "$speedtestcmd" # cache bigger file speedtest for next time
+						cCWrite $hTarget.lastspdcmd "$_spcmd" # cache bigger file speedtest for next time
+						cmdsToDo="${_spcmd}${cmdsToDo:+,$cmdsToDo}"
 					else
 						cEcho "$speedMB"
 						cMS /speedtest "{*speedMb*:$speedMB,*filesize*:$filesize,*elapsedtime*:$_val,*unit*:*Mb/s*${sLastSpeed}}"
@@ -1658,8 +1663,8 @@ EOF
 				;;
 			showsite|addresses)
 				cTrustGET
-				_cmd=gluon-show-site ; 	[ $cmd = addresses ] && _cmd="ip -6 -j addr show"
-				if cSsh $_cmd ; then
+				_scmd=gluon-show-site ; 	[ $cmd = addresses ] && _scmd="ip -6 -j addr show"
+				if cSsh $_scmd ; then
 					cMqtt "/$cmd" "$ssh_data"
 					[ "$bQuiet" ] || printf %s "$ssh_data" | json_pp
 				else
