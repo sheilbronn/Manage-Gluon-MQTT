@@ -32,6 +32,7 @@ if cCmv busybox ; then
 	alias awk="busybox awk" # && cCmv goawk && alias awk=goawk # FIXME: remove experiment with goawk
 	alias sed="busybox sed"
 	alias tr="busybox tr"
+	alias grep="busybox grep"
 	alias xargs="busybox xargs -r"
 fi
 	[ "$(ech"o" -e)" = "-e" ] && alias ECHO="echo" || alias ECHO="echo -e" # some echo's know -e, some not. /bin/echo would be needed for color generalized interpretation, in case -e not understood
@@ -77,9 +78,12 @@ alias cX="local - && set +x" # stop the local verbosity
 # ( { for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | egrep -A 9 -w '6e:a3:09:ea:31:e0' | grep SSID:.muenchen.freifunk.net/muc_sued && ( ( iwinfo | grep $sPubIf0 ) || ( wifi up ; echo wifi upped. ) ) ) || ( iwinfo | grep $sPubIf0 && iw dev $sPubIf0 del ; echo if downed )
 
 cHelp() {
-  echo "Usage: ${0##*/} ... -v -m mqttserver -p -s host -c command ...
-   Execute arbitrary as well as predefined commands on Gluon/Freifunk/OpenWrt nodes using uci and other commands. Return values on stdout or MQTT.
-   Either automatic (e.g. key-based) access to the Freifunk node using SSH or remote execution is possible." 1>&2
+  echo "Usage: $sMe ... -v -m mqttserver -p -s host -c command ...
+   Execute commands on Gluon/Freifunk/OpenWrt nodes using uci and other commands. Returns output on stdout and/or MQTT.
+   Either automatic (e.g. key-based) access to the Freifunk node using SSH or remote execution is supported.
+   Implemented commands:" 1>&2
+   _cel='\)(\s*#.*|)$' # = comment til eol
+  grep -E "^\s*[a-z_|-]+$_cel" "$0" | sed -E -e "s,$_cel,," -e 's,\|, ,g'  | xargs echo 1>&2 # extract coammands from this shell script
 }
 
 cSortAndTailFile() {
@@ -548,10 +552,16 @@ hMulti() { # 1: topic, 2: name, 3: retained, 4: settable, 5: datatype, 6: unit, 
 		fi
 	}
 
+cBothMqtt() {
+		cMS		"/$1" "$2"
+		hLine	"$1" "$2"
+	}
+
 cEchoPub() {
 		cEcho	"$2"
-		cMS		"/$cmd/$1" "${3:-$2}"
-		hLine	"$cmd/$1" "${3:-$2}"
+		cBothMqtt "$cmd/$1" "${3:-$2}"
+		# cMS		"/$cmd/$1" "${3:-$2}"
+		# hLine	"$cmd/$1" "${3:-$2}"
 	}
 
 announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are to be deleted.
@@ -1054,7 +1064,7 @@ do
 				_user="$(cOut|cSanitize)"
 				# sNewName="$cmdopts"
 				if [ -z "$_user" ] ; then
-					cErr "targetuser on targethost could not be determined remotely. Debug SSH setup:"
+					cErr "targetuser on targethost could not be determined remotely. Debug your SSH setup:"
 					continue # abort case
 				fi
 
@@ -1079,13 +1089,13 @@ do
 					cSsh "command -v opkg || command -v apt || echo nothing" 2>$fNul
 					_scmd="$(basename "$ssh_data")"
 					case "$_scmd" in
-					opkg)
+					opkg|X)
 						_scmd="$_scmd update && $_scmd install mosquitto-client-nossl"
 						;;
-					apt)
+					apt|X)
 						_scmd="$_scmd update && $_scmd install mosquitto-clients"
 						;;
-					nothing)
+					nothing|X)
 						cErrAndExit "ERROR: opkg / apt not found on $hFull. Stopping..." || continue # never gets here afterwards
 						;;
 					esac
@@ -1099,6 +1109,9 @@ do
 				# now comes a Gluon-specific part - determine Gluon by checking for the UCI entry autoupdater_branch
 				cSsh "uci get autoupdater.settings.branch"
 				dbg autoupdater_branch "$ssh_data"
+				# PS1='\[\033[31;1m\]\h \[\033[32;1m\]$PWD\[\033[0m\] \[\033[31m\]\$\[\033[0m\] '
+				# set -x
+				# cSsh 'echo PS1=''\[\033[31;1m\]\h \[\033[32;1m\]$PWD\[\033[0m\] \[\033[31m\]\$\[\033[0m\] '' >> /etc/profile'
 				if [ -z "$ssh_data" -o -z "$bDoAll" ] ; then  # is probably Non-Freifunk					
 					cEcho "Done installing for target $hTarget (autoupdater_branch=$ssh_data,bDoAll=$bDoAll)..."
 					ssh_data="$_sizedata" # inject the previously saved size data
@@ -1241,13 +1254,13 @@ EOF
 					ssh $sSshUser && break
 					sleep 5
 				done ;;
-			homie-update|disco-update|discovery-update)
+			homie-update|discovery-update)
 				cTrustGET
 				_cmd="cat /proc/uptime"
-				homieuptime="$( [ "$hFull" = localhost ] && $_cmd || $0 -h "$hFull" "$_cmd"  )" && hLine '$stats/uptime' "$(e "$homieuptime" | cut -d. -f1 )"
+				homieuptime="$( [ "$hFull" = localhost ] && $_cmd || $0 -h "$hFull" "$_cmd"  )" && hLine "\$stats/uptime" "$(e "$homieuptime" | cut -d. -f1 )"
 				cmdsToDo="localclients,wifistatus,gluondata,machine-data,$cmdsToDo"
 				;;
-			homie-delete|disco-delete|discovery-delete)
+			homie-delete|discovery-delete)
 				cTrustSET
 				homie="$(cLower $hTarget)" # duplicated code...
 				announce_disco "$homie" -d
@@ -1299,9 +1312,9 @@ EOF
 						sChannel24="$(cOut|awk '$1=="channel" {print $2}' )" # works for iw
 						cMS 	/publicwifi/state	ON
 						hLine	publicwifi/state	true
-						# cEchoPub radio/channel24 "$sChannel24"
-						cMS 	/radio/channel24 	"$sChannel24"
-						hLine	radio/channel24	"$sChannel24"
+						cBothMqtt 	radio/channel24 	"$sChannel24"
+						# cMS 	/radio/channel24 	"$sChannel24"
+						# hLine	radio/channel24	"$sChannel24"
 					else
 						if [ "$ssh_data" ] ; then
 							dbg "command=$cmd, rc=$ssh_rc, ssh_data=$ssh_data"
@@ -1317,18 +1330,21 @@ EOF
 						cMS 	/publicwifi/state	OFF
 						hLine	publicwifi/state	false
 						# cEchoPub publicwifi/clientscount 0
-						cMS 	/publicwifi/clientscount 0
-						hLine	publicwifi/clientscount 0
+						cBothMqtt 	publicwifi/clientscount 0
+						# cMS 	/publicwifi/clientscount 0
+						# hLine	publicwifi/clientscount 0
 					fi
 				fi
 				if [ "$sNewSSID" ] ; then
 					cEcho "$sNewSSID"
 					_ssid="$( printf %s "$sNewSSID" | sed -e 's,.*/,,' -e 's/"//g'  )"
 					cMR OK "$sNewSSID"
-					cMS		/publicwifi/ssidshort "$_ssid"
-					hLine	publicwifi/ssidshort "$_ssid"
-					cMS 	/publicwifi/ssid "$sNewSSID"
-					hLine	publicwifi/ssid "$sNewSSID"
+					cBothMqtt publicwifi/ssidshort "$_ssid"
+					# cMS		/publicwifi/ssidshort "$_ssid"
+					# hLine	publicwifi/ssidshort "$_ssid"
+					cBothMqtt publicwifi/ssid "$sNewSSID"
+					# cMS 	/publicwifi/ssid "$sNewSSID"
+					# hLine	publicwifi/ssid "$sNewSSID"
 					sNewSSID="" # delete cached SSID
 				else	
 					cMR ERROR "SSID is empty:"
@@ -1466,7 +1482,7 @@ EOF
 			site)
 				cTrustGET
 				cGetSitecode FRESH
-				[ "$sSite" ] && echo "$sSite" || { sSite=UNKNOWN ; cMR ERROR ;} #FIXME: MQTT reply missing
+				[ "$sSite" ] && { cmd=gluondata cEchoPub site $sSite; true ;}|| { sSite=UNKNOWN ; cMR ERROR ;}
 				;;
 			gluondata)
 			  os_data="$(cGetOSData)"
@@ -1485,7 +1501,7 @@ EOF
 				cEchoPub gluon-version	"$(cOut|sed -n 5p)"				
 				cEchoPub release	"$(cOut|sed -n 6p )" "$(cOut|sed -n -e 's/^v//' -e 6p)"
 				cEchoPub gluon-domains	"$(cGetGluonDomainsStarred $hTarget)"
-				cEchoPub site	$sSite
+				cEchoPub site $sSite
 			  	cMR OK
 			  fi
 			  ;;
@@ -1541,8 +1557,9 @@ EOF
 						cmdsToDo="${_spcmd}${cmdsToDo:+,$cmdsToDo}"
 					elif [ "$_val" -lt 11 ] ; then
 						_spcmd="${_spcmd}0" # try next bigger size
-						dbg "Result time ${_val}s for file size ${filesize}B too small, redoing with $_spcmd"
-						cMR ONGOING "Result ${_val}s for file size ${filesize}B too small. Retrying larger file." "*speedMb*:*$speedMB*"
+						_s="Result ${_val}s too small for file size ${filesize}B"
+						dbg "$_s, redo with $_spcmd"
+						cMR ONGOING "$_s. Retrying larger file." "*speedMb*:*$speedMB*"
 						cCWrite $hTarget.lastspdcmd "$_spcmd" # cache bigger file speedtest for next time
 						cmdsToDo="${_spcmd}${cmdsToDo:+,$cmdsToDo}"
 					else
@@ -1746,7 +1763,7 @@ EOF
 				for i in $(seq $_n) ; do
 					# echo %s $i | awk '{print}'
 					# echo %s $i | awk '{print}'
-					# history | awk '{print}' > /dev/null
+					# history | awk '{print}' > $fNul
 					# cat $fNul | cat | awk '{print}'
 					# date | awk '{print}'
 					printf y
