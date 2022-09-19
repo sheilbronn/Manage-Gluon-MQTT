@@ -8,7 +8,7 @@
 #
 # Repo: https://github.com/sheilbronn/Manage-Gluon-MQTT
 
-# Some fixed constants and prelimenary (fixed) settings ....
+# Some fixed constants and prelimenary (fixed) settings ...
 # semi-hungarian notation for vars: i(n)teger, (s)tring, (d)irectory, (c)ommand, (b)oolean usage, (f)ile, (h)ost, (_) local meaning only
 
 # manage_gluon_mqtt -m localhost -v -c noop,ignore,echo,date,loop,filecopy,wifidown,wifiup,wifistatus,limit,ffcond,gluonreconfigure,site,gluondata,speedtest,status,printmap,localclients,nodeinfo,neighbours,statistics,showsite,memory
@@ -24,8 +24,8 @@ cLower() { { [ "$*" ] && echo "$*" || cat ;} | awk '{print tolower($0)}' ;}
 cPid() { sh -c 'echo $$' ;}
 # echo TEST: ; cPid ; cPid ; exit 
 
-alias trd="tr -d"
-alias cSanitize="trd -c A-Za-z0-9_.%,\ -" # remove special, leave spaces and ,._-
+alias cTrd="tr -d"
+alias cSanitize="cTrd -c A-Za-z0-9_.%,\ -" # remove special, leave spaces and ,._-
 alias cOut='echo "$ssh_data"'
 
 if cCmv busybox ; then
@@ -42,10 +42,10 @@ fi
 	alias r=ret"urn"
 
 set -o noglob  # set noglob will limit security and escaping problems
-sMe="$(echo ${0##*/} | trd -c A-Za-z0-9_.-)" # script fails on purposes when name contains white space
-sMe2="$(echo ${sMe%.sh} | trd _)"
+sMe="$(echo ${0##*/} | cTrd -c A-Za-z0-9_.-)" # script fails on purposes when name contains white space
+sMe2="$(echo ${sMe%.sh} | cTrd _)"
 sMID="$sMe2-$$"
-sID=$(e $sMID | trd -c a-zA-Z0-9) # sanitize the ID
+sID=$(e $sMID | cTrd -c a-zA-Z0-9) # sanitize the ID
 sManufacturer=Linux
 export ssh_rc=0
 export ssh_data=
@@ -128,11 +128,11 @@ cGetOSData() {
 
 cGetSitecode() { # $1=cachetimeout
 	cX
-	local _data="$(cCRead $hTarget.site 30 )" # the site code should be something quite stable...
+	local _data="$(cCRead $hTarget.site 10)" # site code is quite stable...
 	if [ -z "$_data" -o "$1" ] ; then
 		[ -z "$1" ] && _data="$(cCRead $hTarget.sitenotfound 1)" # dont do it every time, read a default for the rest of the time
 		if [ -z "$_data" -o "$1" ] ; then
-			cSsh "[ -d $dGluon ] && jsonfilter -e @.site_code <$dGluon/site.json || echo OTHER" 2>$fNul
+			cSsh "[ -d $dGluon ] && jsonfilter -e @.site_code <$dGluon/site.json || echo UNDET" 2>$fNul
 			if [ "$ssh_data" ] ; then
 				_data="$ssh_data"
 				cCWrite $hTarget.site "$_data"
@@ -143,7 +143,7 @@ cGetSitecode() { # $1=cachetimeout
 		fi
 	fi
 	sSite="$_data"
-	dbg cGetSitecode "sSite=$sSite \$1=$1"
+	dbg cGetSitecode "sSite=$sSite arg1=$1"
 	}
 
 cMostFrequentSite() {
@@ -190,7 +190,7 @@ cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
 	sPubIf0="$(e "$sPubIfs" | cut -d" " -f1)" # 1st interface
 	sPubIf1="$(e "$sPubIfs" | cut -d" " -f2)" # 2nd interface if any (e.g. 5 Ghz)
 	dbg PUBLIC "interface(s): if0=$sPubIf0,if1=$sPubIf1 (ifs=$sPubIfs)"
-	sSsidBase="$(e "$_data" | awk -F";" '{print $2;exit}' | trd \" | awk -F": " '{ gsub("/.*","",$2) ; print $2 }' )"
+	sSsidBase="$(e "$_data" | awk -F";" '{print $2;exit}' | cTrd \" | awk -F": " '{ gsub("/.*","",$2) ; print $2 }' )"
 }
 
 cTableToJSON() { # table is to be piped in. numerical values are made unquoted. $1: optional number of missing headers, e.g. 1 in free -t
@@ -459,7 +459,7 @@ cHassAnnounce() {
 	dbg cHassAnnounce "$*"
     local _topicpart="${3%/set}" # if $3 ends in /set it is settable, but remove /set from state topic
 	local _command_topic_str="$( [ "$3" != "$_topicpart" ] && echo ",*cmd_t*:*~/set*" )"  # determined by suffix ".../set"
-    # local _name="$(e "${2:+$2-}$4" | tr " " "-" | trd "[)()]/" )"
+    # local _name="$(e "${2:+$2-}$4" | tr " " "-" | cTrd "[)()]/" )"
     local _dev_class="${6:-none}"
 	local _state_class
 	local _jsonpath
@@ -467,15 +467,15 @@ cHassAnnounce() {
 	local _value_template_str
     if [ "$5" ] ; then
 		_jsonpath="${5#value_json.}" #  "${_jsonpath//[ \/-]/}"
-		_jsonpath_red="$(e "$_jsonpath" | trd "][. /-_" )"    # cleaned and reduced, needed in unique id's
+		_jsonpath_red="$(e "$_jsonpath" | cTrd "][. /-_" )"    # cleaned and reduced, needed in unique id's
 		_value_template_str=",*value_template*:*{{ $5 }}*"
 		local _devid="$(basename "$_topicpart")"
-		local _configtopicpart="$(e "$_topicpart" | trd "][ /-" )"
+		local _configtopicpart="$(e "$_topicpart" | cTrd "][ /-" )"
 		local _dev_unique_id="$sMe2$2" #   ="${sID}$2"
 	    local _dev_name="$2 ${_devid}" # "$2 ${_devid^}"
 	else
 		local _devid="$2"
-		local _configtopicpart="$(e "$_topicpart" | trd "][ /-" | cLower )"
+		local _configtopicpart="$(e "$_topicpart" | cTrd "][ /-" | cLower )"
 		local _dev_unique_id="${sMe2}$2" # remove the trailing process-id
 	    local _dev_name="$2"
     fi
@@ -569,14 +569,14 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 		_rc=$?
 		[ "$_rc" -ne 0 -a "$_rc" -ne 27 ] && dbg "Removal of retained topics below $_top returned $_rc"
 	else
-		# cMqtt "debug/$1" "MQTT ANOUNCEMENTS BEGIN (\$2=$2)"
+		# cMqtt "debug/$1" "MQTT ANOUNCEMENTS BEGIN (arg2=$2)"
 		[ "$sSshUser" = "NOUSER" ] && { hLine '$stats/uptime' "$(cut -d. -f1 </proc/uptime)" ;}
 		# cHomieReady "$1" ; echo DEBUG: $?
 		if [ "$_nDay" ] && [ "$(date +%j)" -eq "$_nDay" ] && [ -z "$bForceMQTTAnnounce" ] && cHomieReady "$1" ; then
 			dbg announce_disco ": skip announcements, homie state is ready... (bForceMQTTAnnounce=$bForceMQTTAnnounce)" # (re-)announce ONLY IF restart or new day or necessary
 			return 0
 		fi
-		dbg announce_disco ": WILL ANNOUNCE ... (\$1=$1, \$2=$2, bForceMQTTAnnounce=$bForceMQTTAnnounce)"
+		dbg announce_disco ": WILL ANNOUNCE ... (arg1=$1,arg2=$2, bForceMQTTAnnounce=$bForceMQTTAnnounce)"
 		os_data="$(cGetOSData)"
 		ad_devname="$(e "$1" | awk '{print toupper(substr($i,1,1)) substr($i,2) }' )"
 		ad_fwid="$(cCRead $hTarget.os_id 9)"
@@ -614,7 +614,7 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 
 		_gluondomains=$(cCRead $hTarget.gluondomains 9)
 		if [ "$_gluondomains" ] ; then
-			_wifi_domains="$(e "$_gluondomains" | trd "][*" | awk -F= '{ printf lim $1 ; lim="," }' )" # rough hack...
+			_wifi_domains="$(e "$_gluondomains" | cTrd "][*" | awk -F= '{ printf lim $1 ; lim="," }' )" # rough hack...
 			dbg wifi_domains "$_wifi_domains"
 				# 1: root, 2: name, 3: retained, 4: settable, 5: datatype, 6: unit, 7: format
 			hMulti publicwifi/ssidshort "Public WiFi short SSID" false true enum "" "$_wifi_domains" # rough hack...
@@ -794,7 +794,7 @@ do
 			[ "$bVeryVerbose" ] && dbg SSH "Running $sSshUser: $*"
 			_r="$(ssh $sSshUser -q "$@")"
 			ssh_rc=$?
-			ssh_data="$(echo "$_r" | trd '`')"
+			ssh_data="$(echo "$_r" | cTrd '`')"
 			if [ $ssh_rc -gt 0 ] ; then
 				[ $ssh_rc -eq 255 ] && ssh_msg="UNREACHABLE"
 				[ $ssh_rc -eq 127 ] && ssh_msg="COMMAND NOT FOUND"
@@ -1007,7 +1007,7 @@ do
 							else
 								_msg="${_msg}will start autossh and run check"
 								dbg AUTOSSH "$_msg"
-								autossh -f -N -T ${bVeryVerbose:+-v} -R 1883:localhost:1883 $hFull "$sMe -m localhost -c bridge ${mqttGroup:+-g $mqttGroup}"
+								autossh -f -N -T ${bVeryVerbose:+-v} -R 1883:localhost:1883 $hFull "$sMe -m localhost -c bridge ${mqttGroup:+-g $mqttGroup}" # || dbg AUTOSSH "rc=$?"
 								sleep 3
 								_pid="$(cat $AUTOSSH_PIDFILE)"
 								dbg AUTOSSH "pid=$_pid"
@@ -1362,7 +1362,7 @@ EOF
 				_val="${_val#channel24-}"	&& _val="${_val#channel24}"
 				cmd="channel24"
 				if [ "$_val" ] ; then
-					if [ "$(e "$_val" | trd "[0-9]" )" ] || [ "$_val" -lt 1 -o "$_val" -gt 13 ] ; then
+					if [ "$(e "$_val" | cTrd "[0-9]" )" ] || [ "$_val" -lt 1 -o "$_val" -gt 13 ] ; then
 						cMR ERROR "Illegal channel: $_val"
 						continue
 					else
@@ -1380,7 +1380,7 @@ EOF
 				cTrustSET
 				_tmp="$cmdopts"
 				[ "$_tmp" ] || _tmp=$cmd
-				_tmp=$(e "${_tmp#limit-}" | trd -c 0-9) # for security reasons
+				_tmp=$(e "${_tmp#limit-}" | cTrd -c 0-9) # for security reasons
 				cmd="limit"
 				# cErrAndExit "UNIMPLEMENTED"  # FIXME
 				if [ $_tmp -lt 50 -a $_tmp -ne 0 ] ; then
@@ -1403,8 +1403,8 @@ EOF
 				_tmp="${_tmp#wifissid-}"
 				_tmp="${_tmp#wifissid}"
 				_tmp="${_tmp:-$cmdopts}"
-				# [ -z "$_tmp" ] && cEcho "Empty shortssid from cmd=$cmd ($cmdopts), using welt"
-				_ssid="$(e "${_tmp:-welt}" | trd '}{)( ,=' )"
+				# [ -z "$_tmp" ] && cEcho "Empty shortssid from cmd=$cmd ($cmdopts), using 'welt'"
+				_ssid="$(e "${_tmp:-welt}" | cTrd '}{)( ,=' )"
 				dbg _ssid "$_ssid"
 				cmd="wifissid"
 				# further checks for allowed and legal  SSID values amongst gluon domains ....
@@ -1431,7 +1431,7 @@ EOF
 				dbg RESULT "=***$ssh_data***"
 
 				if [ -z "$ssh_data" ] ; then
-					_log="error: $ssh_rc ($ssh_msg) OR ssh data empty, aborting wifissid command...."
+					_log="error: $ssh_rc ($ssh_msg) OR ssh data empty, aborting command $cmd..."
 					cEcho "$_log"
 					cMR ERROR "$_log"
 				else
@@ -1541,7 +1541,7 @@ EOF
 						cmdsToDo="${_spcmd}${cmdsToDo:+,$cmdsToDo}"
 					elif [ "$_val" -lt 11 ] ; then
 						_spcmd="${_spcmd}0" # try next bigger size
-						dbg "Result time ${_val}s for file size ${filesize}B too small, redoing with $_spcmd"
+						dbg "Result time ${_val}s for file size ${filesize}B too small, redo with $_spcmd"
 						cMR ONGOING "Result ${_val}s for file size ${filesize}B too small. Retrying larger file." "*speedMb*:*$speedMB*"
 						cCWrite $hTarget.lastspdcmd "$_spcmd" # cache bigger file speedtest for next time
 						cmdsToDo="${_spcmd}${cmdsToDo:+,$cmdsToDo}"
@@ -1596,13 +1596,13 @@ EOF
 
 					_n=$(wc -l <$fClients)
 					hLine publicwifi/clientscount $_n
-					cp -p $fClients $dCache/xx
+					# cp -p $fClients $dCache/xx
 					_data="$( tr " " "," < "$fClients" |
 						awk -F, -v lccount="$_n" -v hname=$hTarget 'BEGIN { printf "{*count*:%s,*localclients*:[", lccount } { printf lim "{*addr*:*%s*,*name*:*%s*,*detail*:*%s*}", $1, ($2=="") ? $1 : $2, gensub(/ *$/, "", 1, $3 " " $4 " " $5) ; lim="," } END { printf "],*host*:*%s*}",hname }' |
 						  shorten_ethernet_addr_in_json ${bDoAll:+skip} )"
 					while read -r _ipaddr _what _who ; do
 						dbg IP "*$_ipaddr* *$_what* *$_who*"
-						_ipaddr="$(e "$_ipaddr" | trd ":" )"
+						_ipaddr="$(e "$_ipaddr" | cTrd ":" )"
 						_details="$_what${_who:+ $_who}" && [ "$_details" ] || _details="$_ipaddr"
 						cMS "$sSite/$sArea/$_ipaddr" "{*lasthost*:*$hTarget*,*details*:*$_details*}"
 					done <"$fClients"
@@ -1746,7 +1746,7 @@ EOF
 				for i in $(seq $_n) ; do
 					# echo %s $i | awk '{print}'
 					# echo %s $i | awk '{print}'
-					# history | awk '{print}' > /dev/null
+					# history | awk '{print}' > $fNul
 					# cat $fNul | cat | awk '{print}'
 					# date | awk '{print}'
 					printf y
@@ -1797,6 +1797,7 @@ EOF
 				cTrustSET || cErrAndExit "$_msg"
 				cErr "$_msg"
 			esac
+			[ "$sSite" = UNDET -a "$ssh_rc" = 0 ] && cGetSitecode 0 # retry getting site code if UNDETermined
 		done
 	fi
 	
