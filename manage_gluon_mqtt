@@ -197,12 +197,12 @@ cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
 	sSsidBase="$(e "$_data" | awk -F";" '{print $2;exit}' | cTrd \" | awk -F": " '{ gsub("/.*","",$2) ; print $2 }' )"
 }
 
-cTableToJSON() { # table is to be piped in. numerical values are made unquoted. $1: optional number of missing headers, e.g. 1 in free -t
+cTableToJSON() { # table is to be piped in. numerical values are made unquoted. $1: (optional) number of missing headers, e.g. 1 in free -t
 	cX
-	awk -v missingHeaders="${1:-0}" '
+	awk -v missHead="${1:-0}" '
 		BEGIN { OFS=""
 			getline
-			for (i=1; i<=NF; i++) names[i+missingHeaders] = $i   # read the headers
+			for (i=1; i<=NF; i++) names[i+missHead] = $i   # read the headers
 			printf "{"
 		} {
 			printf lim "*%s*:{", gensub(":", "", 1, tolower($1)) # remove any ":"
@@ -277,12 +277,13 @@ cErrAndExit() {
 cEcho() { # output stuff unless to be quiet
 	cX
 	[ "$bQuiet" ] && return
+	o="${*:-$ssh_data}"
 	# local _out="$*"
 	# [ "$1" = "${1#\{\*}" ] && ECHO EINS
 	# [ "$1" = "${1#\{\*}" ] && ECHO ZWEI
 	# FIXME:  [ "$1" = "${1#\{\*}" -a "$1" = "${1#\[\*}" ] && _out="$(cStarredToJSON "$*" | json_pp)"  # expand (only) "starred" pseudo-JSON
-	ECHO "$Cyan$*$Rst"
-	cLogger info "$*"
+	ECHO "$Cyan$o$Rst"
+	cLogger info "$o"
 	}
 
 dbg() { # output its args to stderr if option -v was set
@@ -400,7 +401,7 @@ alias cTrustNOMQTT="cTrust NOMQTT || continue" # FIXME: covered by catchall
 
 bMosqFile=$( [ -r $HOME/.config/mosquitto_pub ] && echo yes)
 
-cMqtt() { # cMqtt(topic,msg, options), expand a leading /
+cMqtt() { # cMqtt(topic,msg, options) # expanding a leading / in topic
 	cX
 	[ "$cMPub" = : ] && return
 	dbg PUB_MQTT "$1  $2 ${3:+OPTIONS=$3}${bVeryVerbose:+ (hMqtt=$hMqtt;hTarget=$hTarget)}"
@@ -519,7 +520,7 @@ cHomieReady() {
 	}
 
 hLine() {
-		[ "$homie" -a -z "$bHassOnly" -o "$1" = \$state ] && cMqtt "homie/$homie/$1" "$2" $3
+		[ "$homie" -a -z "$bHassOnly" -o "$1" = \$state ] && cMqtt "homie/$homie/$1" "$2" "$3"
 	}
 
 hMeta() {
@@ -1052,7 +1053,7 @@ do
 					for i in $( seq $((cmdopts - 1)) ) ; do
 						$_cmd
 						dbg "$ssh_data"
-					done && cEcho "$ssh_data"
+					done && cEcho
 					cMR OK "Command $cmd: Performed $cmdopts-times /bin/date in $(( ssh_data - startval)) seconds: $startval-$ssh_data"
 				else
 					cMR ERROR "$cmd: Invalid parameter '$cmdopts'"
@@ -1181,13 +1182,13 @@ EOF
 					cSsh "mosquitto_sub -h $hPubMqtt -t $_topic -v -C 1 -W 5  --remove-retained"
 
 					if cSsh "crontab -l | grep \"$sMe\"" ; then
-						cEcho "$ssh_data"
+						cEcho
 						dbg MODIFY "A crontab line containing '$sMe' was found... Leaving crontab unmodified."
 					else
 						cEcho "crontab entry with '$sMe' not found... adding a simple one... pls modify it later!!"
 						_line="0 * * * * sleep 50 ; $sMe -c echo+LOCALCHIME,machine-data,statistics -r -m $hPubMqtt,localhost"
 						cSsh "{ crontab -l ; echo \"$_line\" ;} | crontab - ; ${bVerbose:+echo crontab is now: ; crontab -l}"
-						cEcho "$ssh_data"
+						cEcho
 					fi
 				fi
 
@@ -1204,7 +1205,7 @@ EOF
 					_line="\( sleep 240 \; $sMe -c echo+BOOTED,machine-data,statistics -m $hPubMqtt,localhost \; \) \&"
 					# sed -i -e '$s/exit 0/exit 0\naaa/g' rc.local
 					cSsh "sed -i sav -e  \"s/^exit 0/$_line\\nexit 0/\" $fRC ; 	${bVerbose:+echo $fRC is now: ; cat $fRC }"
-					cEcho "$ssh_data"
+					cEcho
 				fi
 				;;
 			filecopy|selfcopy)
@@ -1577,7 +1578,7 @@ EOF
 				_data="$(cOut|awk '
 					NR==1 { uptime=sprintf("%d", $1) }
 					NR==2 { printf "{*uptime*:%s,*load*:%.2f}", uptime ,$1 }' )" # uptime in seconds
-				cEcho "$ssh_data"
+				cEcho
 				cMS /$cmd "$_data"
 				;;
 			printmap)
@@ -1657,7 +1658,7 @@ EOF
 				else
 					printf %s "$ssh_data" >$fTmpMqtt
 					cCWrite $hTarget.$cmd "$ssh_data" # cache the whole data to support change detection in the future
-					cEcho "$ssh_data"
+					cEcho
 					cMqtt "/$cmd" "$ssh_data"
 					if [ $cmd = statistics ] ; then
 						# node_id=$( jq -r .node_id $fTmpMqtt )
@@ -1692,7 +1693,8 @@ EOF
 			memory)
 				cTrustGET
 				if cSsh 'free -t | tr -d -c "0-9 a-zA-Z:\n"' ; then
-					cEcho "$ssh_data"
+					cEcho
+					# cStarredToJSON "$(cOut|cTableToJSON 1)" | json_pp
 					cMS /$cmd "$(cOut|cTableToJSON 1)"
 				else
 					cMR ERROR "$cmd failed:"
@@ -1701,16 +1703,15 @@ EOF
 				;;
 			mountsizes|mountsizes_prev)
 				cTrustGET
-				[ $cmd != "mountsizes_prev" ] && cSsh "df -PhT" # little workaround to have 2 datas when using "install"
+				[ $cmd != "mountsizes_prev" ] && cSsh "df -PhT" # little workaround to have before/after datas when using "install"
 				cmd="mountsizes"
 				if [ $ssh_rc -ne 0 ] ; then
 					cMR ERROR "$cmd failed:"
 					cErr :
 				else
 #				elif cCmv jq ; then		
-					_data="$ssh_data"
-					cEcho "$_data"
-					_data="$(e "$_data" | sed -e 's/\([0-9]\)\.0K/\1K/g' | grep -E '^/|overlay' | awk 'BEGIN{print"["} END{print"]"} { print lim "{*mountpoint*:*" $7 "*,*type*:*"$2"*,*filesystem*:*"$1"*,*spaceavail*:*"$5"*,*spaceused*:*"$4"*,*percentused*:*"$6 "*,*spacetotal*:*" $3 "*}" ; lim="," }' )"
+					cEcho
+					_data="$(e "$ssh_data" | sed -e 's/\([0-9]\)\.0K/\1K/g' | grep -E '^/|overlay' | awk 'BEGIN{print"["} END{print"]"} { print lim "{*mountpoint*:*" $7 "*,*type*:*"$2"*,*filesystem*:*"$1"*,*spaceavail*:*"$5"*,*spaceused*:*"$4"*,*percentused*:*"$6 "*,*spacetotal*:*" $3 "*}" ; lim="," }' )"
 #					_data="$(e "$_data" | jq -R -s '
 #						[ split("\n") | .[]  |
 #						if test("^/") or test("overlay") then
@@ -1826,7 +1827,7 @@ EOF
 	fi
 done
 
-if [ "$nCollectedClients" -o "$bDoAll" ] ; then
+if [ "$nCollectedClients" -o "$bWorkAllClients" ] ; then
 	[ "$bVerbose" -o "$bGiveHost" ] && ECHO "\n######  ALL CLIENTS " "$@" "######"
 	cMqtt "$sArea/publicwifi/allclientscount" $nCollectedClients
 
@@ -1838,7 +1839,7 @@ if [ "$nCollectedClients" -o "$bDoAll" ] ; then
 			{ sort -k 2 "$fCollection" | join -1 2 -2 1 -a 1 - $fMacIDs | sort -r -k 1 |
 			uniq -w 17 | sort -k 2 > "$_ccwn_fn" ;} && dbg "$_ccwn_fn" "\n$(cat "$_ccwn_fn")"
 			# echo HELLO
-			[ "$bDoAll" ] && cMS "$sSite/$sArea/alllocalclients/debug" "$( { echo addr date node name p ; sort "$_ccwn_fn" ;} | cTableToJSON )"
+			[ "$bWorkAllClients" ] && cMS "$sSite/$sArea/alllocalclients/debug" "$( { echo addr date node name p ; sort "$_ccwn_fn" ;} | cTableToJSON )"
 			mv "$_ccwn_fn" "$fCollection"
 		fi
 		_data="$( awk -F" " -v id="$sArea" -v lccount=$nCollectedClients 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lccount, id } END {printf "]}"} { printf lim "{*addr*:*%s*,*name*:*%s*}", $1 , ($4=="")? $1 : $4 $5 $6 $7 ; lim="," }' < "$fCollection" |
