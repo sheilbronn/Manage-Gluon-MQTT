@@ -1887,7 +1887,7 @@ if [ "$nAllClients" -o "$bWorkAllClients" ] ; then
 			[ "$bWorkAllClients" ] && cMS "$sSite/$sArea/alllocalclients/debug" "$( { echo addr date node name p ; sort "$_ccwn_fn" ;} | cTableToJSON )"
 			mv "$_ccwn_fn" "$fCollection"
 		fi
-		_data="$( awk -F" " -v id="$sArea" -v lccount=$nCollectedClients 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lccount, id } END {printf "]}"} { printf lim "{*addr*:*%s*,*name*:*%s*}", $1 , ($4=="")? $1 : $4 $5 $6 $7 ; lim="," }' < "$fCollection" |
+		_data="$( awk -F" " -v id="$sArea" -v lccount=$nAllClients 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lccount, id } END {printf "]}"} { printf lim "{*addr*:*%s*,*name*:*%s*}", $1 , ($4=="")? $1 : $4 $5 $6 $7 ; lim="," }' < "$fCollection" |
 			shorten_ethernet_addr_in_json ${bDoAll:+skip} )"
 		cEcho "$(cStarredToJSON "$_data" | json_pp)"
 		cMS "$sSite/$sArea/alllocalclients" "$_data"
