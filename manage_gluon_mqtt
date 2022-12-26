@@ -177,17 +177,15 @@ cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
 	local _data="$(cCRead $hTarget.ifs "${2:-9}")"
 	if [ -z "$_data" ] ; then
 		cSsh "command -v iwinfo >$fNul && iwinfo" || { cErr "iwinfo not found:" ; return $? ;} # only iwinfo works for this
-		# echo "$ssh_data" > /tmp/x
-		# _data="$( { cOut ; echo "" ;} |awk '/^$/ {print (l~/Mode: Master;.*;Encryption: none/?l:"");l="";next} {gsub("^ +",";") ; gsub("  +",";") ;l=l$0 ;next}' )"
-		_data="$( { cOut ; echo "" ;} |awk '/^$/ {if (l~/Mode: Master;.*;Encryption: none/) print l;l="";next} {gsub("^ +",";") ; gsub("  +",";") ;l=l$0 ;next}' )"
-		dbg REMOTE "interfaces returned: $_data"
-		[ "$_data" ] && cCWrite .ifs "$_data" #  .... cache result only if at least one public Freifunk if is up and running
+		_data="$( { cOut ; echo "" ;} |awk '/^$/ {if (l~/Mode: Master;.*;Encryption: none/) print l;l="";next} {gsub("^ +",";") ; gsub(" {2,9}",";") ;l=l$0 ;next}' )"
+		dbg REMOTE "Interfaces returned: $( echo "$_data" | head -10)"
+		[ "$_data" ] && cCWrite .ifs "$_data" # ... cache the result only if at least one public Freifunk interface is up and running
 	fi
 	sPubIfs="$(e "$_data" | awk -F";" '{printf $1 " "}')"
 	# set global variables $sPubIfs, $sPubIf0, $sPubIf1 and sSsidBase as side effects...
 	if [ -z "$sPubIfs" ] ; then
 		sPubIfs="ERROR"
-		_msg="No interface(s) determinable: sPubIfs=$sPubIfs"
+		_msg="No interface determinable: sPubIfs=$sPubIfs"
 		dbg PUBLIC "$_msg"
 		cErr "$_msg"
 		sSsidBase=""
@@ -195,7 +193,7 @@ cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
 	fi
 	sPubIf0="$(e "$sPubIfs" | cut -d" " -f1)" # 1st interface
 	sPubIf1="$(e "$sPubIfs" | cut -d" " -f2)" # 2nd interface if any (e.g. 5 Ghz)
-	dbg PUBLIC "interface(s): if0=$sPubIf0,if1=$sPubIf1 (ifs=$sPubIfs)"
+	dbg PUBLIC "Interfaces: if0=$sPubIf0,if1=$sPubIf1 (ifs=$sPubIfs)"
 	sSsidBase="$(e "$_data" | awk -F";" '{print $2;exit}' | cTrd \" | awk -F": " '{ gsub("/.*","",$2) ; print $2 }' )"
 }
 
@@ -726,7 +724,7 @@ do
 		[ $cMPub = : ] && cErrAndExit "$MP is not installed (consider running \"-c install\"!"
         exit 1
         ;;
-    h|s) ffhosts="$OPTARG" # one or more Freifunk node(s)
+    h|s) ffhosts="$OPTARG" # one or more Freifunk nodes
 		if expr index ."$ffhosts" "+*" >$fNul # substitute '+' or a '*'' for a set of predefined hosts
 		then
 			# multiple "host1,host2,host3" (without double quotes)
@@ -897,11 +895,11 @@ do
 			dbg "SUBSCRIBED: nPidMosq=$nPidMosq"
 			cmd="bridge" && cMR ON "Subscribed $(awk -v a="$_subscriptions" 'BEGIN {gsub("-t ","",a) ; print a}' )"
 			
-			_ms=5 #  pipe periodic stuff into the pipe to make it wakeup at most every $_ms seconds
+			_ms=5 #  pipe periodic stuff into the pipe to make it wake up not more often than every $_ms seconds
 			while sleep $_ms ; do [ -r "$fSleep" ] && nMqttSleep="$(awk "{ print \$1<$_ms ? 0 : \$1-$_ms ;exit}" "$fSleep" )" ; echo PERIODIC noop "${nMqttSleep}secs" ; sleep "$nMqttSleep" || true ; done  > $fPipe &
 			readonly nPidPeriodic=$!
 			
-			if cCmv ubus ; then  #  .. and enable a listener for the ubus bus:
+			if cCmv ubus ; then  #  .. and enable a listener for the ubus bus on OpenWrt:
 				( ubus listen & echo $! > $dTmp/ubusPid ) | awk '{print "UBUS LISTEN " $0 ; fflush()}' > $fPipe &
 				readonly nPidUbus="$(cat $dTmp/ubusPid)"
 				dbg UBUS "Background ubus listen pid is: $(pgrep -lfa "ubus listen")"
@@ -1349,6 +1347,7 @@ EOF
 					cSsh "$_scmd"
 				fi
 				ssh_data="$(cOut|tail -14)" # shorten away the long redundant error msg from stdout from iw
+				# dbg TAILED "$ssh_data"
 				if [ -z "$sNewSSID" ] ; then # ... was cached or if not cached, not unreachable
 					# set -x
 					sNewSSID="$(cOut|sed -n -e '/\.ssid=/{s/.*=//;p;q}' -e '/ssid/{s/\tssid //;p;q}')" # coerced uci and iw output to get results # for iwinfo: -e '/ESSID:/{s/[^:]*: //;s/\"//g;p;q}' 
@@ -1484,10 +1483,10 @@ EOF
 						_hn=\"\$(tr A-Z a-z <$fHost)\" &&
 						other=\"\$( printf %s \"$otherssid\" | sed -e \"s/MYHOSTNAME/\$_hn/\" -e \"s/%s/\$_hn/\" )\"  &&
 						otheresc=\"\$( ec\"ho\" \"\$other\" | sed -e 's,/,\\\\/,' )\"  &&
-						iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/'  -e '1q' | awk \"{print} /\$otheresc/ { exit(99) }\" &&
+						iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' | awk \"{print} /\$otheresc/ { exit(99) }\" &&
 						uci set wireless.client_radio0.ssid=\$other ${sPubIf1:+&& uci set wireless.client_radio1.ssid=\$other} &&
 				        wifi up && sleep $nWifiSleep ;
-						iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDNEW/' -e '1q' " # FIXME: ignoring any 2nd interface
+						iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDNEW/' -e '1q' " # FIXME: ignoring any 2nd or further interface
 				# echo ----------------
 				dbg RESULT "=***$ssh_data***"
 
