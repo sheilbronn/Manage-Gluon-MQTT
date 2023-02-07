@@ -729,8 +729,6 @@ sUciVal=""
 cMPub=mosquitto_pub
 cCmv $cMPub || { cMPub=":" ; dbg "Variable/command cMPub=*$cMPub* (: is dummy)." ;}
 
-jsonfilter=$(command -v jq ) || jsonfilter=$(command -v jsonfilter) || cErrAndExit "jsonfilter or jq must be made available."
-jsonfilter=$(basename "$jsonfilter")
 cCmv json_pp || alias json_pp=cat
 # alias cBeautify="jq -Sm" ; cCmv jq || alias cBeautify="cat"
 
