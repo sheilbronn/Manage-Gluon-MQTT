@@ -287,6 +287,9 @@ cErrAndExit() {
 	exit 1
 	}
 
+jsonfilter=$(command -v jq ) || jsonfilter=$(command -v jsonfilter) || cErrAndExit "jsonfilter or jq must be made available."
+jsonfilter=$(basename "$jsonfilter")
+
 cEcho() { # output stuff unless to be quiet
 	cX
 	[ "$bQuiet" ] && return
@@ -392,12 +395,13 @@ jsonfilter_func() {  #  jsonfilter_func(filterexpr,moreparam)=result
 	if [ "$jsonfilter" = jsonfilter ] ; then
 		data=$(jsonfilter -e "@$1" $2) # $2 is unquoted to avoid complaint when missing
 	elif [ "$jsonfilter" = jq ] ; then
-		data=$(jq -r "$1" $2)
+		data=$(echo $2|jq -r "$1")
 	else
 		cErrAndExit '$jsonfilter is undefined'
 	fi
 	printf %s "$data"
   }
+set -x ; jsonfilter_func .addr_info "$(ip -j -6 addr show scope global)" ; exit 99
 
 cGetMacVendor() {
 	cX
@@ -437,7 +441,8 @@ cMqtt() { # cMqtt(topic,msg, options) # expanding a leading / in topic to $sSite
 	local _topic="$1"
 	[ "$1" != "${1#/}" ] && _topic="$sSite/$hTarget$1" # ... expand shortcut starting with "/"
 	for h in $hMqtt ; do
-		$cMPub ${h:+-h $h} ${sMID:+-i $sMID} -t "$_topic" -m "$2" -i "${sSite}_$hTarget" $3	|| dbg "$cMPub(host=$h): rc=$?" #  $3  passed without quotes on purpose
+		#  passing $3 without quotes on purpose:
+		$cMPub ${h:+-h $h} ${sMID:+-i $sMID} -t "$_topic" -m "$2" -i "${sSite}_$hTarget" $3	|| dbg "$cMPub(host=$h): rc=$?"
 	done
 	}
 
