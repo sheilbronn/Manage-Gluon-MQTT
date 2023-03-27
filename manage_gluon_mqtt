@@ -217,17 +217,17 @@ cTableToJSON() { # table is to be piped in. numerical values are made unquoted. 
 		BEGIN { OFS=""
 			getline
 			for (i=1; i<=NF; i++) names[i+missHead] = $i   # read the headers
-			printf "{"
+			printf "["
 		} {
-			printf lim "*%s*:{", gensub(":", "", 1, tolower($1)) # remove any ":"
+			printf lim "{*%s*:{", gensub(":", "", 1, tolower($1)) # remove any ":"
 			for(i=2;i<=NF;i++) {
 				dq=($i ~ /^-?[0-9]+$[0-9.]*$/) ? "" : "*" # FIXME: Check: Is 99. really a JSON number ?
 				printf "*%s*:%s%s%s%s" , names[i] , dq,$i,dq, i==NF ? "" : ","
 			}
-			printf "}"
+			printf "}}"
 			lim=",\n"
 		}
-		END {print "}"} '
+		END {print "]"} '
   }
   # { echo spalte1 spalte2 ; echo a1 12 13 ; echo b1 b2;} | cTableToJSON 1 ; exit
 
@@ -1808,7 +1808,7 @@ EOF
 				;;
 			reboot)
 				cProbeSET
-				cMR ONGOING "Will $cmd($cmdopts)."
+				cMR ONGOING "Will $cmd($cmdopts)"
 				_key="gluon-setup-mode.@setup_mode[0].enabled"
 				[ "$cmdopts" = config ] && _more="uci set $_key=1 && uci commit &&" || _more="" # reboot to config mode on next boot
 				if cSsh "uci show $_key && $_more $cmd"  ; then
