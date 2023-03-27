@@ -1849,6 +1849,91 @@ EOF
 				done
 				dbg $cmd "$(awk "BEGIN {print ( $(cPid) - $_d - 4) / $_n }" )" # number of processes started for one command in the for loop above
 				;;
+			networkprobe)
+				cProbeNOMQTT
+				cmdopts="${cmdopts##0}"
+				_n="${cmdopts:-999}"
+
+				network="192.168.178"   #   ip -j -4 addr show scope global
+
+				sRemoveList="^iPhoneSH ^GalaxyS20FE ^S20-FE-von-S ^A52s-von-S ^constructa"
+				fScanTmp="$dCache/networkprobe"
+
+				clean_nmap() {
+					sed -e 's/Nmap scan report for //' -e 's/[)(]//g'
+				}
+				gen_removecmd() {
+					echo "$* xyzx" | xargs -n1 | awk 'BEGIN { printf "sed " } { printf " -e /%s/d", $1 }' 
+				}
+				removecmd="$(gen_removecmd "$sRemoveList")"
+				# https://nmap.org/book/reduce-scantime.html
+				# https://hackertarget.com/nmap-cheatsheet-a-quick-reference-guide/
+
+				data=$( echo "ip" "host" ; nmap -sL $network.0/24 | grep "([0-9]*\.[0-9]*" | clean_nmap | awk '{ printf "%-15s %s\n", $2, $1 }' ) # all hosts known by DNS
+				cEcho "$data"
+				cMS /$cmd "$( echo "$data" | cTableToJSON )"
+				# date +%H:%M:%S
+
+				networkscan() {
+					# nmapres="$(time nmap -sn $network.0/24 | clean_nmap | tee $fScanTmp.sn )" # -sn or -sP
+					nmapres="$( nmap -sP $network.0/24 | clean_nmap | tee $fScanTmp.sP  )" # -sn or -sP
+					echo "$nmapres" | grep "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" | 
+						clean_nmap | sort -k 2 |
+						# awk '{ if ($2) { nmapcmd="nmap -pT:80 " $2 " | grep ^80"; nmapcmd | getline port80 ; if ( port80 !~ /open/ ) { nmapcmd | getline port80 } } ; printf "%-27s %-15s  %s\n", $1 , $2, port80 ~ /open/ ? "http://" $2 : "" ; }'
+						awk '{ if ($2) { 
+							nmapcmd="nmap -pT:80 " $2 " | grep ^80"; nmapcmd | getline port80 ; if ( port80 !~ /open/ ) { "sleep 3 ; " nmapcmd | getline port80 } 
+							nmapcmd="nmap -pT:22 " $2 " | grep ^22"; nmapcmd | getline port22 ; if ( port22 !~ /open/ ) { "sleep 3 ; " nmapcmd | getline port22 } 
+							} 
+							printf "%-25s %-15s %-10s %s\n", $1 , $2, port80 ~ /open/ ? "http" : ".", port22 ~ /open/ ? "ssh" : "." 
+						}'
+				}
+
+				while _n=$((_n-1)) && [ "$_n" -ge 0 ] ; do
+					networkscan | eval "$removecmd" > $fScanTmp
+					dbg "Scanned $network.0/24 (_n=$_n, $(date +%H+%M+%s) )" && cat $fScanTmp
+					diffres1="$( diff -N -bw -up -B -U 0 $fScanTmp.prev $fScanTmp 2>&1 | grep -v "^-$" )"
+					diffres2="$( echo -n "$diffres1"  | grep -E '^\+[^+]|^\-[^-]' )" # only lines with one +/-
+
+					[ "$diffres2" ] && echo "$diffres2" | sed -e "s/^\(.\)/& $(date +%H:%M:%S) /" # insert space after +/-  # 1. Stdout Output
+
+					echo "$diffres2" | grep "^+" | 
+					while read -r host ip httpopen sshopen restline ; do    # 2. MQTT output only for lines with "+"
+						cEcho "$host  ${httpopen:+http://}$ip ${sshopen:+ssh://$ip}"
+						cMqtt /network "$host  ${httpopen:+http://}$ip" 
+					done 
+					mv $fScanTmp $fScanTmp.prev
+					sleep 5
+					# echo =============
+				done
+
+				;;
+			networkscan)
+				cProbeNOMQTT
+				# -sV: Probe open ports to determine service/version info
+				# -O: OS detection
+				# SPECIAL: nmap must be run as root or must have been privileged:  sudo setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip $(which nmap)
+				[ "$bDoAll" ] && _opts="-sV --version-intensity 6" || _opts=""
+				_opts="$_opts --osscan-guess --privileged" # assure nmap that is has the necessary privileges
+				_n="$( echo "$cmdopts" | sed -e "s,_,/," )"
+				_n="${_n:-192.168.178.0/24}"
+				cMR ONGOING "Will $cmd($_n) with nmap options:$_opts"
+				# set -x
+				data="$(nmap $_opts "$_n" 2>&1 | 
+					awk '/scan report/ { ip=substr($6,2,length($6)-2) ; printf "%s{\"IpAddr\":\"%s\",\"host\":\"%s\"", lim, ip, gensub(/\..*/,"","g",$5) }
+						/OS details:/ { gsub("OS details: ",""); printf ",\"OS\":\"%s\"}\n", $0 ; lim="," }
+						/MAC Address:/ { gsub("MAC Address: ",""); printf ",\"mac\":\"%s\",\"vendor\":\"%s\"}\n", gensub(" .*","",0) , gensub(".* (","",0,gensub(")$","",0)) ; lim="," }
+						/Failed to / { printf "*details*:*%s (or nmap rights?)*", $0 ; exit 99 }
+					')"
+				_rc=$?
+				if [ $_rc -eq 0 ] ; then
+					cEcho "[ $data ]"
+					cMqtt /$cmd "[ $data ]"
+					cMR OK
+				else
+					cMR ERROR "{ $data }"
+					[ $_rc -eq 99 ] && cErrAndExit "$data ; getcap: $(getcap "$(which nmap)") ;"
+				fi
+				;;
 			wifiscan)
 				cProbeNOMQTT
 				# relies on the following entry in root's crontab, since only root is allowed to do a full wifi scan
