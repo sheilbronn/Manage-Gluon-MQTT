@@ -1898,6 +1898,7 @@ EOF
 
 					echo "$diffres2" | grep "^+" | 
 					while read -r host ip httpopen sshopen restline ; do    # 2. MQTT output only for lines with "+"
+						httpopen=${httpopen%.} ; sshopen=${sshopen%.}
 						cEcho "$host  ${httpopen:+http://}$ip ${sshopen:+ssh://$ip}"
 						cMqtt /network "$host  ${httpopen:+http://}$ip" 
 					done 
