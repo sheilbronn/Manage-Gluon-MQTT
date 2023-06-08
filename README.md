@@ -20,45 +20,45 @@ Supported functions/return information:
 * Reboot the Freifunk node.
 
 IMPORTANT: This script would be benefit from some refactoring, the code is provided as is.
-(Yes, I know: Large bash scripts tend to get ugly and Lua would have been preferred.... ;) )
+(Yes, I know: Large bash scripts tend to get ugly and Lua would have been much preferred.... ;) )
 
 ### More Details
 
-The following 4 main different use cases are supported:
+The following 4 main use cases are supported:
 
 A. Management of an (untouched) Freifunk node by **remote SSH** commands (public/private key authentication): Command results are returned as **terminal output** (stdout).
 
 B. Management of an (untouched) Freifunk node by **remote SSH** commands (public/private key authentication): Command results are returned as **MQTT messages**. (B and A are handled simultaneously.)
 
-C. Monitoring by **MQTT messages**: Invoked by an explicit SSH call, init or by cron, this script runs locally on the Freifunk node, returning its output as **MQTT messages**.
+C. Monitoring by **MQTT messages**: Invoked by a crontab entry, an explicit SSH call, or an inittab entry on the Gluon node, this script runs locally on the node and returns output as **MQTT messages**.
 
-D. Local management as a daemon on the node: This script listens to **MQTT messages** and returns results a MQTT messages, too. (D does not exclude C, also the script can run as a daemon invoking commands on other, pre-configured Freifunk hosts as in A or B).
+D. Local management as a daemon on the Gluon node: This script listens to **MQTT messages** and returns results a MQTT messages, too. (D does not exclude C, also the script can run as a daemon invoking commands on other, pre-configured Freifunk hosts as in A or B).
 
 Other aspects:
 
-* [Home assistant](https://www.home-assistant.io/docs/mqtt/discovery/) and [Homie](https://homieiot.github.io/specification/) auto-discovery for the most important topics.
+* [Home assistant](https://www.home-assistant.io/docs/mqtt/discovery/) and [Homie](https://homieiot.github.io/specification/) auto-discovery for the more important topics.
 * MQTT discovery is tested with the [OpenHAB MQTT binding](https://www.openhab.org/addons/bindings/mqtt/) and [HoDD](https://github.com/rroemhild/hodd)
 * Script should run on [bash](https://de.wikipedia.org/wiki/Bash_(Shell)) as well as [ash](https://en.wikipedia.org/wiki/Almquist_shell) (ash is used in [OpenWrt](https://openwrt.org/) as the default shell). However, dash is used to trigger script verification in Visual Studio Code (VSC).
 * If the Freifunk node has very limited memory, e.g. on [4/32 devices](https://openwrt.org/supported_devices/openwrt_on_432_devices), B might be preferred over C or D.
 * In order to install the Mosquitto packages using the install command (see below), the package installation tool [opkg](https://openwrt.org/docs/guide-user/additional-software/opkg) is needed on Freifunk (Gluon) devices. opkg might not be available on [devices with limited memory](https://openwrt.org/supported_devices/openwrt_on_432_devices): Use use case A and B as a workaround.
 * Remote management via a Freifunk "edge" node acting as a SSH proxy to other Freifunk nodes works well, e.g. use the [ProxyJump directive](https://www.redhat.com/sysadmin/ssh-proxy-bastion-proxyjump) in your `.ssh/config`.
-* The script can install itself plus some other prerequisites. See below.
+* The script can install itself plus some other prerequisites. See _install_ command below.
 
 ### Prerequisites
 
 Depending on the use case to be supported, some prequisites have to be fulfilled in order for the script to work:
 
-* Installation of the [Mosquitto](https://mosquitto.org) packages mosquitto_pub and mosquitto_sub. They should be in every Linux repository, including OpenWrt, e.g. ``opkg update; opkg install mosquitto-client-nossl`` or ``apt install mosquitto-clients`` on the host on which the script (and therefore the MQTT clients) are to be run.
+* Installation of the [Mosquitto](https://mosquitto.org) packages mosquitto_pub and mosquitto_sub. They should be in every Linux repository including OpenWrt. Install with ``opkg update; opkg install mosquitto-client-nossl`` or ``apt install mosquitto-clients`` on the Gluon or any other host on which the script (and therefore the MQTT clients) are to be run.
 See command ```install´´´ for more details.
-N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluon image updates
+(N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluon image updates)
 * For use case A, B, and C as well as debugging purposes: 
   Enable [automatic remote invocation via SSH using public key authentication](https://openwrt.org/docs/guide-user/security/dropbear.public-key.auth)
-* If you want to use the script remotely: Install ash from a package repository (or manually replace ash by bash in the first line), e.g. on a Raspberry: ``apt install ash``. The script is written to be compatible to both ash and bash.
-* This script relies on some version of Gluon or at least OpenWRT/Raspbian/Raspberry Pi OS: It has been tested on [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.*, 2020.1.* up to 2020.3.* from these communities:
+* If you want to use the script remotely on any GNU/Linux system: Install ash from a package repository (or manually replace ash by bash in the first line), e.g. on a Raspberry: ``apt install ash``. The script is written to be compatible to both ash and bash.
+* This script relies on some version of Gluon or at least OpenWRT/Raspbian/Raspberry Pi OS: It has been tested on [Gluon](https://github.com/freifunk-gluon/gluon) 2019.1.x, 2020.1.x, 2021.1.x, up to 2022.1.* from these communities:
   [Freifunk Munich](https://ffmuc.net), [Freifunk Frankfurt](https://ffm.freifunk.net).
 
    Please let me know or open a GitHub issue if you have success or problems with other versions or other communities.
-* In case of MQTT connection problems: Ensure that incoming or outgoing MQTT connections are not blocked by a firewall - consider my [mqtt-grep-color](https://github.com/sheilbronn/mqtt-grep-color) to verify and debug your MQTT setup more easily. See command ```install´´´ for more details.
+* In case of MQTT connection problems: Ensure that incoming or outgoing MQTT connections are not blocked by a firewall - and consider my [mqtt-grep-color](https://github.com/sheilbronn/mqtt-grep-color) to verify and debug your MQTT setup more easily. See command ```install´´´ for more details.
 * Only in use case A and B: To profit from zram in /var/log on Openhabian, consider adding the following line to root's crontab via ``crontab -e``:
 
   ```crontab
@@ -68,28 +68,30 @@ N.B.: Consider protecting the Mosquitto files from deletion during Freifunk/Gluo
 ### Command-line options / Invocation
 
 * -c (commands): One or more management commands to be executed (comma-separated), see below for the details.
-* -s (server): If the script is not run locally on the (Freifunk) node itself (localhost), the SSH names of one or more other Freifunk nodes maybe passed with -s (comma-seperated)
+* -s (served nodes): If this script is not run locally on the (Freifunk) node itself (localhost), the SSH names of one or more other Freifunk nodes maybe passed with -s (comma-seperated)
 * -G (give): In the output add an informative line with host and command (useful für multiple commands and hosts)
-* -g (group): group.
+* -g (group): MQTT group.
     If running as a daemon (D), also listen to MQTT messages for a MQTT group as well.
 * -v (verbose): more, verbose output from the script as well as intermediate steps. Additional -v's add more verbosity.
-* -x (exec): each shell command is echoed to stdout before execution (for debugging)
+* -x (exec): each shell command in the script is echoed to stdout before execution (for debugging)
 * -q (quiet): no output on stdout
-* -h (host): name or IP adress of the MQTT broker.
-    The public test broker test.mosquitto.org may be abbreviated as -h test and iot.eclipse.ors as -h eclipse.
-    If no broker is given, mosquitto_pub and mosquitto_sub will use their defaults (see their manual pages).
-* -m (mqtt): use MQTT or not (currently only implied by -p)
+* -h (host): name or IP adress of the MQTT broker.  
+    Multiple -h options may be given for messages to multiple brokers.  
+    Following abbreviations for public MQTT brokers may be used:  
+    test for test.mosquitto.org, eclipse for iot.eclipse.ors.  
+    If no broker is given, mosquitto_pub and mosquitto_sub will use their respective defaults (see their manual pages).
+* -m (mqtt): use MQTT at all or not (currently implied by -p)
 * -p : support Home-Assistant (HASS) and Homie auto-discovery via MQTT
 
-Supported commands for the -c option are:
+Special commands for the -c option are:
 
 * *bridge*: Script will become a daemon waiting for MQTT commands, subsequent commands are ignored (Use case D)
 * *noop*: Do nothing (for testing purposes)
 * *echo*: Just echo the received command options
 * *date*: Return the current system date (for testing purposes)
 * _install_: Install if necessary the Mosquitto package, a firewall rule, a sample crontab entry, and then run _filecopy_.
-* _filecopy_: Install a reduced and optimized version of this script itself to /sbin.
-* _sh_: Invoke a remote SSH shell on the remote host (limited to A,B for security reasons!)
+* _filecopy_: Install a very reduced and space optimized version of this script itself to /sbin on the target node.
+* _sh_: Invoke a remote SSH shell on the remote host (limited to A,B for security reasons)
 * _discovery-update_: Issue all auto-discovery announcements as well as the values.
 * _discovery-delete_: Remove all retained messages for auto-discovery.
 * *wifistatus* ...
@@ -136,9 +138,9 @@ Remotely on a linux box at home (gluonnode ist the FF node):
   ]
 ```
 
-On the FF node itself:
+On the Freifunk/Gluon node itself:
 
-  ``$ manage_gluon_mqtt -m test.mosquitto.org -s gluonnode -c status``
+  ``$ manage_gluon_mqtt -m test.mosquitto.org -c status``
 
 To run verbosely as a daemon on the target host:
 
@@ -146,6 +148,6 @@ To run verbosely as a daemon on the target host:
 
 ### Notes / Comments
 
-* [ ] Script needs more refactoring
-* [ ] Handle more and different Gluon versions gracefully.
+* [ ] Script always needs more refactoring
+* [ ] Test for more and different Gluon versions.
 * [ ] Should not have to reinstall this script plus the mosquitto tools after an OS or Gluon upgrade.

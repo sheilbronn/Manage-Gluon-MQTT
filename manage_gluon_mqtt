@@ -375,7 +375,6 @@ cCRead() { # read a key/value pair to be cached across script invocations from t
   }
 
 
-
 if [ -t 1 ] ; then
 	F='\e[' # https://gist.github.com/bcap/5682077#file-terminal-control-sh
 	Yellow="${F}33m" ; Cyan="${F}36m" ; OnRed="${F}41m" ; Rst="${F}0m"
@@ -616,7 +615,6 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 
 	local -
 	local _nDay="$(cCRead .AnnounceDay 999)"
-	local
 
 	if [ "$2" = "-d" -o "$bDeleteAnnouncement" ] ; then
 		cMqtt "debug/$1" "DELETE ANOUNCEMENTS BEGIN: $1,bDeleteAnnouncement=$bDeleteAnnouncement"
@@ -2031,4 +2029,3 @@ find . -maxdepth 1 -path "./[0-9]*" -type d -mtime +6 -exec rm -r '{}' ";" # rem
 # { echo FALSE ; false ;} || { echo TRUE  ; true ;} || echo YES ; echo =====
 # { echo TRUE  ; true ;} || { echo FALSE ; false ;} || echo YES ; echo =====
 # { echo FALSE ; false ;} || { echo FALSE ; false ;} || echo YES ; echo =====
-# exit
