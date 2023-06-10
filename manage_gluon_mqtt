@@ -136,13 +136,13 @@ cGetSitecode() { # $1=cachetimeout
 	cX
 	local data="$(cCRead .site 9)" # site code is quite stable...
 	if [ -z "$data" -o "$1" ] ; then
-		[ "$1" ] || data="$(cCRead .sitenotfound 1)" # dont do it every time, read a default for the rest of the time
+		[ "$1" ] || data="$(cCRead .sitenotfound 1)" # dont do it every time, read a default for the rest of the day
 		if [ -z "$data" -o "$1" ] ; then
 			if cSsh "[ -d $dGluon ] && jsonfilter -e @.site_code <$dGluon/site.json || echo UNDET" 2>$fNul ; then
-				data="$ssh_data"
+				[ "$ssh_data" = UNDET ] && data="$(cCRead .os_id 9)" || data="$ssh_data" # use a OS ID as site fallback if not on Gluon		
 				cCWrite .site "$data"
 			else
-				data="$(cMostFrequentSite)" #  hack: use my local standard
+				data="$(cMostFrequentSite)" #  hack: use my local "standard"
 			fi
 			[ "$1" ] || cCWrite .sitenotfound "$data"
 		fi
@@ -403,7 +403,6 @@ jsonfilter_func() {  #  jsonfilter_func(filterexpr,moreparam)=result
 cGetMacVendor() {
 	cX
 	local _short="$(echo "$1" | cCut - 1-3)"
-	# vendor="$(cCRead "mac-$_short.macvendor" 99 | cCut " " 1-2)"
 	if ! vendor="$(cCRead "mac-$_short.macvendor" 99 | cCut " " 1-2)" ; then
 		vendor="$(wget -q -O - "https://api.macvendors.com/$1" | cCut " " 1-2)"
 		cCWrite "mac-$_short.macvendor" "$vendor"
@@ -427,7 +426,7 @@ alias cProbeGET="cProbe GET || continue"
 alias cProbeSET="cProbe SET || continue" # FIXME: logic not implemented consistently
 alias cProbeNOMQTT="cProbe NOMQTT || continue" # FIXME: covered by catchall
 
-cStackCommand() { cmdsToDo="$1${cmdsToDo:+,$cmdsToDo}" ; dbg STACKCOMMAND "$1" ;}
+cStackCommand() { cmdsToDo="$1${cmdsToDo:+,$cmdsToDo}" ; dbg STACKCOMMAND "$1 ($cmdsToDo)" ;}
 
 bMosqFile=$( [ -r $HOME/.config/$MP ] && echo yes)
 
@@ -465,17 +464,17 @@ cMqttReply() {
 	}
 	alias cMR=cMqttReply
 
-cBeacon() {
+cMqttBeacon() {
 	_pubcmd="$cMPub -h $hPubMqtt" # caution: Freifunk/Gluon seems to need IPV6 connectivity, not all brokers have it!
 	# _pubcmd="$cMPub -h broker.hivemq.com"
 	_topic="\"$sSite/\`tr A-Z a-z < $fHost\`/installation\"" # tr shall run on the remote host with apostrophes!
-	dbg SENDING "MQTT message: $_pubcmd $_topic"
+	dbg BEACON "$_pubcmd $_topic"
 	cSsh "$_pubcmd -t $_topic -r -m TEST_$cmd"
 	_rc=$ssh_rc
-	if [ $ssh_rc != 0 ] ; then
+	if [ $_rc != 0 ] ; then
 		cErr "$_pubcmd -t $_topic -r -m TEST_$cmd had failed with $ssh_rc ($ssh_msg) on remote host (check why!)"
 	else
-		dbg SENDING "$_pubcmd $_topic had succeeded, now removing this (retained) msg again..."
+		dbg BEACON "$_pubcmd $_topic had succeeded, now removing this (retained) msg again..."
 		cSsh "mosquitto_sub -h $hPubMqtt -t $_topic -v -C 1 -W 5 --remove-retained"
 	fi
 	return $_rc
@@ -684,7 +683,6 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 	# hMulti publicwifi/lastdate "Last date sent" false "" DateTime "" ""
 	hMulti publicwifi/state        "Public WiFi state"        "" true boolean "" ""
 
-	# _gluondomains=$(cCRead .gluondomains 9)
 	if _gluondomains=$(cCRead .gluondomains 9) ; then
 		_wifi_domains="$(e "$_gluondomains" | cTrd "][*" | awk -F= '{ printf lim $1 ; lim="," }' )" # rough hack...
 		dbg wifi_domains "$_wifi_domains"
@@ -800,8 +798,8 @@ done
 shift "$((OPTIND-1))"   # Discard the options parsed so far and leave the rest of the cmd line...
 
 # [ "$bQuiet"	] || alias cEcho=": cEcho"
-[ "$bVerbose"	] || alias dbg="false dbg"
-[ "$bVeryVerbose" ] && alias dbg2=dbg || alias dbg2="false dbg2"
+[ "$bVerbose"	] || alias dbg=": dbg"
+[ "$bVeryVerbose" ] && alias dbg2=dbg || alias dbg2=": dbg2"
 
 if [ "$homie" -o "$hMqtt" -o "$bMosqFile" ] ; then # enable MQTT
 	: dbg "MQTT commands real."
@@ -831,27 +829,33 @@ do
 	if [ "$hFull" = localhost ] ; then
 		sSshUser=NOUSER
 		cSsh() {
+			[ "$1" = -v ] && shift
 			ssh_msg=""
 			ssh_data="$(eval "$*")" # FIXME: see https://www.shellcheck.net/wiki/SC2294
 			ssh_rc=$?
-			[ $ssh_rc -eq 127 ] && ssh_msg="CMD NOT FOUND: $( echo "$@" | sed 's/ .*//' )" # FIXME: optimize
+			[ $ssh_rc -eq 127 ] && { set -- "$@" ; ssh_msg="CMD NOT FOUND: $1" }
 			return $ssh_rc
 		  }
 		hTarget="$sArea"
 	else
 		sSshUser="root@$hFull"
 		cSsh() {
-			# cEcho "$sSshUser:" "$@" 1>&2
-			cX
+			cX			
 			ssh_msg=""
-			[ "$bVeryVerbose" ] && dbg SSH "Running $sSshUser: $*"
+			[ "$bVeryVerbose" ] || { [ "$1" = -v ] && shift ; } && dbg SSHRUN "$* ($sSshUser)"
 			_r="$(ssh $sSshUser -q "$@")"
 			ssh_rc=$?
 			ssh_data="$(echo "$_r" | cTrd '`')"
-			if [ $ssh_rc -gt 0 ] ; then
-				[ $ssh_rc -eq 255 ] && ssh_msg="UNREACHABLE"
-				[ $ssh_rc -eq 127 ] && ssh_msg="CMD NOT FOUND: $( echo "$@" | sed 's/ .*//' )" # FIXME: optimize
-				dbg SSH " $sSshUser RETURNED $ssh_rc ($ssh_msg)" 1>&2
+			if [ $ssh_rc -eq 255 ] ; then
+				ssh_msg="UNREACHABLE" 
+			elif true || [ "$bVerbose" ] ; then
+				_n="$(cCRead .sshcnt)"
+				dbg2 SSH "count=$_n"
+				cCWrite .sshcnt $((_n+1))
+			fi
+			if [ $ssh_rc -ne 0 ] ; then		
+				[ $ssh_rc -eq 127 ] && { set -- "$@" ; ssh_msg="CMD NOT FOUND: $1" }
+				dbg SSH "RETURN CODE=$ssh_rc ($ssh_msg)" 1>&2
 				cLogger error "$* = $ssh_rc"
 			fi
 			return $ssh_rc
@@ -884,7 +888,6 @@ do
 		fi	
 	else
 		cmdsToDo="$commands"
-
 		if [ "$cmdsToDo" = bridge ] ; then
 			# prepare subscibing for MQTT messages...
 			mqttGroup="$(cExpand $mqttGroup)"
@@ -944,7 +947,7 @@ do
 
 		dbg LOOP "START (cmdsToDo=$cmdsToDo)"
 		while [ "$cmdsToDo" ] ; do
-			if [ "$cmdsToDo" = bridge ]  ;  then
+			if [ "$cmdsToDo" = bridge ] ; then
 				cmd=""
 				dbg READ "Will read $fPipe ..."
 				read -r sPipeType cmd cmdopts <$fPipe
@@ -1019,7 +1022,7 @@ do
 			cmdopts="$(e "$cmdopts" | cSanitize)"
 			[ "$bVeryVerbose" ] && dbg COMMAND " $cmd ($cmdopts) (REMAIN: $cmdsToDo)"
 			case "$cmd" in
-			help) # really hacky implementation by grepping this script code for case branches that look like a command ....
+			help) # really hacky implementation: grepping this script code for singular case branches that look like a command ....
 				cProbeGET
 				_msg="$( awk '$1 ~ /^[a-z]{3,}[a-z|]+)/ { gsub(/)/,"",$1); gsub(/\|/," ",$1); if ($1=="help") doit=1 ; if (doit) printf $1 " " }' "$0")"
 				cEcho "$_msg"
@@ -1039,7 +1042,7 @@ do
 				;;
 			beacon)
 				cProbeGET
-				cBeacon
+				cMqttBeacon
 				;;
 			autossh)
 				cProbeSET
@@ -1115,7 +1118,7 @@ do
 				cProbeGET
 				cmdopts="${cmdopts:-5}"
 				cMR ONGOING "$cmd'ing $cmdopts times"
-				if [ 2 -le "$cmdopts" -a 11 -ge "$cmdopts" ] ; then
+				if [ "$cmdopts" -ge 1 -a "$cmdopts" -le 99 ] ; then
 					_cmd='cSsh date -u +%s'
 					$_cmd ; startval="$ssh_data" && cEcho "$startval"
 					for i in $( seq $((cmdopts - 1)) ) ; do
@@ -1129,13 +1132,14 @@ do
 				;;
 			install)
 				cProbeNOMQTT
-				cSsh "id -nu"
+				cSsh -v "id -nu"
 				_user="$(cOut|cSanitize)"
-				# sNewName="$cmdopts"
 				if ! [ "$_user" ] ; then
-					cErr "targetuser on targethost could not be determined remotely. Debug your SSH setup:"
+					cErr "targetuser on targethost could not be determined. Debug your SSH setup:"
 					continue # abort install
 				fi
+				_auto="" # use autoupdater_branch setting as indicator for seeing if we are on Gluon
+				_lxlvl=1 # determine "Linux level", 0=Basic/1=GNU_Linux-like/2=e.g. Debian-like/3=OpenWrt (implied UCI)/4=Gluon
 
 				if [ "$hFull" != localhost -o "$(dirname "$0")" != /sbin ] && [ "$_user" = root ] ; then
 					cEcho "Remote targetuser is $_user: Will try to copy this script to /sbin later..."
@@ -1146,12 +1150,14 @@ do
 				os_data="$(cGetOSData)"
 				dbg "$os_data"
 
-				cSsh "df -PhT"
+				# STEP: log memory size at the beginning
+				# set -x # FIXME: remove
+				cSsh -v "df -PhT"
 				_sizedata="$ssh_data" # TODO: duplicated code from "mountsizes", save result for later
 
-				# ... try to install mosquitto if not there yet
+				# STEP: try to install mosquitto if not there yet
 				cSsh "command -v $MP"
-				if [ "$ssh_data" ] ; then
+				if [ "$ssh_data" ] && true ; then # FIXME: remove false after debugging
 					cEcho "$MP already installed on $hFull..."
 				else
 					cEcho "$hFull: $MP not found .. determining install cmd .."
@@ -1178,22 +1184,27 @@ do
 				fi
 				[ $ssh_rc -ne 0 ] && { cEcho "cSsh failed: $_c, aborting ..." ; continue ;}
 
+				# STEP: set the shell prompt PS1
 				# PS1='\[\033[31;1m\]\h \[\033[32;1m\]$PWD\[\033[0m\] \[\033[31m\]\$\[\033[0m\] ' # nicer prompt on OpenWrt
-				# FIXME: ensure that its done only once...
-				echo PS1=\''\[\033[31;1m\]\h \[\033[32;1m\]$PWD\[\033[0m\] '\' | cSsh 'mkdir -p /etc/profile.d && cat >> /etc/profile.d/my.sh' 
+				echo PS1=\''\[\033[31;1m\]\h \[\033[32;1m\]$PWD\[\033[0m\] '\#\ \' | cSsh 'd=/etc/profile.d ; mkdir -p $d && ! grep -sq PS1= $d/my.sh && cat >> $d/my.sh' &&
+					_lxlvl=2 # Debian-like
 
+				# STEP: get autoupdater settings (use as indicator for seeing if we are on Gluon)
 				# now comes a Gluon-specific part - determine Gluon by checking for the UCI entry autoupdater_branch
-				cSsh "uci get autoupdater.settings.branch"
-				dbg autoupdater_branch "$ssh_data"
-				! [ "$ssh_data" -a "$bDoAll" ] && {  # empty data = probably Non-Freifunk OR Dont do everything					
-					cEcho "Done partly install for target $hTarget (autoupdater_branch=$ssh_data,bDoAll=$bDoAll)..."
+				cSsh -v "uci get autoupdater.settings.branch" && _lxlvl=4 # Gluon
+				_auto="$ssh_data"
+				dbg AUTOUPDATER "branch=$_auto"
+				[ ! "$bDoAll" ] && {  
+					# only minimal install requested: abort here				
+					cEcho "Done partly install for target $hTarget (autoupdater_branch=$_auto,bDoAll=$bDoAll)..."
 					ssh_data="$_sizedata" # inject the previously saved size data...
 					cmdsToDo="mountsizes_prev${cmdsToDo:+,$cmdsToDo},mountsizes"
 					continue # quit installation here, unless on Gluon or $bDoAll = yes
 				}
 				cCWrite .autoupdater_branch
 				
-				if [ "yup" -a ! "$bDoExperiment" ] ; then # skip for now
+				# STEP: open firewall for MQTT on Gluon (only on Gluon)
+				if [ "$_lxlvl" -ge 4 -a "yup" -a ! "$bDoExperiment" ] ; then # on Gluon
 					# similar to https://ffmuc.net/wiki/doku.php?id=knb:ssh#webseite_des_ff-knoten_aus_dem_lan_aufrufen :
 					# uci set firewall.wan_http=rule
 					# uci set firewall.wan_http.name=wan_http
@@ -1207,7 +1218,7 @@ do
 					
 					# TRY LATER: wan over wifi: https://harz.freifunk.net/wiki/doku.php/anleitungen/gulon/wwan
 
-					cEcho "autoupdater config found ... assuming Gluon node ... add firewall rules for incoming MQTT..."
+					cEcho "Assuming Gluon: add firewall rules for incoming MQTT..." # outgoing should be working anyways
 					# works for Ulmer Software w/o Gluon, too... DONT KNOW IF NECESSARY ON ALL GLUON VERSIONS
 					cSsh "xargs ${bVerbose:+-t} -n 1 uci set ; uci commit" << EOF
 						firewall.wan_mqtt=rule
@@ -1223,11 +1234,12 @@ do
 						firewall.mesh_mqtt.dest_port='1883'
 						firewall.mesh_mqtt.target='ACCEPT'
 EOF
-					cSsh "/etc/init.d/firewall reload" || dbg "Failed to reload firewall."
+					cSsh -v "/etc/init.d/firewall reload" || dbg "Failed to reload firewall."
 					cOut
 				fi
 				
-				if [ "$bDoExperiment" ] ; then 
+				# STEP: add more firewall rules (only on Gluon)
+				if [ "$_lxlvl" -ge 4 -a "$bDoExperiment" ] ; then 
 					cEcho "... adding other firewall rules for outgoing MQTT..."
 					# works for Ulmer Software w/o Gluon, too... DONT KNOW IF NECESSARY ON ALL GLUON VERSIONS
 					{
@@ -1248,38 +1260,42 @@ EOF
 					done
 					} | cSsh "xargs ${bVerbose:+-t} -n 1 uci set ; uci commit"
 					
-					cSsh "/etc/init.d/firewall reload" || dbg "Failed to reload firewall."
+					cSsh -v "/etc/init.d/firewall reload" || dbg "Failed to reload firewall."
 					cOut
 					exit 55
 				fi
 				
-				if cBeacon ; then
-					if cSsh "crontab -l | grep \"$sMe\"" ; then
+				# STEP: add regular MQTT "beacon" to crontab on Linux-like systems
+				if cMqttBeacon && [ "$_lxlvl" -ge 2 ] ; then
+					if cSsh -v "crontab -l | grep \"$sMe\"" ; then
 						cEcho
-						dbg MODIFY "A crontab line containing '$sMe' was found... Leaving crontab unmodified."
+						dbg MODIFY "A crontab line already containing '$sMe' was found... Leaving crontab unmodified."
 					else
-						cEcho "crontab entry with '$sMe' not found... adding a simple one... pls modify it later!!"
-						_line="0 * * * * sleep 50 ; $sMe -c echo+LOCALCHIME,machine-data,statistics -r -m $hPubMqtt,localhost"
+						cEcho "crontab entry with '$sMe' not found... adding a simple one... pls adapt it later!!"
+						_line="0 * * * * sleep 50 ; $sMe -c echo+LOCALCHIME${_auto:+,machine-data,statistics} -m $hPubMqtt,localhost"
 						cSsh "{ crontab -l ; echo \"$_line\" ;} | crontab - ; ${bVerbose:+echo crontab is now: ; crontab -l}"
 						cEcho
 					fi
 				fi
 
-				_f=~/.ssh/id_rsa_piraten.pub
+				# STEP: copy a local, generic public key for login (only to /tmp, has then to be finished manually)
+				_f=~/.ssh/id_rsa_piraten.pub # put your own key there!
 				[ -r "$_f" ] && { dbg PUBKEY "Copying $_f" || echo "Public key file: $_f";} && 
 						cat $_f | cSsh 'cat >> /tmp/pubkey ; ls -al /tmp/pubkey'
 
-				# ... still not implemented: installing it as an MQTT daemon on Gluon ...
+				# ... FIXME: still not implemented: installing it as an MQTT daemon on OpenWrt/Gluon ...
 				_f=/etc/rc.local
 				cSsh "cat $_f"
-				if cOut|grep $sMe ; then
-					dbg MODIFY "The $_f line containing '$sMe' was found above... Leaving $_f unmodified."
-				else
-					cEcho "$_f entry with '$sMe' not found... adding a simple one... pls modify it later!!"
-					_line="\( sleep 240 \; $sMe -c echo+BOOTED,machine-data,statistics -m $hPubMqtt,localhost ";" \) \&"
-					# sed -i -e '$s/exit 0/exit 0\naaa/g' rc.local
-					cSsh "sed -i.sav -e  \"s/^exit 0/$_line\\nexit 0/\" $_f ; 	${bVerbose:+echo $_f is now: ; cat $_f }"
-					cEcho
+				if [ "$_lxlvl" -ge 3 ] ; then # FIXME: linux should be sufficient
+					if cOut|grep $sMe ; then
+						dbg MODIFY "The $_f line containing '$sMe' was found above... Leaving $_f unmodified."
+					else
+						cEcho "$_f entry with '$sMe' not found... adding a simple one... pls modify it later!!"
+						_line="\( sleep 240 \; $sMe -c echo+BOOTED,machine-data,statistics -m $hPubMqtt,localhost ; \) \&"
+						# sed -i -e '$s/exit 0/exit 0\naaa/g' rc.local
+						cSsh "sed -i.sav -e  \"s/^exit 0/$_line\\nexit 0/\" $_f ; 	${bVerbose:+echo $_f is now: ; cat $_f }"
+						cEcho
+					fi
 				fi
 				;;
 			filecopy|selfcopy)
@@ -1298,9 +1314,9 @@ EOF
 						cp -p $_fn /tmp &&
 							sed -E -i $_fn  -e 's,[ \t]*(&&|;|>|>>|\|)[ \t]*,\1,g' -e '/awk|printf|test|:/!s,"([a-z0-9/-][a-z0-9/._-]+)",\1,g' && #  -e 's,[^\)]\) [^a-zA-Z],),g'  &&
 						#             white space around && or ; or | , but not << or <    strings > 1c in double quotes   #FRAGILE
-						bash -x -n $_fn && cCmv ash && ash -x -n $_fn # smoke test the syntax of compressed script
+						bash -x -n $_fn && cCmv ash && ash -x -n $_fn # smoke test the syntax of compressed script with bash and ash
 				rc=$?
-				dbg $cmd "$fPath ($( wc -c < $fPath )) trimmed to $_fn ($( wc -c < $_fn )) : rc=$rc" # && cp $_fn /tmp/$(basename $_fn).$(date +%M)
+				dbg $cmd "$fPath ($( wc -c < $fPath )) trimmed to $_fn ($( wc -c < $_fn )): rc=$rc" # && cp $_fn /tmp/$(basename $_fn).$(date +%M)
 				[ $rc != 0 ] && cErrAndExit "Reducing script $_fn returned error $rc!"
 				{ cp -p $_fn $_fn.save ; cp -p $_fn $dCache/$fBase.last ;} # 2>$fNul
 				fPath=$_fn
@@ -1423,7 +1439,7 @@ EOF
 				cGetPubIF || continue # also sets sPubIfs
 				cSsh '{ for i in 1 2 2 ; do iw dev mesh0 scan ; sleep $i ; done } | tee $dCache/wifis ; echo ++++++++++++ ; iwinfo | grep sPubIf0'
 				ifresult="$(cOut|grep -A 3 '++++++++++' | grep -m 2 "client0 *ESSID:" )"
-				cErrAndExit "UNFINISHED CODE" # FIXME
+				cErrAndExit "UNFINISHED" # FIXME
 				if cOut|grep -A 9 -w '6e:a3:09:ea:31:e00' | grep -w "SSID:.$sSsidBase"
 				then
 					# client0   ESSID: "muenchen.freifunk.net/welt"
@@ -1456,8 +1472,6 @@ EOF
 					fi
 				fi
 				cStackCommand wifistatus # ... implicitly followed by a wifistatus
-				# FIXME: more code to be added
-				# ...
 				;;
 			limit|limit-*)
 				cProbeSET
@@ -1854,7 +1868,7 @@ EOF
 						continue
 					fi
 				fi
-				sRemoveList="^iPhoneSH ^GalaxyS20FE ^S20-FE-von-S ^A52s-von-S ^constructa" # FIXME: optionalize
+				sRemoveList="^iPhoneSH ^GalaxyS20FE ^S20-FE-von-S ^A52s-von-S ^constructa" # FIXME: optionalize this
 				fScanTmp="$dTmp/$cmd"	
 
 				clean_nmap() {
@@ -1887,7 +1901,7 @@ EOF
 						}'
 				}
 
-				while _n=$((_n-1)) && [ "$_n" -ge 0 ] ; do
+				while _n=$((_n-1)) ; [ "$_n" -ge 0 ] ; do
 					cMR ONGOING "Will do $cmd($network/24) number $_n."
 					networkscan | eval "$removecmd" > $fScanTmp
 					dbg "Scanned $network/24 (_n=$_n, $(date +%H:%M:%S) )" && cat $fScanTmp
@@ -1897,7 +1911,7 @@ EOF
 					[ "$diffres2" ] && echo "$diffres2" | sed -E -e 's/^(.)/& $(date +%H:%M:%S) /' # insert space after +/-  # 1. Stdout Output
 
 					echo "$diffres2" | grep "^+" | 
-					while read -r host ip httpopen sshopen rest_of_line ; do    # 2. MQTT output only for lines with "+"
+					while read -r host ip httpopen sshopen restline ; do    # 2. MQTT output only for lines with "+"
 						httpopen=${httpopen%.} ; sshopen=${sshopen%.}
 						cEcho "$host  ${httpopen:+http://}$ip ${sshopen:+ssh://$ip}"
 						cMqtt /$cmd/$network/member "$host  ${httpopen:+http://}$ip" 
@@ -1978,7 +1992,7 @@ EOF
 				cProbeSET || cErrAndExit "$_msg"
 				cErr "$_msg"
 			esac
-			[ "$sSite" = UNDET -a "$ssh_rc" = 0 ] && cGetSitecode 0 # retry getting site code if UNDETermined
+			[ "$sSite" = UNDET -a "$ssh_rc" = 0 ] && cGetSitecode FRESH # retry getting site code if UNDETermined
 		done
 	fi
 	
