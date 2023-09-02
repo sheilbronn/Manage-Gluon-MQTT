@@ -29,7 +29,9 @@ cPid() { sh -c 'echo $$' ;}
 
 alias cTrd='tr -d'
 alias cSanitize="cTrd -c A-Za-z0-9_.%,\ -" # remove special, leave spaces and ,._-
+alias cData='[ "$ssh_data" ]'
 alias cOut='echo "$ssh_data"'
+cLine() { echo "$ssh_data" | sed -n "$1"p ;}
 
 if cCmv busybox ; then # prefer busybox for performance, memory usage and compatibility
 	alias awk="busybox awk"
@@ -87,7 +89,7 @@ cHelp() {
    Implemented commands:" 1>&2
    _cel='\)(\s*#.*|)$' # = comment til eol
   grep -E "^\s*[a-z_|-]+$_cel" "$0" | sed -E -e "s,$_cel,," -e 's,\|, ,g'  | xargs echo 1>&2 # extract coammands from this shell script
-}
+  }
 
 cSortAndTailFile() {
 	cX
@@ -118,7 +120,7 @@ cGetOSData() {
 	cX
 	if ! _val="$(cCRead .os_data 1)" ; then
 		cSsh "cat /usr/lib/os-release" || return $? # cancel func
-		if [ "$ssh_data" ] ; then
+		if cData ; then
 			_val="$(cOut|awk -F= '
 				BEGIN { lim="{*os*:{" } END {printf "}}"}
 				{ gsub("\"", "*", $2) ; printf lim "*" tolower($1) "*:" $2 ; lim="," }' )" # generate new value
@@ -142,7 +144,7 @@ cGetSitecode() { # $1=cachetimeout
 				[ "$ssh_data" = UNDET ] && data="$(cCRead .os_id 9)" || data="$ssh_data" # use a OS ID as site fallback if not on Gluon		
 				cCWrite .site "$data"
 			else
-				data="$(cMostFrequentSite)" #  hack: use my local "standard"
+				data="$(cMostFrequentSite)" #  hack: use "my local standard"
 			fi
 			[ "$1" ] || cCWrite .sitenotfound "$data"
 		fi
@@ -159,13 +161,14 @@ cMostFrequentSite() {
 
 cGetHostname() { # $1=host $2=cachetimeout
 	cX
+	set -x
 	if ! ssh_data="$(cCRead "$1.hostname" "${2:-9}" )" ; then
 		cSsh "tr A-Z a-z <$fHost" || ssh_data="${1:-$hTarget}"
 		dbg cGetHostname "ssh_data=$ssh_data"
 		cCWrite "$1.hostname"
 	fi
 	cEcho
-}
+	}
 
 cCut() { cut -d"$1" -f${2:-1} $3 ; }
 
@@ -183,7 +186,7 @@ cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
 		ssh_data="$( { cOut ; echo "" ;} | awk '/^$/ {if (l~/Mode: Master;.*;Encryption: none/) print l;l="";next} {gsub("^ +",";") ; gsub(" {2,9}",";") ;l=l$0 ;next}' )"
 		dbg REMOTE "Interfaces returned: $( cOut | head -10)"
 		cSsidBase
-		[ "$ssh_data" -a "$sSsidBase" ] && cCWrite .ifs # ... cache only if at least one public Freifunk interface is up and running
+		cData && [ "$sSsidBase" ] && cCWrite .ifs # ... cache only if at least one public Freifunk interface is up and running
 	fi
 	# set global variables $sPubIfs, $sPubIf0, $sPubIf1 and sSsidBase as side effects...
 	sPubIfs="$(cOut | cCut ";" | xargs | cSanitize )"
@@ -202,7 +205,7 @@ cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
 	cSsidBase
 	dbg PUBLIC "Interfaces: if0=$sPubIf0,if1=$sPubIf1 (ifs=$sPubIfs), ssidbase=$sSsidBase"
 	return 0
-}
+	}
 
 # echo :"$IFS":
 # h() { local - ; IFS='' ; set -- $@ ; echo $2 ; }
@@ -235,14 +238,14 @@ cDelSimpleJsonAttr() { # $1: attr, $2: JSON-string  # but only covers very simpl
 	# attr="$1"
 	#                     a) not the last in the set (,)            b) only one or last in the set
 	echo "$2" | sed -E -e "s;\"$1\":(\"[^\"]*\"|[^,}]*)[ ]*,;;" -e "s;[ ]*,[ ]*\"$1\":(\"[^\"]*\"|[^,}]*)[ ]*};;"
-}
+	}
 
 cFirstJsonAttr() { # take string and extract the value of the first attribute if JSON, whole string otherwise. eliminating any non-alpha chars
 	cX
 	local m="$*"
 	[ "${m#{}" = "$m" ] && e "$m" && return # non-JSON
 	e "$m" | sed -e 's/[,}].*//g' -e 's/[^:]*://' -e 's/[^a-zA-Z0-9]*//g' # ... else JSON
-}
+	}
 # set -x ; x='{ eins:"first" , zwei="second" }' ; cFirstJsonAttr "$x" ; cFirstJsonAttr "blabla,bla:blub" ; exit # TEST
 
 cWordsToJsonArray() {
@@ -253,26 +256,28 @@ cWordsToJsonArray() {
 
 cGetGluonDomainsStarred() {
 	cX
-	if ! local ssh_data="$(cCRead .gluondomains 1)" ; then
-		cSsh "ls -1 $dGluon/domains 2>&1" || return $?  # cancel func
-		[ "$ssh_data" ] && {
+	ssh_data="$(cCRead .gluondomains 1)"
+	if ! cData ; then
+		cSsh "ls -1 $dGluon/domains 2>&1" || return $?  # cancel function
+		cData && {
 			ssh_data="$(cOut | sed -e 's/[^_]*_//' -e 's/.json//')"
 			cCWrite .gluondomains
 		}
 	fi
 	cOut | cWordsToJsonArray
-}
+	}
 
 cLogger() {
 		logger -p daemon.$1 -t "$sMe $hTarget" "$2"
 	}
+	# set -x ; cLogger info "blabla" ; exit 1
 
 cErr() {
 	cX
 	_tmp="$1"
 	[ "$1" = : ] && _tmp="ssh to $sSshUser for $cmd failed" # default msg is ....
 	[ "$1" != "${1%:}" ] && _tmp="${_tmp%:} (rc=$ssh_rc,$ssh_msg)" # if $1 ends in :, then add rc and msg
-	shift 1 
+	shift
 	ECHO "${OnRed}ERROR$Rst:" "$_tmp" "$@" 1>&2
 	[ -t 2 ] || cLogger error "$_tmp" "$@"
 	}
@@ -283,7 +288,7 @@ cErrAndExit() {
 	exit 1
 	}
 
-jsonfilter=$(cCmv jq) || jsonfilter=$(cCmv jsonfilter) || cErrAndExit "jsonfilter or jq must be made available."
+jsonfilter=$($C -v jq) || jsonfilter=$($C -v jsonfilter) || cErrAndExit "jsonfilter or jq must be made available."
 jsonfilter=$(basename "$jsonfilter")
 
 cEcho() { # output stuff unless to be quiet
@@ -297,10 +302,10 @@ cEcho() { # output stuff unless to be quiet
 	ECHO "$Cyan$o$Rst"
 	cLogger info "$o"
 	}
+	# set -x ; cEcho -e -e zwei ; exit 1
 
 dbg() { # output its args to stderr if option -v was set
 	cX
-
 	[ "$bVerbose" ] || return 1
 	{ [ "$#" = 2 ] && ECHO "$Yellow$1:$Rst" "$2" || ECHO "${Yellow}debug$Rst" "$*" ;} 1>&2
 	[ "$bVeryVerbose" ] && cLogger info "$*"
@@ -373,7 +378,6 @@ cCRead() { # read a key/value pair to be cached across script invocations from t
 	cX
 	cStoreRead "$1" "$2" "$dCache"
   }
-
 
 if [ -t 1 ] ; then
 	F='\e[' # https://gist.github.com/bcap/5682077#file-terminal-control-sh
@@ -833,7 +837,7 @@ do
 			ssh_msg=""
 			ssh_data="$(eval "$*")" # FIXME: see https://www.shellcheck.net/wiki/SC2294
 			ssh_rc=$?
-			[ $ssh_rc -eq 127 ] && { set -- "$@" ; ssh_msg="CMD NOT FOUND: $1" }
+			[ $ssh_rc -eq 127 ] && { set -- "$@" ; ssh_msg="CMD NOT FOUND: $1" ; }
 			return $ssh_rc
 		  }
 		hTarget="$sArea"
@@ -854,7 +858,7 @@ do
 				cCWrite .sshcnt $((_n+1))
 			fi
 			if [ $ssh_rc -ne 0 ] ; then		
-				[ $ssh_rc -eq 127 ] && { set -- "$@" ; ssh_msg="CMD NOT FOUND: $1" }
+				[ $ssh_rc -eq 127 ] && { set -- "$@" ; ssh_msg="CMD NOT FOUND: $1" ; }
 				dbg SSH "RETURN CODE=$ssh_rc ($ssh_msg)" 1>&2
 				cLogger error "$* = $ssh_rc"
 			fi
@@ -869,6 +873,7 @@ do
 	cGetSitecode # reusing value for all other nodes, too.
 	fTmpMqtt=$dTmp/mqtt.$hFull
 	sNewSSID=""
+	# set -x ; cGetHostname $hTarget 0 ; exit 1
 	
 	if [ "$sUciQuery" ] ; then
 		cSsh "uci show $1"
@@ -1020,7 +1025,7 @@ do
 			fi		
 			    cmd="$(e "$cmd" 	| cSanitize)" # for security reasons
 			cmdopts="$(e "$cmdopts" | cSanitize)"
-			[ "$bVeryVerbose" ] && dbg COMMAND " $cmd ($cmdopts) (REMAIN: $cmdsToDo)"
+			dbg2 COMMAND " $cmd ($cmdopts) (REMAIN: $cmdsToDo)"
 			case "$cmd" in
 			help) # really hacky implementation: grepping this script code for singular case branches that look like a command ....
 				cProbeGET
@@ -1120,12 +1125,12 @@ do
 				cMR ONGOING "$cmd'ing $cmdopts times"
 				if [ "$cmdopts" -ge 1 -a "$cmdopts" -le 99 ] ; then
 					_cmd='cSsh date -u +%s'
-					$_cmd ; startval="$ssh_data" && cEcho "$startval"
+					$_cmd ; data="$ssh_data" && cEcho "$data"
 					for i in $( seq $((cmdopts - 1)) ) ; do
 						$_cmd
-						dbg $cmd "$ssh_data"
+						dbg "$cmd" "$ssh_data"
 					done && cEcho
-					cMR OK "Command $cmd: Performed $cmdopts-times /bin/date in $(( ssh_data - startval)) seconds: $startval-$ssh_data"
+					cMR OK "Command $cmd: Performed $cmdopts-times /bin/date in $(( ssh_data - data)) seconds: $data-$ssh_data"
 				else
 					cMR ERROR "$cmd: Invalid parameter '$cmdopts'"
 				fi
@@ -1157,7 +1162,7 @@ do
 
 				# STEP: try to install mosquitto if not there yet
 				cSsh "command -v $MP"
-				if [ "$ssh_data" ] && true ; then # FIXME: remove false after debugging
+				if cData ; then # FIXME: remove false after debugging
 					cEcho "$MP already installed on $hFull..."
 				else
 					cEcho "$hFull: $MP not found .. determining install cmd .."
@@ -1174,7 +1179,7 @@ do
 						_c="$_c-clients"
 						;;
 					nothing|X)
-						cErrAndExit "ERROR: opkg / apt not found on $hFull. Stopping..." || continue # never gets here afterwards
+						cErrAndExit "ERROR: opkg / apt not found on $hFull. Stopping..." # never returns here afterwards
 						;;
 					esac
 					cEcho "Executing: $_c (please wait)"
@@ -1395,7 +1400,6 @@ EOF
 				ssh_data="$(cOut|tail -14)" # shorten away the long redundant error msg from stdout from iw
 				# dbg TAILED "$ssh_data"
 				if ! [ "$sNewSSID" ] ; then # ... was cached or if not cached, not unreachable
-					# set -x
 					sNewSSID="$(cOut|sed -n -e '/\.ssid=/{s/.*=//;p;q}' -e '/ssid/{s/\tssid //;p;q}')" # coerced uci and iw output to get results # for iwinfo: -e '/ESSID:/{s/[^:]*: //;s/\"//g;p;q}' 
 					if [ $ssh_rc = 0 ] && [ "${ssh_data#"Interface $sPubIf0"}" != "${ssh_data}" -o "${ssh_data#wlan}" != "${ssh_data}" ] ; then
 						dbg SUCCESS "tempstr=$ssh_data"
@@ -1405,7 +1409,7 @@ EOF
 						hLine	publicwifi/state	true
 						cBothMqtt 	radio/channel24 	"$sChannel24"
 					else
-						if [ "$ssh_data" ] ; then
+						if cData ; then
 							dbg "command=$cmd, rc=$ssh_rc, ssh_data=$ssh_data"
 							if [ $ssh_rc = 255 ] || cOut | grep -w -q -E "open failed|connect failed" ; then # unreachable
 								cMR OFF "rc=$ssh_rc ($ssh_msg)"
@@ -1457,17 +1461,18 @@ EOF
 				cGetPubIF 0 || continue # gets sPubIfs, sSsidBase, and prepares channel
 				_val="$cmdopts"
 				[ "$_val" ] || _val=$cmd
-				_val="${_val#ffchannel24-}"	&& _val="${_val#ffchannel24}"
-				_val="${_val#channel24-}"	&& _val="${_val#channel24}"
+				_val="${_val#ff}" ; _val="${_val#channel24}" ; _val="${_val#-}" #  remove any of ffchannel24- ffchannel24 channel24- channel24
+				IFS=_ set -- $_val
 				cmd=channel24
-				if [ "$_val" ] ; then
-					if [ "$(e "$_val" | cTrd "[0-9]" )" ] || [ "$_val" -lt 1 -o "$_val" -gt 13 ] ; then
-						cMR ERROR "Illegal channel: $_val"
+				if [ "$1" ] ; then
+					if [ "$(e "$1$2" | cTrd "[0-9]" )" ] || [ $1 -lt 1 -o $1 -gt 13 ] || { [ "$2" ] && [ $2 -lt 36 -o $2 -gt 165 ] ; } ; then
+						cMR ERROR "Illegal channel: $1 or $2"
 						continue
 					else
-						_r0=wireless.radio0.channel
-						cMR ONGOING "Setting $_r0=$_val (if=$sPubIf0,$sPubIf1)"
-						cSsh "uci set $_r0=$_val && wifi up && sleep $nWifiSleep && iwinfo $sPubIf0 info | grep -wi channel 2>&1" # FIXME: ignoring any 2nd interface # iwinfo $sPubIf0 info
+						_r1=wireless.radio0.channel
+						_r2=wireless.radio1.channel
+						cMR ONGOING "Setting $_r1=$1 ${$2:+$_r2=$2 }(if=$sPubIf0,$sPubIf1)"
+						cSsh "uci set $_r1=$1 && ${2:+uci set $_r2=$2 &&} wifi up && sleep $nWifiSleep && { iwinfo $sPubIf0 info ${2:+; iwinfo $sPubIf0 info} ; } | grep -wi channel 2>&1" # FIXME: ignoring any 2nd interface # iwinfo $sPubIf0 info
 						dbg "_result=****$ssh_data****"
 					fi
 				fi
@@ -1504,7 +1509,8 @@ EOF
 				_ssid="$(e "${_tmp:-welt}" | cTrd '}{)( ,=' )"
 				dbg _ssid "$_ssid"
 				cmd=wifissid
-				# further checks for allowed and legal  SSID values among the gluon domains ....
+				# further checks for allowed and legal SSID values among the gluon domains ....
+				# set -x
 				if [ "$_ssid" = OFFLINE -o "$_ssid" = MYHOSTNAME -o "$_ssid" = %s -o "$_ssid" = $hTarget ] || expr "$(cGetGluonDomainsStarred)" : ".*\*${_ssid}[*]" >$fNul ; then
 					cMR ONGOING "Intended SSID suffix: $_ssid"
 					otherssid="$sSsidBase/$_ssid"
@@ -1529,9 +1535,9 @@ EOF
 						iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDNEW/' -e '1q' " # FIXME: ignoring any 2nd or further interface
 				# echo ----------------
 				dbg RESULT "=***$ssh_data***"
-				prev_ssid="$(cOut | grep -m 1 SSIDPREV: | cCut : 2)"
+				prev_ssid="$(cOut | awk -F: '/SSIDPREV:/ { print $2 ; exit }')"
 
-				if ! [ "$ssh_data" ] ; then
+				if ! cData ; then
 					_log="error: $ssh_rc ($ssh_msg) OR ssh data empty, aborting command $cmd..."
 					cEcho "$_log"
 					cMR ERROR "$_log"
@@ -1582,12 +1588,12 @@ EOF
 					lua -e 'print(require(\"platform_info\").get_model())' ; cat $dGluon/gluon-version ; cat $dGluon/release ;} 2>&1"
 	
 				cEchoPub os-data "$os_data"	
-				cEchoPub autoupdater-branch 	"$(cOut|sed -n 1p)"
+				cEchoPub autoupdater-branch 	"$(cLine 1)"
 				cEchoPub autoupdater-enabled	"$(cOut|sed -n -e 2s/0/false/ -e 2s/1/true/ -e 2p)"
-				cEchoPub core-domain	"$(cOut|sed -n 3p)"
-				cEchoPub model	"$(cOut|sed -n 4p)"
-				cEchoPub gluon-version	"$(cOut|sed -n 5p)"				
-				cEchoPub release	"$(cOut|sed -n 6p )" "$(cOut|sed -n -e 's/^v//' -e 6p)"
+				cEchoPub core-domain	"$(cLine 3)"
+				cEchoPub model	"$(cLine 4)"
+				cEchoPub gluon-version	"$(cLine 5)"				
+				cEchoPub release	"$(cLine 6)" "$(cOut|sed -n -e 's/^v//' -e 6p)"
 				cEchoPub gluon-domains	"$(cGetGluonDomainsStarred)"
 				cEchoPub site $sSite
 			  	cMR OK
@@ -1633,9 +1639,9 @@ EOF
 				cMR ONGOING "Trying $_url"
 				cSsh "date -u +%s; wget $_spparam -O - $_url | wc -c ; date -u +%s"
 				if [ $ssh_rc = 0 ] ; then
-					starttime="$(cOut|sed -n 1p)"
-					filesize="$(cOut|sed -n 2p)"
-					endtime="$(	cOut|sed -n 3p)"
+					starttime="$(cLine 1)"
+					filesize="$(cLine 2)"
+					endtime="$(cLine 3)"
 					_val="$((endtime - starttime))"
 					speedMB="$( awk "BEGIN { printf \"%.1f\" , $filesize*8 / ($_val+0.000001) / 1048576}" )"
 					if [ "$filesize" -lt 10000 ] ; then
@@ -1771,7 +1777,7 @@ EOF
 				_scmd=gluon-show-site ; 	[ $cmd = addresses ] && _scmd="ip -6 -j addr show"
 				if cSsh $_scmd ; then
 					cMqtt "/$cmd" "$ssh_data"
-					[ "$bQuiet" ] || printf %s "$ssh_data" | json_pp
+					[ "$bQuiet" ] || cOut | json_pp
 				else
 					cMR ERROR "$cmd failed:"
 					cErr :
