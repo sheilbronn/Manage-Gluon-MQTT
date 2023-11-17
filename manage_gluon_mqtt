@@ -313,10 +313,10 @@ dbg() { # output its args to stderr if option -v was set
 	}
 
 for d in /var/log /tmp ; do # find a suitable writable dir. Prefer /var/log over /tmp on openhabian (because of zram).
-	dCache=$d/${sMe%.sh}.$(id -nu)
+	dCache=$( echo "$d/${sMe%.sh}.$(id -nu)" | cTrd -c A-Za-z0-9_.-/ ) # sanitize the dir name
 	dTmp=$dCache/$$
 	dbg dTmp $dTmp
-	[ -d "$dCache" ] || { mkdir -p "$dCache" 2>$fNul && chmod o-rwx "$dCache" ;} && mkdir "$dTmp" && break || id # ... && chmod o-rwx $dTmp
+	[ -d "$dCache" ] || { mkdir -p "$dCache" 2>$fNul && chmod o-rwx "$dCache" ;} && mkdir $dTmp && break || id # ... && chmod o-rwx $dTmp
 done
 
 # cDirFromStoreType() { [ $1 = cache ] && e $dCache || e $dUser ;}
@@ -910,20 +910,23 @@ do
 			dbg "SUBSCRIBING to MQTT broker: \"$hMqtt $_subscriptions\", homie=$homie, fPipe=$fPipe"
 			_last_will_options="--will-qos 0 --will-topic $sSite/$hTarget/bridge/log --will-payload {\"status\":\"OFF\"}"
 			# cMqttSub -F "MQTT %t %p" -R $_subscriptions $_last_will_options > $fPipe &    # ... doesn't work: mosquitto_sub exits if pipe not ready....  
-			cMqttSub -F "MQTT %t %p" -R $_subscriptions $_last_will_options | awk -v f="$fPipe" '{ print $0 > f ; close(f) }' & #  pipe non-stale commands from MQTT broker
+			cMqttSub -F "MQTT %t %p" -R $_subscriptions $_last_will_options | awk -v f=$fPipe '{ print $0 > f ; close(f) }' & #  pipe non-stale commands from MQTT broker
 			readonly nPidMosq=$!
 			dbg "SUBSCRIBED: nPidMosq=$nPidMosq"
 			cmd="bridge" && cMR ON "Subscribed $(awk -v a="$_subscriptions" 'BEGIN {gsub("-t ","",a) ; print a}' )"
 			
 			_ms=5 #  pipe periodic stuff into the pipe to make it wake up not more often than every $_ms seconds
-			while sleep $_ms ; do [ -r "$fSleep" ] && nMqttSleep="$(awk "{ print \$1<$_ms ? 0 : \$1-$_ms ;exit}" "$fSleep" )" ; echo PERIODIC noop "${nMqttSleep}secs" ; sleep "$nMqttSleep" || true ; done  > $fPipe &
+			while sleep $_ms ; do [ -r $fSleep ] && nMqttSleep="$(awk "{ print \$1<$_ms ? 0 : \$1-$_ms ;exit}" $fSleep )" ; echo PERIODIC noop "${nMqttSleep}secs" ; sleep "$nMqttSleep" || true ; done  > $fPipe &
 			readonly nPidPeriodic=$!
 			
 			if cCmv ubus ; then  #  .. and enable a listener for the ubus bus on OpenWrt:
 				( ubus listen & echo $! > $dTmp/ubusPid ) | awk '{print "UBUS LISTEN " $0 ; fflush()}' > $fPipe &
 				readonly nPidUbus="$(cat $dTmp/ubusPid)"
 				dbg UBUS "Background ubus listen PID is: $(pgrep -lfa "ubus listen")"
-				ubus send $sMe '{"debug":"started"}'
+				ubus send $sMe '{"debug":"bridge starting"}'
+				# ubus call system info
+				# ubus call hostapd.client1 get_status
+				# ubus call hostapd.client0 get_clients			
 			fi
 
 			if [ "$bDoAll" ] && cCmv logread ; then  #  .. and enable a listener for logread on OpenWrt: # FIXME somehow not working at the moment
@@ -1827,7 +1830,7 @@ EOF
 				# for i in $(seq 20) ; do  $MP -t ffmuc/jupiter/echo/get -m $i ; echo $i ; sleep 0 ; done
 				if [ "$cmdopts" = s ] ; then
 					# cMqttSub -t $sSite/\# -v -R | { set +x ; while true ; do read -r x ; echo "// $x" ; sleep 1 ; done } # create a stalling pipe
-					cMqttSub -t $sSite/\# -v -R | awk -v f="$fPipe" '{ print "//" $0 ; system("sleep 1") }' 
+					cMqttSub -t $sSite/\# -v -R | awk -v f=$fPipe '{ print "//" $0 ; system("sleep 1") }' 
 					exit 0
 				else
 					for i in $(seq "${cmdopts:-5}") ; do 
@@ -1926,12 +1929,13 @@ EOF
 					sleep 5
 				done
 				;;
-			networkscan)
+			networkscan) # use nmap to scan the local network for IP devices and for ports (option -a), too
 				cProbeNOMQTT
 				# -sV: Probe open ports to determine service/version info
+				# --version-intensity 6 # the higher the more intense, default is 7
 				# -O: OS detection
 				# SPECIAL: nmap must be run as root or must have been privileged:  sudo setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip $(which nmap)
-				[ "$bDoAll" ] && _opts="-sV --version-intensity 6" || _opts=""
+				[ "$bDoAll" ] && _opts="-sV --version-intensity 6" || _opts="--version-intensity 2"
 				_opts="$_opts --osscan-guess --privileged" # assure nmap that is has the necessary privileges
 				_n="$( echo "$cmdopts" | sed -e 's,_,/,' )"
 				_n="${_n:-192.168.178.0/24}"
