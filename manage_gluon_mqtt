@@ -54,10 +54,11 @@ fi
 
 # Initialize our own variables:
 bQuiet=""
-bVerbose="y"
+bVerbose="" # set to y here for debugging right from the start
 set -o noglob  # set noglob will limit security and escaping problems
-sMe="$(echo "${0##*/}" | cTrd -c A-Za-z0-9_.-)" # script fails on purposes if name contains white space
-sMe2="$(echo ${sMe%.sh} | cTrd _)"
+sMe=$(echo "${0##*/}" | cTrd -c A-Za-z0-9_.-) # script fails on purposes if its name contains white space
+sBase=$(echo $sMe | sed 's/\..*//')
+sMe2="$(echo $sBase | cTrd _)"
 sMID="$sMe2-$$"
 sID=$(e $sMID | cTrd -c a-zA-Z0-9) # sanitize the ID
 sMeAge="$(date +%Y-%m-%d -r "$(readlink -f "$0")")"
@@ -65,7 +66,7 @@ sManufacturer=Linux
 export ssh_rc=0
 export ssh_data=
 
-dUser=$HOME/.${sMe%.sh}
+dUser=$HOME/.$sBase # user-specific data
 fHost=/proc/sys/kernel/hostname
 sArea=$(cat $fHost 2>$fNul || hostname || e UNKNOWN)
 [ $sArea = openHABianPi -o $sArea = UNKNOWN ] && sArea="${sArea}-$( awk -F: '{print $5$6}' </sys/class/net/eth0/address )"
@@ -99,14 +100,14 @@ cHelp() {
   grep -E "^\s*[a-z_|-]+$_cel" "$0" | sed -E -e "s,$_cel,," -e 's,\|, ,g'  | xargs echo 1>&2 # extract coammands from this shell script
   }
 
-cSortAndTailFile() { # $1=file $2=lines(20) $3=fields(1)
+cSortAndTailFile() { # $1=file $2=col(1) $3=sep $4=lines(40) 
 	cX
 	local fTmp=$dTmp/tf
-	local nCol="${3:-1}"
+	local nCol="${2:-1}"
 
-	[ -r "$1" ] && [ -w "$1" ] && sort -k $((nCol+1)) "$1" | uniq -f "$nCol" | tail -"${2:-20}" | sort -k $((nCol+1)) > $fTmp &&
+	[ -r "$1" ] && [ -w "$1" ] && sort -t "${3:-;}" -k $nCol "$1" | awk -F"${3:-;}" "!seen[\$$nCol]++" | tail -"${4:-99}" | sort -k $nCol > $fTmp &&
 			cat "$fTmp" > "$1" && rm -f "$fTmp"
-	[ "$bVeryVerbose" ] && dbg "cSortAndTailFile($1,$2,$3): lines: $(wc -l <"$1")"
+	[ "$bVeryVerbose" ] && dbg "cSortAndTailFile($1,$2,$3,$4): lines: $(wc -l <"$1")"
 	}
 
 cExtractVals() {
@@ -132,10 +133,10 @@ cGetOSData() {
 			_val="$(cOut|awk -F= '
 				BEGIN { lim="{*os*:{" } END {printf "}}"}
 				{ gsub("\"", "*", $2) ; printf lim "*" tolower($1) "*:" $2 ; lim="," }' )" # generate new value
-			 cCWrite .os_data	"$_val"  # cache new obtained value
-			 cCWrite .os_pretty_name	"$(_helper PRETTY_NAME)"
-			 cCWrite .os_name	"$(_helper NAME)"
-			 cCWrite .os_id	"$(_helper ID)"
+			cCWrite .os_data	"$_val"  # cache new obtained value
+			cCWrite .os_pretty_name	"$(_helper PRETTY_NAME)"
+			cCWrite .os_name	"$(_helper NAME)"
+			cCWrite .os_id	"$(_helper ID)"
 		fi
 	fi
 	printf %s "$_val" 
@@ -335,7 +336,7 @@ cShortenString() { # shorten string $1 to at most $2 chars plus ....
 	}
 
 for d in /var/log /tmp ; do # find a suitable writable dir. Prefer /var/log over /tmp on openhabian (because of zram).
-	dCache=$( echo "$d/${sMe%.sh}.$(id -nu)" | cTrd -c A-Za-z0-9_.-/ ) # sanitize the dir name
+	dCache=$( echo "$d/$sBase.$(id -nu)" | cTrd -c A-Za-z0-9_.-/ ) # further sanitize the dir name
 	dTmp=$dCache/$$
 	dbg dTmp $dTmp
 	[ -d "$dCache" ] || { mkdir -p "$dCache" 2>$fNul && chmod o-rwx "$dCache" ;} && mkdir $dTmp && break || id # ... && chmod o-rwx $dTmp
@@ -428,12 +429,13 @@ cGetMacVendor() { # $1=mac address
 	cX
 	local _mac="$(cLower "$1" | tr - : )" #  allow for different seperators in mac adress to be looked up
 	local _short="$(echo "$_mac" | cCut : 1-3 )" # only the first three bytes (OUI) determine the vendor
-	if ! [ "$vendor" ] ; then
-		vendor="$(wget -q -O - "https://api.macvendors.com/$_mac" | cCut " " 1-2 | cSanitize)" # only first two words of the vendor name
-		vendor="${vendor:-UNKNOWN}"
-		cCWrite "mac-$_short.vendor" "$vendor"
+	local _vendor="$(cCRead "mac-$_short.vendor" 9)" # try to find in cache
+	if ! [ "$_vendor" ] ; then
+		_vendor="$(wget -q -O - "https://api.macvendors.com/$_mac" | cCut " " 1-3 | cSanitize)" # only first n words of the vendor name
+		_vendor="${_vendor:-UNKNOWN}"
+		cCWrite "mac-$_short.vendor" "$_vendor"
 	fi
-	echo "$vendor"
+	echo "$_vendor"
 	}
 	# set -x ; cGetMacVendor 38:B4:d3 ; cGetMacVendor  Aa:87:0b:24:61:b3 ; cGetMacVendor  A4:2A:95:45:20:B6 ; exit
 	# set -x ; cGetMacVendor 6e:95:18:16:87:58 ; cGetMacVendor  Aa:87:0b:24:61:b3 ; cGetMacVendor F0-8A:76:A9:57:80 ; exit
@@ -769,8 +771,7 @@ do
 		if expr index ."$ffhosts" "+*" >$fNul # substitute '+' or a '*'' for a set of predefined hosts
 		then
 			# multiple "host1,host2,host3" (without double quotes)
-			# values used for + or * should be stored in the file $dUser/myhosts.persist:
-
+			# values used for + or * should be manually stored in the file $dUser/myhosts.persist:
 			_tmp="$(cUserRead myhosts)" || cErrAndExit "config for collection of hosts is missing ($dUser/myhosts.persist)"
 			ffhosts="$(e "$ffhosts" | sed "s/[+*]/$_tmp/g" | cSanitize)" # replace + and sanitize
 			bWorkAllClients=yes
@@ -853,7 +854,7 @@ fi
 if [ -d $dGluon -o -x /usr/sbin/print_map.sh ] ; then   # I'm running on Gluon (which is based on OpenWrt)
 	[ "$hMqtt" -o "$bMosqFile" ] || hMqtt=$hPubMqtt
 	fMacIDs="/tmp/phones"
-else                                      # on rest-of-world (e.g. Raspi or some fullblown OpenWrt)
+else                                      # on rest-of-world (e.g. Raspi or (FIXME) some fullblown OpenWrt)
 	[ "$hMqtt" -o "$bMosqFile" ] || hMqtt=$LH
 	fMacIDs="/srv/openhab-conf/phones"
 fi
@@ -958,7 +959,7 @@ do
 			
 			_ms=${bDoExperiment:+2}5 #  in a bg loop: pipe periodic stuff into the pipe to make it wake up not more often than every $_ms seconds
 			: _ms=$_ms
-			while set -x && sleep $_ms ; do 
+			while sleep $_ms ; do 
 				[ -r $fSleep ] && nMqttSleep="$(c $fSleep )" 
 				echo PERIODIC TELE "${nMqttSleep}secs" ; sleep "$nMqttSleep" || true ; 
 			done > $fPipe &
@@ -1393,11 +1394,11 @@ EOF
 				  sed '/[ \t]#DELETE_BEGIN#/,/[ \t]#DELETE_END#/d' -i $_fn &&
 					sed -e 's/^[ \t]*//' -e 's/\(^[ \t]*\| \+\)#\($\|#*[\t ]\+[^"].*$\)//g'  -i $_fn &&
 					#      ^Whitespace      WhiteSpace # Comment
-					  sed -e 's/() *{/(){/' -e 's/[\t ]*\t[\t ]*/\t/g' -e '/^$/d' -e 's/ +;/;/' -e 's/; +/;/' -e 's/  +"/ "/g' -e 's/"  +/" /g' -e 's,\$( ,$(,g' -e 's, )",)",g'  -e 's,\$(echo ,$(e ,g' -e 's,\t+$,,g' -e 's,^local ,l ,'  -e 's,^echo ,e ,'  -e 's,\<cntnue\>$,c,'  -e 's,\<return\>,r,' -e "s,\<command\>,\$C,g" -e 's,_msg\>,_m,g'  -e 's,\<cMqtt,cM,g'  -i $_fn &&
-					  #       () *{            Whitesp tab Whitespace     emptyline   WS before ;   WS after ;     WS bef Dou Qts   WS after DblQts  spaceAfter$(     spaceBefore)"    echo to e after $(     tab at eol    local to alias l    echo to e          cntnue to c            return to r          command  to  $C        suffix _msg to _m  command with cMqtt...
+					  sed -e 's/() *{/(){/' -e 's/[\t ]*\t[\t ]*/\t/g' -e '/^$/d' -e 's/ *;/;/'   -e 's/  *"/ "/g' -e 's/"  */" /g' -e 's,\$( ,$(,g' -e 's, )",)",g'  -e 's,\$(echo ,$(e ,g' -e 's,\t+$,,g' -e 's,^local ,l ,'  -e 's,^echo ,e ,'  -e 's,\<cntnue\>$,c,'  -e 's,\<return\>,r,' -e "s,\<command\>,\$C,g" -e 's,_msg\>,_m,g'  -e 's,\<cMqtt,cM,g'  -i $_fn &&
+					  #       () *{            Whitesp tab Whitespace  emptyline  any WS before ;  WS bef DouQts   WS after DblQts  spaceAfter$(     spaceBefore)"    echo to e after $(     tab at eol     local to alias l    echo to e          cntnue to c            return to r          command  to  $C        suffix _msg to _m    command with cMqtt...
 						cp -p $_fn /tmp &&
-						  sed -E -i $_fn  -e 's,[ \t]*(&&|;|>|>>|\|)[ \t]*,\1,g' -e '/awk|lua|printf|test|:/!s,"([a-z0-9/-][a-z0-9/._-]+)",\1,g' && #  -e 's,[^\)]\) [^a-zA-Z],),g'  &&
-						#              Whitesp around && or ; or | , but not << or <  pure strings > 1c in double quotes   #FRAGILE
+						  sed -E -i $_fn  -e 's/([^\];) +/\1/g'  -e 's,[ \t]*(&&|>|>>|\|)[ \t]*,\1,g' -e '/awk|lua|printf|test|:/!s,"([a-z0-9/-][a-z0-9/._-]+)",\1,g' && #  -e 's,[^\)]\) [^a-zA-Z],),g'  &&
+						  #                  WS after ;       Whitesp around && or | , but not << or <  pure strings > 1c in double quotes   #FRAGILE
 						    bash -x -n $_fn && cCmv ash && ash -x -n $_fn # smoke test syntax of compressed script with bash and ash
 				  rc=$?
 				  dbg $cmd "$fPath ($( wc -c < $fPath )) trimmed to $_fn ($( wc -c < $_fn )): rc=$rc" # && cp $_fn /tmp/$(basename $_fn).$(date +%M)
@@ -2118,12 +2119,12 @@ EOF
 done
 
 if [ "$nLocClients" -o "$bWorkAllClients" ] ; then
-	[ "$bVerbose" -o "$nGiveHost" ] && ECHO "\n######  ALL CLIENTS " "$@" "######" >&${nGiveHost:-1} 2>&1
-	[ "$nLocClients" ] && cMqtt "$sArea/publicwifi/allclientscount" $nLocClients
+	[ "$bVerbose" -o "$nGiveHost" ] && ECHO "\n######  ALL CLIENTS${nMaxGoneDays:+($nMaxGoneDays)} " "$@" "######" >&${nGiveHost:-1} 2>&1
+	[ "$nLocClients" ] && cMqtt "$sArea/publicwifi/allclientscount"
 
 	if [ "$fCollection" ] ; then
-		cSortAndTailFile "$fCollection" 18 1
-		dbg fCollection "$fCollection:" && cat "$fCollection"
+		dbg fCollectioBEFORE "$fCollection:" && cat "$fCollection"
+		cSortAndTailFile "$fCollection" 2
 		_ccwn_fn="${fCollection}_with_names"
 		if cCmv join && [ -r $fMacIDs ]; then
 			dbg "MAC" "Using $fMacIDs for names."
@@ -2139,7 +2140,7 @@ if [ "$nLocClients" -o "$bWorkAllClients" ] ; then
 		[ "$bWorkAllClients" ] && 
 			cMS "$sSite/$sArea/alllocalclients/debug" "$( { echo "date;addr;node;vendor;p" ; sort -t \; "$_ccwn_fn" ;} | cTableToJSON 0 \; )"			
 		data="$( awk -F";" -v id="$sArea" -v lccount=$nLocClients 'BEGIN { printf "{*count*:%s,*id*:*%s*,*localclients*:[", lccount, id } END {printf "]}"} { 
-				printf lim "{*addr*:*%s*,*name*:*%s*,*vendor*:*%s*,*node*:*%s*}", $1 , ($5=="")? $1 : $5 $6 $7, $4, $3; lim="," }' < "$_ccwn_fn" |
+				printf lim "{*addr*:*%s*,*name*:*%s*,*vendor*:*%s*,*node*:*%s*}", $2 , ($5=="")? $2 : $5 $6 $7, $4, $3; lim="," }' < "$_ccwn_fn" |
 			shorten_ethernet_addr_in_json $bDoAll )"
 		cEcho "$data"
 		cEcho "$(cStarredToJSON | tee /tmp/yy | json_pp)"
