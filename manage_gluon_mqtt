@@ -23,7 +23,9 @@ LH=localhost
 C=comman"d"
 
 cCmv()	{ command -v "$@" >$fNul ;} # find out whether a command exists
-cLower() { { [ "$*" ] && echo "$*" || cat ;} | awk '{print tolower($0)}' ;}
+# cLower() { { [ "$*" ] && echo "$*" || cat ;} | awk '{print tolower($0)}' ;}
+cLower() { awk -v s="$*" 'BEGIN {print tolower(s)}'  < $fNul ;} # simplified for args only
+# set -x ; cLower "AA Bb" ; exit 99
 cPid() { sh -c 'echo $$' ;}
 # echo TEST: ; cPid ; cPid ; exit 
 
@@ -50,6 +52,9 @@ fi
 	alias c=con\tinue
 	alias r=ret\urn
 
+# Initialize our own variables:
+bQuiet=""
+bVerbose="y"
 set -o noglob  # set noglob will limit security and escaping problems
 sMe="$(echo "${0##*/}" | cTrd -c A-Za-z0-9_.-)" # script fails on purposes if name contains white space
 sMe2="$(echo ${sMe%.sh} | cTrd _)"
@@ -66,7 +71,7 @@ sArea=$(cat $fHost 2>$fNul || hostname || e UNKNOWN)
 [ $sArea = openHABianPi -o $sArea = UNKNOWN ] && sArea="${sArea}-$( awk -F: '{print $5$6}' </sys/class/net/eth0/address )"
 sArea=$(cLower "$sArea") # lowercase only
 sSsidBase=UNKNOWN # would be an an error
-sPubIfs= # will be determined on first call to every host, then cached
+sPubIfs= # will be determined on first call to every node, then cached
 nMqttSleep=1199 # 1190
 sHassPrefix=homeassistant/sensor
 hPubMqtt=test.mosquitto.org
@@ -77,7 +82,7 @@ umask -S u=rwx,g=rx,o= # no rights for others
 alias cX="local - && set +x" # stop the local verbosity
 
 # Notes for future enhancements:
-# ping ff host and up/down own public if accordingly
+# ping ff node and up/down own public if accordingly
 # ( ping -c 3 2001:608:a01:103:62e3:27ff:febd:b8ba && echo yes ) || echo no
 # ( ping -c 3 2001:608:a01:103:62e3:27ff:febd:b8be && ( ( iwinfo | grep $sPubIf0 ) || ( wifi up ; echo wifi upped. ) ) ) || ( iw dev client0 del ; echo if downed )
 # scan repeatedly for public Wifi and up/down own public if accordingly:
@@ -86,7 +91,7 @@ alias cX="local - && set +x" # stop the local verbosity
 # func() { echo yyy ; false ;} ; x="$(func)" && echo yes || echo no ; exit 
 
 cHelp() {
-  echo "Usage: $sMe ... -v -m mqttserver -p -s host -c command ...
+  echo "Usage: $sMe ... -v -m mqttserver -p -s node -c command ...
    Execute commands on Gluon/Freifunk/OpenWrt nodes using uci and other commands. Returns output on stdout and/or MQTT.
    Either automatic (e.g. key-based) access to the Freifunk node using SSH or remote execution is supported.
    Implemented commands:" 1>&2
@@ -94,7 +99,7 @@ cHelp() {
   grep -E "^\s*[a-z_|-]+$_cel" "$0" | sed -E -e "s,$_cel,," -e 's,\|, ,g'  | xargs echo 1>&2 # extract coammands from this shell script
   }
 
-cSortAndTailFile() {
+cSortAndTailFile() { # $1=file $2=lines(20) $3=fields(1)
 	cX
 	local fTmp=$dTmp/tf
 	local nCol="${3:-1}"
@@ -162,9 +167,8 @@ cMostFrequentSite() {
 		e "${_tmp:-UNKNOWN}"
 	}
 
-cGetHostname() { # $1=host $2=cachetimeout
+cGetHostname() { # $1=node $2=cachetimeout
 	cX
-	set -x
 	if ! ssh_data="$(cCRead "$1.hostname" "${2:-9}" )" ; then
 		cSsh "tr A-Z a-z <$fHost" || ssh_data="${1:-$hTarget}"
 		dbg cGetHostname "ssh_data=$ssh_data"
@@ -173,7 +177,7 @@ cGetHostname() { # $1=host $2=cachetimeout
 	cEcho
 	}
 
-cCut() { cut -d"$1" -f${2:-1} $3 ; }
+cCut() { cut -d"$1" -f${2:-1} $3 ; } # $1=seperator, $2=field(s) or 1, $3=file(s) or other options
 
 cSsidBase() {
 		sSsidBase="$(cOut | awk -F";" '{print $2;exit}' | cTrd \" | awk -F": " '{ gsub("/.*","",$2); print $2 }' )"
@@ -216,16 +220,16 @@ cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
 # echo :"$IFS":   ;   exit 
 # set -x ; d=yy ; h() {  if local d=xx ; ! false ; then echo yes$d ; else echo no$d ; fi ; echo $d: ; } ; h ; echo $d ; exit
 
-cTableToJSON() { # table is to be piped in. numerical values are made unquoted. $1: (optional) number of missing headers, e.g. 1 in free -t
+cTableToJSON() { # table is read from stdin. numerical values are made unquoted. $1: (optional) number of missing headers, e.g. 1 in free -t
 	cX
-	awk -F "${2:- }" -v missHead="${1:-0}" '
+	awk -F "${2:- }" -v missHead="$1" '
 		BEGIN { OFS=""
 			getline
 			NH=NF+missHead # NF: number of fields, NH: number of headers
 			for (i=1; i<=NF; i++) names[i+missHead] = $i   # consume all the headers
 			printf "["
 		} {
-			printf lim "{*%s*:{", gensub(":", "", 1, tolower($1))   # remove any ":" from $1
+			printf lim "{*%s*:{", tolower($1)
 			for (i=2;i<=NF||i<=NH;i++) {
 				if (i<NH){ 
 					o=$i # take field value as output (be it empty or not)
@@ -298,6 +302,7 @@ cErr() {
 
 cErrAndExit() {
 	cX
+	cMqttReply EXITING "$*."
 	cErr "$* ... Exiting."
 	exit 1
 	}
@@ -316,12 +321,12 @@ cEcho() { # log and output stuff (in color) unless to be quiet
 	}
 	# set -x ; cEcho -e -e zwei ; exit 1
 
-dbg() { # output its args to stderr if option -v was set
+dbg() { # output its args to stderr if verbosity set
 	cX
 	[ "$bVerbose" ] || return 1
 	{ [ "$#" = 2 ] && ECHO "$Yellow$1:$Rst" "$2" || ECHO "${Yellow}debug$Rst" "$*" ;} 1>&2
 	[ "$bVeryVerbose" ] && cLogger info "$*"
-	true # always return true
+	true # return true if verbose
 	}
 
 cShortenString() { # shorten string $1 to at most $2 chars plus ....
@@ -419,30 +424,30 @@ jsonfilter_func() {  #  jsonfilter_func(filterexpr,moreparam)=result
   }
 # set -x ; jsonfilter_func .addr '{ "addr": "addr_value\\n" }' ; exit 99
 
-cGetMacVendor() {
+cGetMacVendor() { # $1=mac address
 	cX
-	local _mac="$(cLower "$1" | tr "-" ":" )" #  allow for different seperators
-	local _short="$(echo "$_mac" | cCut : 1-3 )" # only first three bytes determine the vendor
-	vendor="$(cCRead "mac-$_short.macvendor" 99 | cCut " " 1-2 )" # only first two words of the vendor name
+	local _mac="$(cLower "$1" | tr - : )" #  allow for different seperators in mac adress to be looked up
+	local _short="$(echo "$_mac" | cCut : 1-3 )" # only the first three bytes (OUI) determine the vendor
 	if ! [ "$vendor" ] ; then
-		vendor="$(wget -q -O - "https://api.macvendors.com/$_mac" | cCut " " 1-2 | cSanitize)"
+		vendor="$(wget -q -O - "https://api.macvendors.com/$_mac" | cCut " " 1-2 | cSanitize)" # only first two words of the vendor name
 		vendor="${vendor:-UNKNOWN}"
-		cCWrite "mac-$_short.macvendor" "$vendor"
+		cCWrite "mac-$_short.vendor" "$vendor"
 	fi
 	echo "$vendor"
 	}
 	# set -x ; cGetMacVendor 38:B4:d3 ; cGetMacVendor  Aa:87:0b:24:61:b3 ; cGetMacVendor  A4:2A:95:45:20:B6 ; exit
-	# set -x ; cGetMacVendor  Aa:87:0b:24:61:b3 ; cGetMacVendor F0-8A:76:A9:57:80 ; exit
-	# set -x ; for m in $(arp -a| cut -d " " -f 4 | grep : ) ; do cGetMacVendor "$m" ; done ; exit
+	# set -x ; cGetMacVendor 6e:95:18:16:87:58 ; cGetMacVendor  Aa:87:0b:24:61:b3 ; cGetMacVendor F0-8A:76:A9:57:80 ; exit
+	# set -x ; for m in $(arp -a| cut -d " " -f 4 | grep : ) ; do cGetMacVendor "$m" ; cGetMacVendor "$( echo $m | sed 's/..:..:..$/00:00:00/' )" ; echo ==== ; done ; exit
+	# set +x ; for m in $(arp -a| cut -d " " -f 4 | grep : ) ; do echo $m ; wget -q -O - "https://api.macvendors.com/$( echo $m | sed 's/..:..:..$/00:00:00/' )" ; echo " " ; echo ==== ; done ; exit
 
 shorten_ethernet_addr_in_json() { # remove some bytes für anonymization
-	[ "$1" = skip ] && cat && return 0
+	[ "$1" ] && cat && return 0
 	sed -E -e 's/([*"][a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]:)[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9](:[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9][*"])/\1...\2/g' "$@"
 	}
 
 cProbe() { # returns 0, if command is to be executed, 1 if not, and 255 if last ssh connection failed
 	cX # any local command line command is always trusted for now:
-	[ "$cmdsToDo" != bridge ] && { [ $ssh_rc = 255 ] && return 255 || return 0 ;} # if host wasn't reachable (255) don't tray again
+	[ "$cmdsToDo" != bridge ] && { [ $ssh_rc = 255 ] && return 255 || return 0 ;} # if node wasn't reachable (255) don't tray again
 	[ "$hMqtt" != $LH ] && { cEcho "Untrusted MQTT $1 command .$cmd. ignored for .$fHost." ; return 1;} # for now: only trust commands from a MQTT broker on the same host.
 	return 0 # FIXME: covered by catchall
 	}
@@ -456,7 +461,7 @@ bMosqFile=$( [ -r $HOME/.config/$MP ] && echo yes)
 
 cMqtt() { # cMqtt(topic,msg, options) # expanding a leading / in topic to $sSite/$hTarget/
 	cX
-	[ "$cMPub" = : ] && return
+	[ "${cMPub:-:}" = : ] && return
 	local _topic="$1"
 	[ "$1" != "${1#/}" ] && _topic="$sSite/$hTarget$1" # ... expand shortcut starting with "/"
 	dbg PUB_MQTT "$_topic  $2  ${3:+OPTIONS=$3}${bVeryVerbose:+ (hMqtt=$hMqtt;hTarget=$hTarget)}"
@@ -465,9 +470,10 @@ cMqtt() { # cMqtt(topic,msg, options) # expanding a leading / in topic to $sSite
 		$cMPub ${h:+-h $h} ${sMID:+-i $sMID} -t "$_topic" -m "$2" -i "${sSite}_$hTarget" $3	|| dbg "$cMPub(host=$h): rc=$?"
 	done
 	}
+	# set -x ; cMqtt ttt mmm ; cMPub=mosquitto_pub ; export hMqtt=localhost ; cMqtt hhh mmm ; exit 99
 
 cStarredToJSON() {
-	awk -v a="$*" 'BEGIN { gsub("\"","'\''",a) ; gsub("*","\"",a) ; print a }' # " => ' , then * => "
+	awk -v a="${*:-$data}" 'BEGIN { gsub("\"","'\''",a) ; gsub("*","\"",a) ; print a }' # " => ' , then * => "
 	}
 
 cMqttStarred() {		# cMS(expandableTopic,message,moreMsoquittoOptions)
@@ -491,12 +497,12 @@ cMqttReply() {
 cMqttBeacon() {
 	_pubcmd="$cMPub -h $hPubMqtt" # caution: Freifunk/Gluon seems to need IPV6 connectivity, not all brokers have it!
 	# _pubcmd="$cMPub -h broker.hivemq.com"
-	_topic="\"$sSite/\`tr A-Z a-z < $fHost\`/installation\"" # tr shall run on the remote host with apostrophes!
+	_topic="\"$sSite/\`tr A-Z a-z < $fHost\`/installation\"" # tr shall run on the remote node with apostrophes!
 	dbg BEACON "$_pubcmd $_topic"
 	cSsh "$_pubcmd -t $_topic -r -m TEST_$cmd"
 	_rc=$ssh_rc
 	if [ $_rc != 0 ] ; then
-		cErr "$_pubcmd -t $_topic -r -m TEST_$cmd had failed with $ssh_rc ($ssh_msg) on remote host (check why!)"
+		cErr "$_pubcmd -t $_topic -r -m TEST_$cmd had failed with $ssh_rc ($ssh_msg) on remote node (check why!)"
 	else
 		dbg BEACON "$_pubcmd $_topic had succeeded, now removing this (retained) msg again..."
 		cSsh "mosquitto_sub -h $hPubMqtt -t $_topic -v -C 1 -W 5 --remove-retained"
@@ -550,7 +556,7 @@ cHassAnnounce() {
 	    local _dev_name="$2 ${_devid}" # "$2 ${_devid^}"
 	else
 		local _devid="$2"
-		local _configtopicpart="$(e "$_topicpart" | cTrd "][ /-" | cLower )"
+		local _configtopicpart="$(cLower "$_topicpart" | cTrd "][ /-" )"
 		local _dev_unique_id="${sMe2}$2" # remove the trailing process-id
 	    local _dev_name="$2"
     fi
@@ -736,23 +742,23 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
   }
 
 OPTIND=1         # reset to 1 in case getopts has been used previously in the shell.
-# Initialize our own variables:
-bQuiet=""
-bVerbose=""
 
+# Initialize more variables
 bDoAll=""
 commands="" # commands="mesh-id"
 sUciQuery=""
 sUciVal=""
 cMPub=mosquitto_pub
-cCmv $cMPub || { cMPub=":" ; dbg "Variable/command cMPub=*$cMPub* (: is dummy)." ;}
 
+cCmv $cMPub || { cMPub=":" ; dbg "Variable/command cMPub=*$cMPub* (: is dummy)." ;}
+cCmv stdbuf && SB="stdbuf -oL" || dbg WARNING "stdbuf not installed. Delays possible!!" # SB="" # to avoid buffering of stdout
+SB=""
 cCmv json_pp || alias json_pp=cat
 # alias cBeautify="jq -Sm" ; cCmv jq || alias cBeautify=cat
 
 [ $# -eq 0 ] && { cHelp ; exit 1 ;} # at least one parameter on the command line is required
 
-while getopts "?h:Gvxql:as:pPR:f:m:g:n:c:o:w:" opt   # https://wiki.bash-hackers.org/howto/getopts_tutorial
+while getopts "?h:GE:vxql:as:pPR:f:m:g:n:c:C:o:w:" opt   # https://wiki.bash-hackers.org/howto/getopts_tutorial
 do
     case $opt in
     \?) cHelp
@@ -771,6 +777,8 @@ do
 		fi
         ;;
     G) [ "$nGiveHost" ] && nGiveHost=2 || nGiveHost=1 # file descriptor to send output to: -G = stdout, -G -G = stderr
+		;;
+	E) nMaxGoneDays="$(cSaniOpt)"
 		;;
     v) [ "$bVerbose" ] && bVeryVerbose=yes && nMqttSleep=60 || nMqttSleep=230 # not to small to allow for gathering status in between !
 		bVerbose=yes
@@ -813,6 +821,8 @@ do
 		;;
     c) commands="$OPTARG" # one or more, comma-seperated command to be executed
         ;;
+	C) nExitAfter="$(cSaniOpt)" # exit after nn MQTT commands
+		;; 
     o) sUciQuery="$OPTARG" ; commands=uciquery
 		# echo sUciQuery="$sUciQuery"
         ;;
@@ -825,8 +835,8 @@ done
 shift "$((OPTIND-1))"   # Discard the options parsed so far and leave the rest of the cmd line...
 
 # [ "$bQuiet"	] || alias cEcho=": cEcho"
-[ "$bVerbose"	] || alias dbg=": dbg"
-[ "$bVeryVerbose" ] && alias dbg2=dbg || alias dbg2=": dbg2"
+[ "$bVerbose"	] || alias dbg="false dbg"
+[ "$bVeryVerbose" ] && alias dbg2=dbg || alias dbg2="false dbg2"
 
 if [ "$homie" -o "$hMqtt" -o "$bMosqFile" ] ; then # enable MQTT
 	: dbg "MQTT commands real."
@@ -851,8 +861,8 @@ fi
 fCollection=""
 fSleep=$dTmp/sl
 
-ffhosts="$(e "${ffhosts:-$LH}" | tr -s "," " " | cLower)" # if none given, take localhost
-for hFull in $ffhosts # do it for each given target host (maybe just one)...
+ffhosts="$(cLower "${ffhosts:-$LH}" | tr -s "," " ")" # if none given, take localhost
+for hFull in $ffhosts # do it for each given target node (maybe just one)...
 do
 	ssh_rc=0 # reset cache of the last connection return code
 	if [ "$hFull" = localhost ] ; then
@@ -877,12 +887,11 @@ do
 			ssh_data="$(echo "$_r" | cTrd '`')"
 			if [ $ssh_rc -eq 255 ] ; then
 				ssh_msg="UNREACHABLE" 
-			elif true || [ "$bVerbose" ] ; then
+			elif [ "$bVerbose" ] ; then
 				_n="$(cCRead .sshcnt)"
-				dbg2 SSH "count=$_n"
 				cCWrite .sshcnt $((_n+1))
 			fi
-			if [ $ssh_rc -ne 0 ] ; then		
+			if [ $ssh_rc -ne 0 ] ; then
 				[ $ssh_rc -eq 127 ] && { set -- "$@" ; ssh_msg="CMD NOT FOUND: $1" ; }
 				dbg SSH "RETURN CODE=$ssh_rc ($ssh_msg)" 1>&2
 				cLogger error "$* = $ssh_rc"
@@ -893,6 +902,7 @@ do
 		hTarget=$(e "$hFull" | awk '{ $0=tolower($0) ; gsub("\\..*","") ; gsub("-[a-z]$","") ; print }' )
 	fi
 	_string="" && [ "$sSshUser" = "${sSshUser%${hTarget}-e}" -a "$sSshUser" = "${sSshUser%${hTarget}}" ] && _string="($hTarget) "
+	[ "$nMaxGoneDays" ] && [ -z "$(cCRead .sshcnt $nMaxGoneDays)" ] && continue # dont even try this node if not seen for x days
 	[ "$bVerbose" -o "$nGiveHost" ] && ECHO "\n######## ${sSshUser#root@} $_string//${commands:+ $commands //} $*" "#######" >&${nGiveHost:-1} 2>&1
 	cGetSitecode # reusing value for all other nodes, too.
 	fTmpMqtt=$dTmp/mqtt.$hFull
@@ -932,44 +942,71 @@ do
 				}		
 				trap 'trap_child' CHLD
 
+			echo "PERIODIC NONE" > $fPipe & # something has to be in the pipe otherwise it fails due to race condition
+
 			dbg "SUBSCRIBING to MQTT broker: \"$hMqtt $_subscriptions\", homie=$homie, fPipe=$fPipe"
 			_last_will_options="--will-qos 0 --will-topic $sSite/$hTarget/bridge/log --will-payload {\"status\":\"OFF\"}"
+
 			# cMqttSub -F "MQTT %t %p" -R $_subscriptions $_last_will_options > $fPipe &    # ... doesn't work: mosquitto_sub exits if pipe not ready....  
-			cMqttSub -F "MQTT %t %p" -R $_subscriptions $_last_will_options | awk -v f=$fPipe '{ print $0 > f ; close(f) }' & #  pipe non-stale commands from MQTT broker
-			readonly nPidMosq=$!
-			dbg "SUBSCRIBED: nPidMosq=$nPidMosq"
+			# mosquitto_sub -h localhost -F "MQTT %t %p" -R $_subscriptions $_last_will_options > $fPipe &    # ... doesn't work: mosquitto_sub exits if pipe not ready....  
+			# FIXME: proper buffering still doesn't work :( :( :
+			cMqttSub -F "MQTT %t %p" -R $_subscriptions $_last_will_options | awk -v f=$fPipe '{ print $0 > f ; fflush(f) }' & #  pipe non-stale commands from MQTT broker
+			nPidMosq=$!
+			dbg "SUBSCRIBED: nPidMosq=$nPidMosq" 
+			ln -fs $fPipe $dCache/p # for the convenience of injecting debug helpers
 			cmd="bridge" && cMR ON "Subscribed $(awk -v a="$_subscriptions" 'BEGIN {gsub("-t ","",a) ; print a}' )"
 			
-			_ms=5 #  pipe periodic stuff into the pipe to make it wake up not more often than every $_ms seconds
-			while sleep $_ms ; do [ -r $fSleep ] && nMqttSleep="$(awk "{ print \$1<$_ms ? 0 : \$1-$_ms ;exit}" $fSleep )" ; echo PERIODIC noop "${nMqttSleep}secs" ; sleep "$nMqttSleep" || true ; done  > $fPipe &
-			readonly nPidPeriodic=$!
+			_ms=${bDoExperiment:+2}5 #  in a bg loop: pipe periodic stuff into the pipe to make it wake up not more often than every $_ms seconds
+			: _ms=$_ms
+			while set -x && sleep $_ms ; do 
+				[ -r $fSleep ] && nMqttSleep="$(c $fSleep )" 
+				echo PERIODIC TELE "${nMqttSleep}secs" ; sleep "$nMqttSleep" || true ; 
+			done > $fPipe &
+			nPidPeriodic=$!
 			
-			if cCmv ubus ; then  #  .. and enable a listener for the ubus bus on OpenWrt:
-				( ubus listen & echo $! > $dTmp/ubusPid ) | awk '{print "UBUS LISTEN " $0 ; fflush()}' > $fPipe &
+			_tf=/dev/null ; [ "$bVerbose" ] && _tf=/tmp/$sMe.log ; # _tf=/tmp/mlog
+			if cCmv ubus ; then # enable a listener for the ubus bus on OpenWrt ("tee /dev/null" is a workaround for a bug in OpenWrt")
+				# ( ubus listen | tee -a $_tf & echo $! > $dTmp/ubusPid ) | awk -v f=$fPipe '{print "UBUS LISTEN "$0 > f ; fflush(f) }' & # print "PERIODIC NOOP xxx" ; 
+				# DONT KNOW why piping through awk makes so many buffering problems, so had to workaround further down:
+				$SB ubus listen > $fPipe & echo $! > $dTmp/ubusPid
 				sleep 1
-				readonly nPidUbus="$(cat $dTmp/ubusPid)"
-				dbg UBUS "Background ubus listen PID is: $(pgrep -lfa "ubus listen")"
-				ubus send $sMe '{"debug":"bridge starting"}'
+				nPidUbus="$(cat $dTmp/ubusPid)"
+				dbg UBUS "Ubus listen PID is $nPidUbus: others\n$(pgrep -lfa "ubus listen")" # pgrep -s 0 -n -lfa "ubus listen"
+				{ sleep 1 ; ubus send $sMe '{"debug":"bridge starting"}' ; } &
 				# ubus call system info
 				# ubus call hostapd.client1 get_status
 				# ubus call hostapd.client0 get_clients			
+				# while sleep 1 ; do ubus send "$(date)" ; date ; done	
 			fi
 
-			if [ "$bDoAll" ] && cCmv logread ; then  #  .. and enable a listener for logread on OpenWrt: # FIXME somehow not working at the moment
-				( logread -f & echo $! > $dTmp/logreadPid ) | awk -v p="$fPipe" '{print "LOGREAD LOG " $0 ; fflush()}' > $fPipe &
+			# to debug: manage_gluon_mqtt -c bridge -m - -v -a -a
+
+			if [ "$bDoExperiment" ]  ; then  #  debug lua and flushing
+				# DONT KNOW why piping through awk makes so many buffering problems, so had to workaround further down:
+				$SB lua -e 'local socket = require("socket"); while true do 
+					socket.sleep(3); print(os.date("PERIODIC PULSE %H:%M:%S"))
+					end' > $fPipe & echo $! > $dTmp/experimentPid
 				sleep 1
-				readonly nPidLogread="$(cat $dTmp/logreadPid)" # FIXME: NOT /var/log/manage_gluon_mqtt.root/28531/logreadPid
-				dbg LOGREAD "Background logread PID is: $(pgrep -lfa "logread -f")" 
-				cLogger info "Started."
+				nPidExp="$(cat $dTmp/experimentPid)"
+				dbg EXPERIMENT "Background lua PID is: others\n$(pgrep -lfa "lua -e")" 
+				{ sleep 1 ; ubus send $sMe '{"debug":"Experiment started"}' ; } &
+			fi
+			
+			if [ "$bDoAll" ] && cCmv logread ; then  #  enable a listener for logread
+				_p="daemon.info manage_gluon_mqtt"
+				# DONT KNOW why piping through awk makes so many buffering problems, so had to workaround further down:
+				# ( logread -f & echo $! > $dTmp/logreadPid ) | awk -v f="$fPipe" -v p="$_p" '$0 !~ p {print "LOGREAD LOG " $0 > f ; fflush(f) }' & # NOTE: continous piping didnt work on OpenWrt
+				$SB logread -f > $fPipe & echo $! > $dTmp/logreadPid
 				sleep 1
-				( date & ) | awk -v p="$fPipe" '{print "LOGREAD LOG DEBUG " $0 ; fflush()}' > $fPipe &
-				sleep 2
+				nPidLogread="$(cat $dTmp/logreadPid)"
+				dbg LOGREAD "Background logread PID is: others\n$(pgrep -lfa "logread -f")" 
+				{ sleep 1 ; cLogger info "Started." ; } &
 			fi
 
-			dbg "Started procs: nPidMosq=$nPidMosq,nPidPeriodic=$nPidPeriodic,nPidUbus=$nPidUbus,nPidLogread=$nPidLogread,fPipe=$fPipe"
+			dbg PROCIDS "nPidMosq=$nPidMosq,nPidPeriodic=$nPidPeriodic,nPidUbus=$nPidUbus,nPidLogread=$nPidLogread,fPipe=$fPipe"
 			
 			trap_function() {
-					cmd="bridge" && cMR ONGOING "trapped signal. (Removing fPipe=$fPipe)"
+					[ "$cmd" = "bridge" ] && cMR ONGOING "Processing trap function. Removing fPipe=$fPipe"
 					rm -f $fPipe
 					pids="$nPidPeriodic $nPidMosq $nPidUbus $nPidLogread"
 					kill $pids 2>$fNul || true
@@ -977,7 +1014,7 @@ do
 				}		
 			trap 'trap_function' INT QUIT TERM SEGV
 
-			[ "$bDoAll" ] && sleep 3
+			[ "$bDoAll" ] && sleep 1
 		fi
 		# NB: OpenHab Homie autodiscovery didn't like uppercase characters at the beginning...
 		[ "$homie" ] && os_data="$(cGetOSData)" && homie="$(cLower $hTarget)" &&  # change "yes" to $hTarget
@@ -988,9 +1025,9 @@ do
 			if [ "$cmdsToDo" = bridge ] ; then
 				cmd=""
 				dbg READ "Will read $fPipe ..."
-				read -r sPipeType cmd cmdopts <$fPipe
+				read -r sType cmd cmdopts <$fPipe
 				rc=$?
-				dbg RAW "Read sPipeType=$sPipeType,cmd=$cmd,cmdopts=$cmdopts,rc=$rc"
+				dbg RAW "Read sType=$sType,cmd=$cmd,cmdopts=$cmdopts,rc=$rc"
 				if [ "$rc" -ne 0 ] ; then
 					if [ -p $fPipe ] ; then
 						_msg="Read error from pipe (rc=$rc)"
@@ -1001,25 +1038,31 @@ do
 						exit 0
 					fi
 				fi
-				sPipeType="$(e "$sPipeType" | cTrd -c A-Z)"
-				if [ "$sPipeType" = UBUS -o "$sPipeType" = LOGREAD ] ; then
-					dbg READ "TYPE=$sPipeType,$cmd,$cmdopts"
-					cMqtt "/$(e "$sPipeType" | tr A-Z a-z)/log" "$cmdopts" 
-					# cOut | sed ':a;s/^\(\([^"]*"[^"]*"[^"]*\)*[^"]*\) /\1/;ta'  # would remove spaces
-					# cOut | awk -F\" '{OFS="\"";for(i=2;i<NF;i+=2)gsub(/ /,"@",$i);print}'   # would remove spaces
-					cmdsToDo="bridge"
+				# hacky workarounds for the awk problems above
+				[ "$cmd" = "$(date +%b)" ] && cmdopts="$sType $cmd $cmdopts" && sType=LOGREAD && cmd=LOG # hacky
+				[ "$sType" = "{" ] && cmdopts="$sType $cmd $cmdopts" && sType=UBUS && cmd=LISTEN # hacky
+
+				sType="$(e "$sType" | cTrd -c A-Z)"
+				if [ "$sType" = UBUS -o "$sType" = LOGREAD -o "$sType" = "{" ] ; then
+					dbg READ "TYPE=$sType,$cmd,$cmdopts" || cEcho "$cmdopts"
+					set -- $cmdopts # cmdopts=27 00:35:35 2024 daemon.info manage_gluon_mqtt herkules: READ Will read /var/log/manage_gluon_mqtt.root/4458/p ...,rc=0
+					[ "$6" = daemon.info -a "$7" = $sMe ] && cntnue
+					cMqtt "/$(e "$sType" | tr A-Z a-z)/log" "$cmdopts" 
 					cntnue
-				elif [ "$sPipeType" = PERIODIC ] ; then
-					dbg "\nREAD" "TYPE=$sPipeType,$cmd,$cmdopts ($(date +%T))"
+				elif [ "$sType" = PERIODIC ] ; then
+					dbg "\nREAD" "TYPE=$sType,$cmd,$cmdopts ($(date +%T))"
 					# FIXME Reenable: 
 					[ "$bVerbose" ] && cMS /bridge/state "{*TelePeriod*:$nMqttSleep}" # FIXME: might have been modified in subshell
-					[ "$cmdopts" != noop ] && cmdsToDo="wifistatus,statistics,bridge"
+					[ "$cmd" = PULSE ] && cmdsToDo="echo+pulse,$cmdsToDo"
+					[ "$cmd" = TELE  ] && cmdsToDo="wifistatus,statistics,$cmdsToDo"
 					cntnue
-				elif [ "$sPipeType" = MQTT ] ; then
-					_prefix="$(e "$cmd" | awk -v FS=/ '{print $1 "/" $2}' )"
+				elif [ "$sType" = MQTT ] ; then
+					nMqttCommands=$((nMqttCommands + 1))
+					[ "$nExitAfter" ] && [ $nMqttCommands -gt $nExitAfter ] && trap_function && cErrAndExit "More than $nExitAfter MQTT commands received..."
+					_prefix="$(e "$cmd" | cCut / 1-2 )" # first two parts of topic
 					cmdopts="$(cFirstJsonAttr "$cmdopts")"
 					cmdopts="$(cExpand "${cmdopts%(null)}")"
-					dbg READ "command: $cmd  $cmdopts (prefix=$_prefix, sSite=$sSite)"
+					dbg READ "command: $cmd  $cmdopts  (prefix=$_prefix, sSite=$sSite)" || cEcho "$cmd $cmdopts"
 					case "$_prefix" in
 					"homie/$hTarget"|"$sSite/$hTarget"|"$sSite/${mqttGroup:-$hTarget}")
 						cmd="$(e "$cmd" | cCut / 3- )" ; cmd="${cmd%/get}"
@@ -1049,7 +1092,8 @@ do
 					cmd=${cmd%/get} && cmd=${cmd%/GET}
 					dbg READ "Remapped MQTT to command: $cmd"
 				else
-					cErrAndExit "Unknown sPipeType=$sPipeType from pipe $fPipe (rc=$rc)"
+					cErr "Unknown sType=$sType from pipe $fPipe (rc=$rc)"
+					# cErrAndExit "Unknown sType=$sType from pipe $fPipe (rc=$rc)"
 				fi
 			else
 			    	 cmd="$(e "$cmdsToDo"	| cCut ,  		)"
@@ -1194,7 +1238,7 @@ do
 				cSsh -v "df -PhT"
 				_sizedata="$ssh_data" # TODO: duplicated code from "mountsizes", save result for later
 
-				# STEP: try to install mosquitto if not there yet
+				# STEP: try to install mosquitto, if not there yet
 				cSsh "command -v $MP"
 				if cData ; then # FIXME: remove false after debugging
 					cEcho "$MP already installed on $hFull..."
@@ -1207,19 +1251,19 @@ do
 						# FIXME on newer Gluon - might needed for SSL downloads:
 						# 1) temporarily change https to http for "openwrt_packages" in /etc/opkg/distfeeds.conf
 						# 2) opkg install libustream-tls && opkg install ca-certificates  #   or opkg ... --no-check-certificate
-						_c="$_c-client-nossl"
+						_c="$_c-client-nossl coreutils-stdbuf"
 						;;
 					apt|X)
-						_c="$_c-clients"
+						_c="$_c-clients coreutils"
 						;;
 					nothing|X)
-						cErrAndExit "ERROR: opkg / apt not found on $hFull. Stopping..." # never returns here afterwards
+						cErrAndExit "ERROR: opkg/apt not found on $hFull. Stopping..." # never returns here afterwards
 						;;
 					esac
 					cEcho "Executing: $_c (please wait)"
 					cSsh "$_c" # || { cEcho "cSsh failed: $_c, aborting ..." ; cntnue ;}
 					_msg="$ssh_data (rc=$ssh_rc)"
-					dbg INSTALL "$_msg" || echo "Installer returned $_msg"
+					dbg INSTALL "$_msg" || cEcho "Installer returned $_msg"
 				fi
 				[ $ssh_rc -ne 0 ] && { cEcho "cSsh failed: $_c, aborting ..." ; cntnue ;}
 
@@ -1344,18 +1388,21 @@ EOF
 				fBase="$(basename "$fPath")"
 				#DELETE_BEGIN#   # Delete the following script part when compressing the script
 				_fn=$dCache/$fBase.$(date +%M)
-				cp -Lpr "$fPath" $_fn &&
-					sed '/[ \t]#DELETE_BEGIN#/,/[ \t]#DELETE_END#/d' -i $_fn &&
-					# -e 's,"yes",y,g'
-					sed -e 's/^[ \t]*//' -e 's/\(^[ \t]*\| \+\)#\($\|#*[\t ]\+[^"].*$\)//g' -e 's/() *{/(){/' -e 's/[\t ]*\t[\t ]*/\t/g' -e '/^$/d' -e 's/  *;/;/' -e 's/; +/;/' -e 's/   *"/ "/g' -e 's/"   */" /g' -e 's,\$( ,$(,g' -e 's, )",)",g'  -e 's,\$(echo ,$(e ,g' -e 's,\t*$,,g' -e 's,^local ,l ,'  -e 's,^echo ,e ,'  -e 's,\<cntnue\>$,c,'  -e 's,\<return\>,r,' -e "s,\<command\>,\$C,g" -e 's,_msg\>,_m,g'  -e 's,\<cMqtt,cM,g'  -i $_fn &&
-					#      ^Whitespace      WhiteSpace # Comment                          () *{            Whitesp tab Whitespace        emptyline   WS before ;  WS after ;     WS bef Dou Qts  WS after DblQts  spaceAfter$(     spaceBefore)"    echo to e after $(     tab at eol      local to alias l      echo to e           cntnue to c            return to r          command  to  $C        suffix _msg to _m  command with cMqtt...
+				cp -Lpr "$fPath" $_fn
+				if [ ! "$bDoAll" ] ; then
+				  sed '/[ \t]#DELETE_BEGIN#/,/[ \t]#DELETE_END#/d' -i $_fn &&
+					sed -e 's/^[ \t]*//' -e 's/\(^[ \t]*\| \+\)#\($\|#*[\t ]\+[^"].*$\)//g'  -i $_fn &&
+					#      ^Whitespace      WhiteSpace # Comment
+					  sed -e 's/() *{/(){/' -e 's/[\t ]*\t[\t ]*/\t/g' -e '/^$/d' -e 's/ +;/;/' -e 's/; +/;/' -e 's/  +"/ "/g' -e 's/"  +/" /g' -e 's,\$( ,$(,g' -e 's, )",)",g'  -e 's,\$(echo ,$(e ,g' -e 's,\t+$,,g' -e 's,^local ,l ,'  -e 's,^echo ,e ,'  -e 's,\<cntnue\>$,c,'  -e 's,\<return\>,r,' -e "s,\<command\>,\$C,g" -e 's,_msg\>,_m,g'  -e 's,\<cMqtt,cM,g'  -i $_fn &&
+					  #       () *{            Whitesp tab Whitespace     emptyline   WS before ;   WS after ;     WS bef Dou Qts   WS after DblQts  spaceAfter$(     spaceBefore)"    echo to e after $(     tab at eol    local to alias l    echo to e          cntnue to c            return to r          command  to  $C        suffix _msg to _m  command with cMqtt...
 						cp -p $_fn /tmp &&
-							sed -E -i $_fn  -e 's,[ \t]*(&&|;|>|>>|\|)[ \t]*,\1,g' -e '/awk|printf|test|:/!s,"([a-z0-9/-][a-z0-9/._-]+)",\1,g' && #  -e 's,[^\)]\) [^a-zA-Z],),g'  &&
-						#             white space around && or ; or | , but not << or <    strings > 1c in double quotes   #FRAGILE
-						bash -x -n $_fn && cCmv ash && ash -x -n $_fn # smoke test the syntax of compressed script with bash and ash
-				rc=$?
-				dbg $cmd "$fPath ($( wc -c < $fPath )) trimmed to $_fn ($( wc -c < $_fn )): rc=$rc" # && cp $_fn /tmp/$(basename $_fn).$(date +%M)
-				[ $rc != 0 ] && cErrAndExit "Reducing script $_fn returned error $rc!"
+						  sed -E -i $_fn  -e 's,[ \t]*(&&|;|>|>>|\|)[ \t]*,\1,g' -e '/awk|lua|printf|test|:/!s,"([a-z0-9/-][a-z0-9/._-]+)",\1,g' && #  -e 's,[^\)]\) [^a-zA-Z],),g'  &&
+						#              Whitesp around && or ; or | , but not << or <  pure strings > 1c in double quotes   #FRAGILE
+						    bash -x -n $_fn && cCmv ash && ash -x -n $_fn # smoke test syntax of compressed script with bash and ash
+				  rc=$?
+				  dbg $cmd "$fPath ($( wc -c < $fPath )) trimmed to $_fn ($( wc -c < $_fn )): rc=$rc" # && cp $_fn /tmp/$(basename $_fn).$(date +%M)
+				  [ $rc != 0 ] && cErrAndExit "Reducing script $_fn returned error $rc!"
+				fi
 				if [ ! "$bDoAll" -o "$hDone" ] && diff -Nq $_fn $_fn.save && find $_fn.save -mmin -30 > $fNul ; then
 					_msg="No changes in $_fn (therefor no copy)"
 					cMR OK "source unchanged."
@@ -1453,7 +1500,7 @@ EOF
 							dbg "command=$cmd, rc=$ssh_rc, ssh_data=$ssh_data"
 							if [ $ssh_rc = 255 ] || cOut | grep -w -q -E "open failed|connect failed" ; then # unreachable
 								cMR OFF "rc=$ssh_rc ($ssh_msg)"
-								( sleep 60 ; echo PERIODIC noop "sooner" )  > $fPipe & # inject for sooner retry
+								( sleep 60 ; echo PERIODIC NOOP "sooner" )  > $fPipe & # inject for a sooner repeat
 							elif [ "${ssh_data#"$sPubIf0"}" = "${ssh_data}" ] ; then
 								cMR OFF "rc=$ssh_rc (interface missing or down)"
 							else
@@ -1614,7 +1661,8 @@ EOF
 				cProbeGET
 				cGetSitecode FRESH
 				if [ "$sSite" ] ; then
-					cmd=gluondata cEchoPub site $sSite
+					cmd=gluondata 
+					cEchoPub site $sSite
 				else 
 					sSite=UNKNOWN
 					cMR ERROR
@@ -1650,7 +1698,7 @@ EOF
 					/^machine|^Hardware/ { FS=": " ; printf "{*mosquitto*:*%s*,*linuxversion*:*%s*,*machine*:*%s*,%s}", mpub, lxversion, $2, substr(os_data,2,length(os_data)-2) ; exit 0 }
 					' )"
 				if [ "$data" ] ; then
-					cEcho "$(cStarredToJSON "$data")"
+					cEcho "$(cStarredToJSON)"
 					cMS /$cmd
 				else
 					cMR ERROR "$cmd failed: no output data"
@@ -1736,42 +1784,38 @@ EOF
 				  	cMR ERROR "$_msg"
 				else
 					cOut|awk '$3=="[....W.]" {print $1}' | sort > $fClients
-				
-					awk "{ print strftime(\"%Y-%m-%d_%H:%M:%S \") \$0 \" $hTarget\" ; fflush() ; next }" $fClients >> $fCollection
-					dbg "***" " fCollection=$fCollection ***" && cat $fCollection
-					
 					dbg "**1" " fClients=$fClients ***" && cat "$fClients"
+				
+					awk "{ print strftime(\"%Y-%m-%d_%H:%M:%S;\") \$0 \";$hTarget\" ; fflush() ; next }" $fClients >> $fCollection
+					dbg "**2" " fCollection=$fCollection ***" && cat $fCollection					
 
 					if cCmv join && [ -r $fMacIDs ] ; then  # prerequisites to join the data to a list of named clients...
-						{ sort -k 1 "$fClients" | join -1 1 -2 1 -a 1 - $fMacIDs | sort | uniq -w 17 > "$fClients"_with_names ;} &&
-								mv "$fClients"_with_names "$fClients"
-						dbg "**2" " fClients=$fClients ****" && cat "$fClients"
+						{ sort -t \; -k 1 "$fClients" | join -t \; -1 1 -2 1 -a 1 - $fMacIDs | sort | uniq -w 17 > "$fClients"_w_names ;} &&
+								mv "$fClients"_w_names "$fClients"
+						dbg "**3" " fClients=$fClients ****" && cat "$fClients"
 					fi
 
 					_n=$(wc -l <$fClients)
 					hLine publicwifi/clientscount $_n
 					cp -p $fClients $dCache/xx
-					data="$( tr " " "," < "$fClients" |
-						awk -F, -v lccount="$_n" -v hname=$hTarget 'BEGIN { printf "{*count*:%s,*localclients*:[", lccount } { printf lim "{*addr*:*%s*,*name*:*%s*,*detail*:*%s*}", $1, ($2=="") ? $1 : $2, gensub(/ *$/, "", 1, $3 " " $4 " " $5) ; lim="," } END { printf "],*host*:*%s*}",hname }' |
-						  shorten_ethernet_addr_in_json ${bDoAll:+skip} )"
-					while read -r _fulladdr _what _who ; do
-						dbg IP "*$_fulladdr* *$_what* *$_who*"
-						# set -- $( echo $_addr | tr ":" " " )
-						# grep -q -E "^$1:$2:$3" $fManu && 
-						# _manuf="$(cGetMacVendor "$_addr")"
-						_addr="$(e "$_fulladdr" | cTrd ":" )"
-						_details="$_what${_who:+ $_who}" && [ "$_details" ] || _details="$_addr"
-						cMS "$sSite/$sArea/$_addr" "{*lasthost*:*$hTarget*,*mac*:*$_addr*,*details*:*$_details*,*vendor*:*$(cGetMacVendor "$_fulladdr")*}"
+					while read -r _mac _what _who ; do
+						dbg IP "*$_mac* *$_what* *$_who*" # IP: *6e:95:18:16:87:58* *xx3* **
+						_details="$_what${_who:+ $_who}"
+						cMS "$sSite/$sArea/$(e "$_mac" | cTrd ":" )" "{*lasthost*:*$hTarget*,*mac*:*$_mac*,*details*:*${_details:-$addr}*,*vendor*:*$(cGetMacVendor "$_mac")*}"
 					done <"$fClients" 
-					cEcho "$(cStarredToJSON "$data" | json_pp)"
+					data="$( tr " " \; < "$fClients" |
+						awk -F\; -v lccount="$_n" -v hname=$hTarget 'BEGIN { printf "{*count*:%s,*localclients*:[", lccount } { 
+							  printf lim "{*addr*:*%s*,*name*:*%s*,*detail*:*%s*}", $1, ($2=="") ? $1 : $2, gensub(/ *$/, "",1, $3 " " $4 " " $5) ; lim="," } END { printf "],*node*:*%s*}",hname }' |
+						  shorten_ethernet_addr_in_json $bDoAll )"
+					cEcho "$(cStarredToJSON | json_pp)"
 					cMS /publicwifi/localclients
-					[ "$bWorkAllClients" ] && nAllClients="$(( nAllClients + _n ))"
+					[ "$bWorkAllClients" ] && nLocClients="$(( nLocClients + _n ))"
 					collectedclients="$collectedclients $(xargs <$fClients)"
 					collectedclients="${collectedclients% }" # trim any leading spaces
 				fi
 				;;
 			nodeinfo|neighbours|statistics)
-				# [ ! -d "$dGluon" ] && dbg "Not on Gluon: Skipping cmd $cmd on host $hTarget" && cntnue
+				# [ ! -d "$dGluon" ] && dbg "Not on Gluon: Skipping cmd $cmd on node $hTarget" && cntnue
 				ssh_rc=0
 				ffnodeip="$(cCRead .nodeip 9)" || ffnodeip="::1" # localhost, better than next line
 				if [ $ssh_rc = 1 -o "$ffnodeip" = NONGLUON ] ; then  # FIXME
@@ -1809,7 +1853,7 @@ EOF
 						#		cHassAnnounce "$sSite" "$ad_devname" "$hTarget/$cmd"    "Public Wifi RX bytes"   "value_json.traffic.rx" "counter"
 						# 		cHassAnnounce "$sSite" "$ad_devname" "$hTarget/$cmd"    "Public Wifi TX bytes"   "value_json.traffic.tx" "counter"
 						cMS /clients
-						[ "$bWorkAllClients" ] && nAllClients="$(( nAllClients + data ))"
+						[ "$bWorkAllClients" ] && nLocClients="$(( nLocClients + data ))"
 						# cMqtt "$sSite/$node_id/clients" "$data"
 					fi
 					# [ -f $tmpfilejson      ] && mv -f $tmpfilejson $tmpfilejson.prev
@@ -1849,7 +1893,7 @@ EOF
 				else
 					cEcho
 					data="$(cOut | sed -E -e 's,([0-9])\.0K,\1K,g' | grep -E ' 0 |/$|tmp|boot|overlay' | awk 'BEGIN{print"["} END{print"]"} { print lim "{*mountpoint*:*" $7 "*,*type*:*"$2"*,*filesystem*:*"$1"*,*spaceavail*:*"$5"*,*spaceused*:*"$4"*,*percentused*:*"$6 "*,*spacetotal*:*" $3 "*}" ; lim="," }' )"
-					cMqtt "${sSite:-UNSET}/$hTarget/$cmd" "$(cStarredToJSON "$data")"
+					cMqtt "${sSite:-UNSET}/$hTarget/$cmd" "$(cStarredToJSON)"
 				fi
 				;;
 			jsonify)
@@ -1971,8 +2015,8 @@ EOF
 					cMR ONGOING "Will do $cmd($network/$_m) number $_n."
 					# IP;HOSTNAME;MAC;VENDOR;http://IP;ssh://IP :
 					netprobe | eval "$removecmd" |
-						awk -F';' -v OFS=\; 'FNR==NR {a[$2]=$3 OFS $4 OFS $5 OFS $6 OFS $7 OFS $8;next} {print $0 , a[$1]  }' - $fList > $fScanTmp
-					dbg "Scanned hosts of $network/$_m (_n=$_n, $(date +%H:%M:%S) )" && cat $fScanTmp
+						awk -F";" -v OFS=\; 'FNR==NR {a[$2]=$3 OFS $4 OFS $5 OFS $6 OFS $7 OFS $8;next} {print $0 , a[$1]  }' - $fList > $fScanTmp
+					dbg "Scanned hosts of $network/$_m (n=$_n, $(date +%H:%M:%S) )" && cat $fScanTmp
 
 					diffres1="$( diff -N -bw -up -B -U 0 $fScanTmp.prev $fScanTmp 2>&1 | grep -v "^-$" )"
 					diffres2="$( echo -n "$diffres1"  | grep -E '^\+[^+]|^\-[^-]' )" # only lines with one +/-
@@ -2000,8 +2044,7 @@ EOF
 				# SPECIAL: nmap must be run as root or must have been privileged:  sudo setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip $(which nmap)
 				[ "$bDoAll" ] && _opts="-sV --osscan-guess --version-intensity 5" || _opts="--osscan-limit --version-intensity 1"
 				_opts="$_opts --privileged" # assure nmap that is has the necessary privileges
-				_n="$( echo "$cmdopts" | tr _ / )"
-				_n="${_n:-192.168.178.0/24}"
+				_n="$( echo "${cmdopts:-192.168.178.0/24}" | tr _ / )" # network to be scanned
 				cMR ONGOING "Will $cmd($_n) with nmap options:$_opts"
 				data="$(nmap $_opts "$_n" 2>&1 | 
 					awk '/scan report/ { ip=substr($6,2,length($6)-2) ; printf "%s{\"IpAddr\":\"%s\",\"host\":\"%s\"", lim, ip, gensub(/\..*/,"","g",$5) }
@@ -2042,7 +2085,7 @@ EOF
 							END {
 								for (mac in ssid) { printf "%s\t%s\t%s\t%s\t%s\n", mac, signal[mac], channel[mac], auth[mac]=="" ? "null" : auth[mac], ssid[mac] }
 							} ' | sort -n -r -k 2 )"
-					cEcho "$ssh_data"
+					cEcho
 					cMS /$cmd "$(cOut|cTableToJSON)"
 				else
 					cEcho "ssh command $cmd failed (rc=$ssh_rc)"
@@ -2057,7 +2100,7 @@ EOF
 				# exit 0
 				;;
 			*)
-				_msg="Illegal command=$cmd"
+				_msg="Illegal command=:$cmd:"
 				cEcho "$_msg"
 				cProbeSET || cErrAndExit "$_msg"
 				cErr "$_msg"
@@ -2066,33 +2109,40 @@ EOF
 		done
 	fi
 	
-	if [ $# -gt 0 ]
-	then
+	[ $# -gt 0 ] && {
 		# ... everything that's left in "$*" is taken as more shell commands, too....
-		cSsh "$*" # do not split words
+		cSsh "$@"
 		cOut
-	fi
+	}
 	hDone="$hDone $fHost"
 done
 
-if [ "$nAllClients" -o "$bWorkAllClients" ] ; then
+if [ "$nLocClients" -o "$bWorkAllClients" ] ; then
 	[ "$bVerbose" -o "$nGiveHost" ] && ECHO "\n######  ALL CLIENTS " "$@" "######" >&${nGiveHost:-1} 2>&1
-	[ "$nAllClients" ] && cMqtt "$sArea/publicwifi/allclientscount" $nAllClients
+	[ "$nLocClients" ] && cMqtt "$sArea/publicwifi/allclientscount" $nLocClients
 
 	if [ "$fCollection" ] ; then
 		cSortAndTailFile "$fCollection" 18 1
 		dbg fCollection "$fCollection:" && cat "$fCollection"
+		_ccwn_fn="${fCollection}_with_names"
 		if cCmv join && [ -r $fMacIDs ]; then
-			_ccwn_fn="${fCollection}_with_names"
-			{ sort -k 2 "$fCollection" | join -1 2 -2 1 -a 1 - $fMacIDs | sort -r -k 1 |
-			uniq -w 17 | sort -k 2 > "$_ccwn_fn" ;} && dbg "$_ccwn_fn" "\n$(cat "$_ccwn_fn")"
-			# echo HELLO
-			[ "$bWorkAllClients" ] && cMS "$sSite/$sArea/alllocalclients/debug" "$( { echo addr date node name p ; sort "$_ccwn_fn" ;} | cTableToJSON )"
-			mv "$_ccwn_fn" "$fCollection"
+			dbg "MAC" "Using $fMacIDs for names."
+			{ sort -t \; -k 2 "$fCollection" | join -t \; -1 2 -2 1 -a 1 - $fMacIDs | sort -t \; -r -k 1 |
+			uniq -w 17 | sort -t \; -k 2 > "$_ccwn_fn" ;} && dbg "$_ccwn_fn" "\n$(cat "$_ccwn_fn")"
 		fi
-		data="$( awk -F" " -v id="$sArea" -v lccount=$nAllClients 'BEGIN { printf "{*count*:*%s*,*id*:*%s*,*localclients*:[", lccount, id } END {printf "]}"} { printf lim "{*addr*:*%s*,*name*:*%s*}", $1 , ($4=="")? $1 : $4 $5 $6 $7 ; lim="," }' < "$fCollection" |
-			shorten_ethernet_addr_in_json ${bDoAll:+skip} )"
-		cEcho "$(cStarredToJSON "$data" | json_pp)"
+		while IFS=\; read -r _mac _time _host _name _rest; do
+			echo "$_time;$_mac;$_host;$(cGetMacVendor "$_mac");$_name;$_rest" 
+		done <"$_ccwn_fn" > "$_ccwn_fn.2"
+		mv "$_ccwn_fn.2" "$_ccwn_fn"
+		dbg "MAC" "***$_ccwn_fn***\n$(cat "$_ccwn_fn")"
+
+		[ "$bWorkAllClients" ] && 
+			cMS "$sSite/$sArea/alllocalclients/debug" "$( { echo "date;addr;node;vendor;p" ; sort -t \; "$_ccwn_fn" ;} | cTableToJSON 0 \; )"			
+		data="$( awk -F";" -v id="$sArea" -v lccount=$nLocClients 'BEGIN { printf "{*count*:%s,*id*:*%s*,*localclients*:[", lccount, id } END {printf "]}"} { 
+				printf lim "{*addr*:*%s*,*name*:*%s*,*vendor*:*%s*,*node*:*%s*}", $1 , ($5=="")? $1 : $5 $6 $7, $4, $3; lim="," }' < "$_ccwn_fn" |
+			shorten_ethernet_addr_in_json $bDoAll )"
+		cEcho "$data"
+		cEcho "$(cStarredToJSON | tee /tmp/yy | json_pp)"
 		cMS "$sSite/$sArea/alllocalclients"
 	fi
 fi
