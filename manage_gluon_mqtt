@@ -4,7 +4,7 @@
 #
 # manage_gluon_mqtt
 #
-# Monitor and control Freifunk nodes (Gluon) - by command line and MQTT
+# Monitor and control Freifunk nodes (Gluon) or OpenWrt nodes - by command line and MQTT
 #
 # Repo: https://github.com/sheilbronn/Manage-Gluon-MQTT
 
@@ -24,7 +24,7 @@ C=comman"d"
 
 cCmv()	{ command -v "$@" >$fNul ;} # find out whether a command exists
 # cLower() { { [ "$*" ] && echo "$*" || cat ;} | awk '{print tolower($0)}' ;}
-cLower() { awk -v s="$*" 'BEGIN {print tolower(s)}'  < $fNul ;} # simplified for args only
+cLower() { awk -v s="$*" 'BEGIN {print tolower(s)}' < $fNul ;} # simplified for args only
 # set -x ; cLower "AA Bb" ; exit 99
 cPid() { sh -c 'echo $$' ;}
 # echo TEST: ; cPid ; cPid ; exit 
@@ -54,7 +54,7 @@ fi
 
 # Initialize our own variables:
 bQuiet=""
-bVerbose="" # set to y here for debugging right from the start
+bVerbose="" # set it to y here for debugging right from the start
 set -o noglob  # set noglob will limit security and escaping problems
 sMe=$(echo "${0##*/}" | cTrd -c A-Za-z0-9_.-) # script fails on purposes if its name contains white space
 sBase=$(echo $sMe | sed 's/\..*//')
@@ -271,7 +271,7 @@ cWordsToJsonArray() {
 	cX
 	awk 'BEGIN {printf "["} {printf lim "*" $0 "*" ; lim="," } END {printf "]"}'
   }
-  # set -x ; echo -n eins zwei | cWordsToJsonArray ; exit 
+  # set -x ; echo -n eins zwei | cWordsToJsonArray ; echo -n "" | cWordsToJsonArray ; exit 
 
 cGetGluonDomainsStarred() {
 	cX
@@ -489,7 +489,7 @@ cMqttReply() {
 		cX
 		local _cmd="${cmd%%[0-9]*}" # clean trailing digits from the MQTT command
 		local _ms="$2"
-		[ "$2" != "${2%:}" ] && _ms="${2%:} (rc=$ssh_rc${ssh_msg:+,$ssh_msg})" # if $2 ends in a colon then append ssh_rc and ssh_msg
+		[ "$2" = "${2%:}" ] || _ms="${2%:} (rc=$ssh_rc${ssh_msg:+,$ssh_msg})" # if $2 ends in a colon then append ssh_rc and ssh_msg
 		cMS /$_cmd/log "{*status*:*$1*${_ms:+,*details*:*$_ms*}${3:+,$3}${fPipe:+, *daemon*:*yes*}}"
 		[ "$1" != OK -a "$1" != ONGOING ] && cLogger info "$1: $_ms $3"
 		dbg MQTTREPLIED "$1: $_ms : $3"
@@ -853,18 +853,19 @@ fi
 
 if [ -d $dGluon -o -x /usr/sbin/print_map.sh ] ; then   # I'm running on Gluon (which is based on OpenWrt)
 	[ "$hMqtt" -o "$bMosqFile" ] || hMqtt=$hPubMqtt
-	fMacIDs="/tmp/phones"
+	fMacIDs=/tmp/phones
 else                                      # on rest-of-world (e.g. Raspi or (FIXME) some fullblown OpenWrt)
 	[ "$hMqtt" -o "$bMosqFile" ] || hMqtt=$LH
-	fMacIDs="/srv/openhab-conf/phones"
+	fMacIDs=/srv/openhab-conf/phones
 fi
 
 fCollection=""
 fSleep=$dTmp/sl
+nHosts=0
+sHosts=""
 
 ffhosts="$(cLower "${ffhosts:-$LH}" | tr -s , " ")" # if none given, take localhost
-for hFull in $ffhosts # do it for each given target node (maybe just one)...
-do
+for hFull in $ffhosts ; do # do it for each given target node (or maybe just one)...
 	ssh_rc=0 # reset cache of the last connection return code
 	if [ "$hFull" = localhost ] ; then
 		sSshUser=NOUSER
@@ -966,8 +967,9 @@ do
 			nPidPeriodic=$!
 			
 			_tf=/dev/null ; [ "$bVerbose" ] && _tf=/tmp/$sMe.log ; # _tf=/tmp/mlog
-			if cCmv ubus ; then # enable a listener for the ubus bus on OpenWrt ("tee /dev/null" is a workaround for a bug in OpenWrt")
+			if cCmv ubus ; then # enable a listener for the ubus bus on OpenWrt
 				# ( ubus listen | tee -a $_tf & echo $! > $dTmp/ubusPid ) | awk -v f=$fPipe '{print "UBUS LISTEN "$0 > f ; fflush(f) }' & # print "PERIODIC NOOP xxx" ; 
+				# ("tee /dev/null" is a workaround for a bug in OpenWrt")
 				# DONT KNOW why piping through awk makes so many buffering problems, so had to workaround further down:
 				$SB ubus listen > $fPipe & echo $! > $dTmp/ubusPid
 				sleep 1
@@ -996,7 +998,7 @@ do
 			if [ "$bDoAll" ] && cCmv logread ; then  #  enable a listener for logread
 				_p="daemon.info manage_gluon_mqtt"
 				# DONT KNOW why piping through awk makes so many buffering problems, so had to workaround further down:
-				# ( logread -f & echo $! > $dTmp/logreadPid ) | awk -v f="$fPipe" -v p="$_p" '$0 !~ p {print "LOGREAD LOG " $0 > f ; fflush(f) }' & # NOTE: continous piping didnt work on OpenWrt
+				# ( logread -f & echo $! > $dTmp/logreadPid ) | awk -v f=$fPipe -v p="$_p" '$0 !~ p {print "LOGREAD LOG " $0 > f ; fflush(f) }' & # NOTE: continous piping didnt work on OpenWrt
 				$SB logread -f > $fPipe & echo $! > $dTmp/logreadPid
 				sleep 1
 				nPidLogread="$(cat $dTmp/logreadPid)"
@@ -1709,23 +1711,27 @@ EOF
 				cProbeGET
 				_spparam="${bVerbose:+-q}" ; _spparam="-q --no-check-certificate"
 				sLastSpeed="$(cCRead .lastspd 1)" && sLastSpeed=",*lastSpeedMb*:$sLastSpeed"
-				_spcmd="$(cCRead .lastspdcmd 2)" # prefer the previous one for at most 2 days
-				[ -z "$_spcmd" -o $cmd = "speedtest0" -o $cmd != "${cmd#"$_spcmd"}" ] && _spcmd=$cmd # make it at least as big as the previous max (cache will time out after 2 days anyway):
-				case "$_spcmd" in
-					speedtest)	_url=1MB	;;
-					speedtest0)	_url=5MB	;;
-					speedtest00)	_url=10MB	;;
-					speedtest000)	_url=50MB	;;
-					speedtest0000)	_url=100MB	;;
-					speedtest00000)	_url=1GB	;;
-					*)				cErr "speedtestcmd '$_spcmd' too excessive or fetching failed!"
-									cMR ERROR "Last result ${_val}s or file size ${filesize}B too small"
-									cCWrite .lastspdcmd speedtest0
-									cntnue
-				esac
-				_url="http://speedtest.tele2.net/$_url.zip" ; 
+				_spcmd="$( [ "$bDoAll" ] || cCRead .lastspdcmd 2)" # prefer the previous one for at most 2 days
+				[ -z "$_spcmd" -o $cmd = "speedtest0" -o $cmd != "${cmd#"$_spcmd"}" ] && _spcmd=$cmd # make it at least as big as the previous max.
+				# _url="15MB 30MB 70MB 150MB 250MB 300MB" # https://link.testfile.org 
+				# _url="1MB 5MB 10MB 50MB 100MB 1GB" # http://speedtest.tele2.net
+				_url="5MB 10MB 20MB 50MB 100MB 200MB 512MB 1GB" # http://ipv4.download.thinkbroadband.com
+				_url="100M 1G 10G" # http://speedtest.belwue.net/100M
+				[ "$_spcmd" = "speedtest" ] && _spcmd="speedtest0"
+				_sht=${_spcmd#speedtest}
+				_url="$(echo $_url | cut -d" " -f ${#_sht} )" # cut out the x'th element
+				if [ -z "$_url" ] ; then
+					cErr "speedtestcmd '$_spcmd' too excessive or fetching failed!"
+					cMR ERROR "Last result ${_val}s or file size ${filesize}B too small"
+					cCWrite .lastspdcmd speedtest0
+					cntnue
+				fi
+				# _url="https://link.testfile.org/$_url.zip" ; 
+				# _url="http://speedtest.tele2.net/$_url.zip" ; 
 				# _url="http://ipv6.download.thinkbroadband.com:8080/$_url.zip"
-				# dbg SPEEDTEST "$_url ..."
+				# _url=http://ipv4.download.thinkbroadband.com/$_url.zip # 80.249.99.148
+				_url=http://129.143.4.238/$_url # http://speedtest.belwue.net/100M
+				dbg SPEEDTEST "Using $_url ..."
 				cMR ONGOING "Trying $_url"
 				cSsh "date -u +%s; wget $_spparam -O - $_url | wc -c ; date -u +%s"
 				if [ $ssh_rc = 0 ] ; then
@@ -1734,10 +1740,9 @@ EOF
 					endtime="$(cLine 3)"
 					_val="$((endtime - starttime))"
 					speedMB="$( awk "BEGIN { printf \"%.1f\" , $filesize*8 / ($_val+0.000001) / 1048576}" )"
-					if [ "$filesize" -lt 10000 ] ; then
+					if [ "$filesize" -lt 20000 ] ; then
 						dbg "File size ${filesize}B for $_url too small, will abort."
-						_spcmd="speedtest000000" # head for abort
-						cStackCommand "${_spcmd}"
+						cStackCommand "speedtest0000000000" # head for abort
 					elif [ "$_val" -lt 11 ] ; then
 						_spcmd="${_spcmd}0" # try next bigger size
 						_s="Result ${_val}s too small for file size ${filesize}B"
@@ -1775,34 +1780,38 @@ EOF
 				fCollection=$dTmp/clientcollection
 				touch $fCollection && chmod g+w $fCollection
 				fClients=$fCollection.$hTarget
-				fManu=$dCache/manuf
+				# fManu=$dCache/manuf
 				[ -r $fMacIDs ] || touch $fMacIDs || fMacIDs=$fNul
  
-				if ! cSsh "batctl tl" ; then # get the table of the local clients on the node
+				# get the two table of the local clients on the node together, split them in awk further down
+				if ! cSsh "batctl dc && echo ==== && batctl tl" ; then
 					_msg="Connection $sSshUser failed or no batctl"
 					cErr "$_msg"
 				  	cMR ERROR "$_msg"
 					cntnue
 				fi
+				dbg "**1" " result ***" && cOut # output of both batctl commands
+				
+				nHosts=$((nHosts+1)) && sHosts="$sHosts,$hTarget" # ... since we were successful
 
-				cOut | awk 'ARGIND==1 {FS=";" ; a[$1]=$2;next} ARGIND>1 {FS=" "} $3=="[....W.]" {print $1 ";" a[$1] ";99" strftime("%F_%T") }' $fMacIDs - > $fClients
-				dbg "**1" " fClients=$fClients ***" && cat "$fClients" # mac;name;time
+				# Merge all data together...
+				cOut|awk 'ARGIND==1 {FS=";";s[$1]=$2;next}  ARGIND>1 {FS=" "} $1=="*" {i[$3]=$2;next}   $3=="[....W.]" {print $1 ";" s[$1] ";" strftime("%F_%T") ";" i[$1]}' $fMacIDs - > $fClients
+				dbg "**2" " fClients=$fClients ***" && cat "$fClients" # mac;name;time;ipv4
 
 				_n=$(wc -l <$fClients)
 				hLine publicwifi/clientscount $_n
 
-				while IFS=\; read -r _mac _name _time ; do
+				while IFS=\; read -r _mac _name _time _ipv4 ; do
 					_vdr="$(cGetMacVendor "$_mac")"
-					_line="$_time;$_mac;$hTarget;$_vdr;$_name"
+					_line="$_time;$_mac;$hTarget;$_vdr;$_name;$_ipv4"
 					echo "$_line" >> $fCollection # NEW! : # write  time;mac;node;vendor;name  to file
 					echo "$_line"
-					dbg IP "*$_mac* *$_name* *$_vdr* *$_time*" # IP: *6e:95:18:16:87:58* *Thomas3* *MySamsung* *2024_**
-					cMS "$sSite/$sArea/$(e "$_mac" | cTrd ":" )" "{*node*:*$hTarget*,*mac*:*$_mac*,*name*:*$_name*,*vendor*:*$_vdr*}"
+					dbg IP "*$_mac* *$_name* *$_vdr* *$_time* *$_ipv4*" # IP: *6e:95:18:16:87:58* *Thomas3* *MySamsung* *2024_**
+					cMS "$sSite/$sArea/$(e "$_mac" | cTrd ":" )" "{*node*:*$hTarget*,*mac*:*$_mac*,*name*:*$_name*,*vendor*:*$_vdr*,*ipv4*:*$_ipv4*}"
 				done < $fClients > $fClients.2
-				data="$(awk -F\; -v lccount="$_n" -v hname=$hTarget 'BEGIN { printf "{*count*:%s,*localclients*:[", lccount } { 
-						printf lim "{*addr*:*%s*,*name*:*%s*,*vendor*:*%s*}", $2, ($5=="") ? $2 : $5, $4 ; lim="," } 
-						END { printf "],*node*:*%s*}",hname }' < $fClients.2 |
-						shorten_ethernet_addr_in_json $bDoAll )"
+				data="{*count*:$_n,*localclients*:[$(awk -F\; -v hname=$hTarget '{ 
+						printf lim "{*addr*:*%s*,*name*:*%s*,*vendor*:*%s*,*ipv4*:*%s*}", $2, ($5=="") ? $2 : $5, $4 , $6; lim="," }' < $fClients.2 |
+						shorten_ethernet_addr_in_json $bDoAll) ],*node*:*$hTarget*}"
 				cEcho "$(cStarredToJSON | json_pp)"
 				cMS /publicwifi/localclients
 				[ "$bWorkAllClients" ] && nLocClients="$(( nLocClients + _n ))"
@@ -1834,6 +1843,7 @@ EOF
 					cErr "Connection or gluon-neighbour-info failed: Command $cmd on node ip $ffnodeip failed:"
 					cMR ERROR "result empty (ssh_data=$ssh_data):"
 				else
+					nHosts=$((nHosts+1))
 					printf %s "$ssh_data" >$fTmpMqtt
 					cCWrite .$cmd # cache the whole data to support change detection in the future
 					cEcho
@@ -1863,6 +1873,7 @@ EOF
 				if cSsh $_scmd ; then
 					cMqtt "/$cmd" "$ssh_data"
 					[ "$bQuiet" ] || cOut | json_pp
+					nHosts=$((nHosts+1))
 				else
 					cMR ERROR "$cmd failed:"
 					cErr :
@@ -1888,7 +1899,7 @@ EOF
 					cErr :
 				else
 					cEcho
-					data="$(cOut | sed -E -e 's,([0-9])\.0K,\1K,g' | grep -E ' 0 |/$|tmp|boot|overlay' | awk 'BEGIN{print"["} END{print"]"} { print lim "{*mountpoint*:*" $7 "*,*type*:*"$2"*,*filesystem*:*"$1"*,*spaceavail*:*"$5"*,*spaceused*:*"$4"*,*percentused*:*"$6 "*,*spacetotal*:*" $3 "*}" ; lim="," }' )"
+					data="[$(cOut | sed -E -e 's,([0-9])\.0K,\1K,g' | grep -E ' 0 |/$|tmp|boot|overlay' | awk '{print lim "{*mountpoint*:*" $7 "*,*type*:*"$2"*,*filesystem*:*"$1"*,*spaceavail*:*"$5"*,*spaceused*:*"$4"*,*percentused*:*"$6 "*,*spacetotal*:*" $3 "*}" ; lim="," }' )]"
 					cMqtt "${sSite:-UNSET}/$hTarget/$cmd" "$(cStarredToJSON)"
 				fi
 				;;
@@ -1904,6 +1915,7 @@ EOF
 				if cSsh "uci show $_key && $_more $cmd"  ; then
 					dbg $cmd "$(cOut)"
 					cMR OK # might not even get here if run locally ...
+					nHosts=$((nHosts+1))
 				else
 					cErr :
 					cMR ERROR "$cmd: failed:"
@@ -1963,8 +1975,8 @@ EOF
 					fi
 				fi
 				sRemoveList="^iPhoneSH ^GalaxyS20FE ^S20-FE-von-S ^A52s-von-S ^constructa" # FIXME: optionalize this
-				fScanTmp="$dTmp/$cmd"
-				fList="$dCache/$network.list.txt"
+				fScanTmp=$dTmp/$cmd
+				fList=$dCache/$network.list.txt
 
 				# 1. scan for known devices and provide local, reverse DNS....
 				# https://nmap.org/book/reduce-scantime.html
@@ -2002,7 +2014,8 @@ EOF
 					}' # | tee /tmp/ccc
 				}
 				gen_removecmd() {
-					echo "$* xyzx" | xargs -n1 | awk 'BEGIN { printf "sed " } { printf " -e /^%s/d", $1 }' 
+					printf "sed "
+					echo "$* xyzx" | xargs -n1 | awk '{ printf " -e /^%s/d", $1 }' 
 				}
 				removecmd="$(gen_removecmd "$sRemoveList")"
 
@@ -2110,11 +2123,11 @@ EOF
 		cSsh "$@"
 		cOut
 	}
-	hDone="$hDone $fHost"
+	hDone="$hDone,$fHost"
 done
 
 if [ "$nLocClients" -o "$bWorkAllClients" ] ; then
-	[ "$bVerbose" -o "$nGiveHost" ] && ECHO "\n######  ALL CLIENTS${nMaxGoneDays:+($nMaxGoneDays)} " "$@" "######" >&${nGiveHost:-1} 2>&1
+	[ "$bVerbose" -o "$nGiveHost" ] && ECHO "\n######  ALL CLIENTS($nHosts${nMaxGoneDays:+,$nMaxGoneDays}) " "$@" "######" >&${nGiveHost:-1} 2>&1
 	[ "$nLocClients" ] && cMqtt "$sArea/publicwifi/allclientscount" "$nLocClients"
 
 	if [ "$fCollection" ] && [ -r "$fCollection" ] ; then
@@ -2122,13 +2135,13 @@ if [ "$nLocClients" -o "$bWorkAllClients" ] ; then
 		dbg fCollection "$fCollection:" && cat "$fCollection" # time;mac;node;vendor;name
 
 		[ "$bVerbose" -a "$bWorkAllClients" ] && 
-			cMS "$sSite/$sArea/alllocalclients/debug" "$( { echo "addr;date;node;vendor;p" ; sort -t \; -k 1 "$fCollection" ;} | cTableToJSON 0 \; )"			
+			cMS "$sSite/$sArea/alllocalclients/debug" "$( { echo "addr;date;node;vendor;name;ipv4" ; sort -t \; -k 1 "$fCollection" ;} | cTableToJSON 0 \; )"			
 
-		data="$( awk -F\; -v id="$sArea" -v lc=$nLocClients 'BEGIN { printf "{*count*:%s,*id*:*%s*,*localclients*:[", lc, id } END {printf "]}"} { 
-				printf lim "{*addr*:*%s*,*name*:*%s*,*vendor*:*%s*,*node*:*%s*,*time*:*%s*}", $2 , ($5=="")? $2 : $5 $6 $7, $4, $3, $1; lim="," }' < "$fCollection" |
-			shorten_ethernet_addr_in_json $bDoAll )"
+		data="{*count*:$nLocClients,*hostcount*:$nHosts,*hosts*:*${sHosts#,}*,*id*:*$sArea*,*localclients*:[ $( awk -F\; -v quiet=$bQuiet '{ 
+				printf lim "{*addr*:*%s*,*name*:*%s*,*vendor*:*%s*,*node*:*%s*,*time*:*%s*,*ipv4*:*%s*}", $2 , ($5=="")? $2 : $5, $4, $3, quiet ? "" : $1, $6; lim="," }' < "$fCollection" |
+			shorten_ethernet_addr_in_json $bDoAll ) ]}"
 		cEcho "$data"
-		cEcho "$(cStarredToJSON | tee /tmp/yy | json_pp)"
+		cEcho "$(cStarredToJSON | tee /tmp/$sBase.lc.json | json_pp)"
 		cMS "$sSite/$sArea/alllocalclients"
 		rm -f fCollection
 	fi
