@@ -67,54 +67,55 @@ See command ```install´´´ for more details.
 
 ### Command-line options / Invocation
 
-* -c (commands): One or more management commands to be executed (comma-separated), see below for the details.
-* -s (served nodes): If this script is not run locally on the (Freifunk) node itself (localhost), the SSH names of one or more other Freifunk nodes maybe passed with -s (comma-seperated)
-* -G (give): In the output add an informative line with host and command (useful für multiple commands and hosts)
-* -g (group): MQTT group.
-    If running as a daemon (D), also listen to MQTT messages for a MQTT group as well.
-* -v (verbose): more, verbose output from the script as well as intermediate steps. Additional -v's add more verbosity.
-* -x (exec): each shell command in the script is echoed to stdout before execution (for debugging)
-* -q (quiet): no output on stdout
-* -h (host): name or IP adress of the MQTT broker.  
+* -c CMD1,CMD2,... : One or more management commands to be executed (comma-separated), see below for the details.
+* -s NODE1,NODE2,+: If this script is not run locally on the node itself (localhost), pass the SSH names of one or more other Freifunk nodes (comma-seperated).
+* -G : In the output add ("give) an informative line with host and command (useful für multiple commands and hosts)
+* -g GROUP: If running as a daemon (D), also listen to MQTT messages for a MQTT group as well.
+* -v : more, verbose output from the script as well as intermediate steps. Additional -v's add more verbosity.
+* -x : each shell command in the script is echoed to stdout before execution (for debugging)
+* -q : no output on stdout
+* -h BROKER (host): name or IP adress of the MQTT broker.  
     Multiple -h options may be given for messages to multiple brokers.  
     Following abbreviations for public MQTT brokers may be used:  
     test for test.mosquitto.org, eclipse for iot.eclipse.ors.  
     If no broker is given, mosquitto_pub and mosquitto_sub will use their respective defaults (see their manual pages).
-* -m (mqtt): use MQTT at all or not (currently implied by -p)
+* -m HOST1,HOST2,... (mqtt): send to MQTT hosts (name or IP adress, implied by -p)
 * -p : support Home-Assistant (HASS) and Homie auto-discovery via MQTT
+* -E DAYS : apply command to those nodes only, that had been successfully contacted in the last DAYS days.
+* -M : reply with an MQTT message at most once per hour, or when a value has changed (using for frequent runs from a crontab)
 
-Special commands for the -c option are:
+The commands for the -c option are:
 
-* *bridge*: Script will become a daemon waiting for MQTT commands, subsequent commands are ignored (Use case D)
-* *noop*: Do nothing (for testing purposes)
-* *echo*: Just echo the received command options
-* *date*: Return the current system date (for testing purposes)
+* _bridge_: Script will become a daemon waiting for MQTT commands, any subsequent commands are ignored (Use case D)
+* _noop_: Do nothing (for testing purposes)
+* _echo_: Just echo the received command options
+* _date_: Return the current system date (for testing purposes)
 * _install_: Install if necessary the Mosquitto package, a firewall rule, a sample crontab entry, and then run _filecopy_.
 * _filecopy_: Install a very reduced and space optimized version of this script itself to /sbin on the target node.
 * _sh_: Invoke a remote SSH shell on the remote host (limited to A,B for security reasons)
 * _discovery-update_: Issue all auto-discovery announcements as well as the values.
 * _discovery-delete_: Remove all retained messages for auto-discovery.
-* *wifistatus* ...
-* *wifidown* ...
-* *wifiup*: Return the status of the public Freifunk wifi interface, or switch it down or up
-* *wifissid*: Change name of public Wifi interface (within Freifunk community boundaries if applicable)
-* *channel24* : Change the WiFi channel of the public Freifunk wifi network (for the 2.4 Ghz channel only)
-* *limit*: limit throughput (ingress and egress)
-* *gluonreconfigure*: Reset to configured values and states
+* _wifistatus_ ...
+* _wifidown_ ...
+* _wifiup_: Return the status of the public Freifunk wifi interface, or switch it down or up
+* _wifissid_: Change name of public Wifi interface (within Freifunk community boundaries if applicable)
+* _channel24_ : Change the WiFi channel of the public Freifunk wifi network (for the 2.4 Ghz channel only)
+* _limit_: limit throughput (ingress and egress)
+* _gluonreconfigure_: Reset to configured values and states
 * _site_: return site code of Freifunk network, e.g. "ffmuc"
 * _gluondata_: Lots of Gluon configuration data
 * _machine-data_: Version and CPU info of the  node
-* *speedtest*: Get a large file, measure the time it takes and calculate download speed im MB/s
-* *status*: Load and uptime of the node
-* *localclients*: Amount and fingerprints of clients attached to the node
-* *nodeinfo* ...
-* *neighbours* ...
+* _speedtest_: Get a large file, measure the time it takes and calculate download speed im MB/s
+* _status_: Load and uptime of the node
+* _localclients_: Amount and fingerprints of clients attached to the node
+* _nodeinfo_ ...
+* _neighbours_ ...
 * _statistics_: JSON results from the invocation of `gluon-neighbour-info` with these commands as the resp. option.
 * _addresses_: show output of `ip -6 -j addr` (JSON).
 * _showsite_: JSON info from command `gluon-show-site`
-* *mountsizes*: show size, type and allocation of mounted partitions
-* *memory*: show output of "free -t" as JSON
-* *reboot*: Reboot the node (limited to A,B)
+* _mountsizes_: show size, type and allocation of mounted partitions
+* _memory_: show output of "free -t" as JSON
+* _reboot_: Reboot the node (limited to A,B)
 
 ### Example invocations
 
