@@ -371,7 +371,7 @@ cCWrite() { # write a key/value pair to be cached across script invocations from
 cStoreRead() { # read key/value pair from cache or user storage  (1:key, 2:cachetime, 2: filesuffix, 3:dir)
 	cX
 	local _fn="$3/$([ "${1#.}" = "$1" ] || e $hTarget)$1"
-	local _nMin=$((${2:-2}*60*60)) && [ "$2" = 0.1 ] && _nMin=60 # 60min=1 hour
+	local _nMin=$([ "$2" = 0.1 ] && e 58 || e $((${2:-2}*60*24-5)) ) # default 2 days,  0.1=1 hour=59 minutes
 	local _res="#NOTFOUND#" # cache is invalid or non-existent
 	local _val=""
 	local _deloutput
@@ -462,7 +462,7 @@ cMqtt() { # cMqtt(topic,msg, options) # expanding a leading / in topic to $sSite
 	local _topic="$1"
 	[ "$1" != "${1#/}" ] && _topic="$sSite/$hTarget$1" # ... expand shortcut starting with "/"
 	dbg PUB_MQTT "$_topic  $2  ${3:+OPTIONS=$3}${bVeryVerbose:+ (hMqtt=$hMqtt;hTarget=$hTarget)}"
-	[ "$_comp" -a "$bModified" ] && _f="mqtt.$(p $_topic|cSanitize)" && _pv="$(cCRead $_f 1)" && [ "$_pv" = "$2" ] && return 0 # ... skip if value is unchanged
+	[ "$_comp" -a "$bModified" ] && _f="mqtt.$(p $_topic|cSanitize)" && _pv="$(cCRead $_f 0.1)" && [ "$_pv" = "$2" ] && return 0 # ... skip if value is unchanged
 	for h in $hMqtt ; do
 		#  passing $3 without quotes on purpose:
 		$cMPub ${h:+-h $h} ${sMID:+-i $sMID} -t "$_topic" -m "$2" -i "${sSite}_$hTarget" $_o	|| dbg "$cMPub(host=$h): rc=$?"
@@ -740,7 +740,11 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 	cCWrite .AnnounceDay "$(date +%j)" # support reducing re-announcements to only once per day
   }
 
-OPTIND=1         # reset to 1 in case getopts has been used previously in the shell.
+cAddSuccHost() {
+	[ $ssh_rc = 0 ] && nHosts=$((nHosts+1)) && sHosts="$sHosts,$hTarget" # ... since we were successful
+  }
+
+OPTIND=1         # reset to 1 in case getopts had been processed previously in this shell.
 
 # Initialize more variables
 bDoAll=""
@@ -1048,8 +1052,9 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				sType="$(cTrd -c A-Z "$sType")"
 				if [ "$sType" = UBUS -o "$sType" = LOGREAD -o "$sType" = "{" ] ; then
 					dbg READ "TYPE=$sType,$cmd,$cmdopts" || cEcho "$cmdopts"
-					set -- $cmdopts # cmdopts=27 00:35:35 2024 daemon.info manage_gluon_mqtt herkules: READ Will read /var/log/manage_gluon_mqtt.root/4458/p ...,rc=0
-					[ "$6" = daemon.info -a "$7" = $sMe ] && cntnue
+					# set -- $cmdopts # cmdopts=27 00:35:35 2024 daemon.info manage_gluon_mqtt herkules: READ Will read /var/log/manage_gluon_mqtt.root/4458/p ...,rc=0
+					# [ "$6" = daemon.info -a "$7" = $sMe ] && cntnue
+					[ "$(e "$cmdopts" | cCut " " 6,7)" = "daemon.info $sMe" ] && cntnue
 					cMqtt "/$(p "$sType" | tr A-Z a-z)/log" "$cmdopts" 
 					cntnue
 				elif [ "$sType" = PERIODIC ] ; then
@@ -1074,16 +1079,12 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 						localclients*|publicwifi/localclients*)				cmd="localclients" ;;
 						publicwifi/ssidshort/set) cmd="wifissid_$cmdopts" ;;
 						radio/channel24/set)		cmd="channel24" ;;
-						publicwifi/state/set) 	{ [ "$cmdopts" = true  -o "$cmdopts" = ON  ] && cmd="wifiup" ;} ||
-												{ [ "$cmdopts" = false -o "$cmdopts" = OFF ] && cmd="wifidown" ;} ||
+						publicwifi/state/set) 	{ [ "$cmdopts" = true  -o "$cmdopts" = ON  -o "$cmdopts" = 1 ] && cmd="wifiup" ;} ||
+												{ [ "$cmdopts" = false -o "$cmdopts" = OFF -o "$cmdopts" = 0 ] && cmd="wifidown" ;} ||
 												cErr "Illegal cmdopts=$cmdopts"
 											;;
 						wifistatus*|radio/channel24|publicwifi/state|publicwifi/ssidshort|publicwifi/ssid) cmd="wifistatus" ;;
-						wifiup*)		cmd="wifiup"   ;;
-						wifidown*)		cmd="wifidown" ;;
-						echo*)			cmd="echo"   ;;
-						loop*)			cmd="loop"   ;;
-						sSite*)			cmd="sSite"  ;;
+						wifiup*|wifidown*|echo*|loop*|sSite*) cmd="${cmd%\*}"  ;;
 						gluon-data*)	cmd="gluondata" ;;
 						machine-data*)	cmd="machine-data" ;;
 						wifissid*)	cmd="wifissid_$cmdopts" ;;
@@ -1180,9 +1181,10 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 								dbg AUTOSSH "pid=$_pid"
 								cSsh "date '+%c (restarted autossh)' | $_mpcmd -l"
 								# cSsh "netstat -l | grep 1883"
-								cMR OK "Command $cmd $cmdopts executed."
+								cMR OK "Command $cmd $cmdopts executed."								
 							fi
 						fi
+						cAddSuccHost
 #DELETE_BEGIN#
 					else
 						# nPidAutoSSH=$! # nPidAutoSSH="$(cat $AUTOSSH_PIDFILE)"
@@ -1358,7 +1360,7 @@ EOF
 						dbg MODIFY "A crontab line already containing '$sMe' was found... Leaving crontab unmodified."
 					else
 						cEcho "crontab entry with '$sMe' not found... adding a simple one... pls adapt it later!!"
-						_line="0 * * * * sleep 50 ; $sMe -c echo+LOCALCHIME${_auto:+,machine-data,statistics} -m $hPubMqtt,localhost"
+						_line="0 * * * * sleep 50 ; $sMe -M -c echo+LOCALCHIME${_auto:+,machine-data,statistics} -m $hPubMqtt,localhost"
 						cSsh "{ crontab -l ; echo \"$_line\" ;} | crontab - ; ${bVerbose:+echo crontab is now: ; crontab -l}"
 						cEcho
 					fi
@@ -1420,8 +1422,8 @@ EOF
 						_msg="$fPath copied to /tmp and linked to /sbin"
 						cMR OK "path=$_t"
 					else
-						_msg="scp $fPath to /sbin or /tmp both failed."
-						cMR ERROR "$_msg" 
+						_msg="scp $fPath to /sbin or /tmp both failed"
+						cMR ERROR "$_msg:" 
 					fi
 				#DELETE_BEGIN#
 				fi
@@ -1702,7 +1704,7 @@ EOF
 					' )"
 				if [ "$data" ] ; then
 					cEcho "$(cStarredToJSON)"
-					cMS /$cmd
+					cMS /$cmd "" -M
 				else
 					cMR ERROR "$cmd failed: no output data"
 				fi
@@ -1785,14 +1787,14 @@ EOF
  
 				# get the two table of the local clients on the node together, split them in awk further down
 				if ! cSsh "batctl dc && echo ==== && batctl tl" ; then
-					_msg="Connection $sSshUser failed or no batctl"
+					_msg="Connection $sSshUser failed or no batctl:"
 					cErr "$_msg"
 				  	cMR ERROR "$_msg"
 					cntnue
 				fi
 				dbg "**1" " result ***" && cOut # output of both batctl commands
 				
-				nHosts=$((nHosts+1)) && sHosts="$sHosts,$hTarget" # ... since we were successful
+				cAddSuccHost
 
 				# Merge all data together...
 				cOut|awk -v a=$bDoAll 'ARGIND==1 {FS=";";s[$1]=$2;next}  ARGIND>1 {FS=" "} $1=="*" {i[$3]=$2;next}   $3=="[....W.]" {print $1 ";" s[$1] ";" strftime("%F" (a?"_%T":"")) ";" i[$1]}' $fMacIDs - > $fClients
@@ -1843,7 +1845,7 @@ EOF
 					cErr "Connection or gluon-neighbour-info failed: Command $cmd on node ip $ffnodeip failed:"
 					cMR ERROR "result empty (ssh_data=$ssh_data):"
 				else
-					nHosts=$((nHosts+1))
+					cAddSuccHost
 					p "$ssh_data" >$fTmpMqtt
 					cCWrite .$cmd # cache the whole data to support change detection in the future
 					cEcho
@@ -1858,7 +1860,7 @@ EOF
 						# echo $ssh_data
 						#		cHassAnnounce "$sSite" "$ad_devname" "$hTarget/$cmd"    "Public Wifi RX bytes"   "value_json.traffic.rx" "counter"
 						# 		cHassAnnounce "$sSite" "$ad_devname" "$hTarget/$cmd"    "Public Wifi TX bytes"   "value_json.traffic.tx" "counter"
-						cMS /clients
+						cMS /clients "" -M
 						[ "$bWorkAllClients" ] && nLocClients="$(( nLocClients + data ))"
 						# cMqtt "$sSite/$node_id/clients" "$data"
 					fi
@@ -1873,7 +1875,7 @@ EOF
 				if cSsh $_scmd ; then
 					cMqtt "/$cmd" "$ssh_data"
 					[ "$bQuiet" ] || cOut | json_pp
-					nHosts=$((nHosts+1))
+					cAddSuccHost
 				else
 					cMR ERROR "$cmd failed:"
 					cErr :
@@ -1915,7 +1917,7 @@ EOF
 				if cSsh "uci show $_key && $_more $cmd"  ; then
 					dbg $cmd "$(cOut)"
 					cMR OK # might not even get here if run locally ...
-					nHosts=$((nHosts+1))
+					cAddSuccHost
 				else
 					cErr :
 					cMR ERROR "$cmd: failed:"
