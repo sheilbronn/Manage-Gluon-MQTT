@@ -311,7 +311,7 @@ cErrAndExit() {
 	}
 
 jsonfilter=$($C -v jq) || jsonfilter=$($C -v jsonfilter) || cErrAndExit "jsonfilter or jq must be made available."
-jsonfilter=$(basename "$jsonfilter")
+jsonfilter=${jsonfilter##*/}
 
 cEcho() { # log and output stuff (in color) unless to be quiet
 	cX
@@ -549,7 +549,7 @@ cHassAnnounce() {
 		_jsonpath="${5#value_json.}" #  "${_jsonpath//[ \/-]/}"
 		_jsonpath_red="$(cTrd "][. /-_" "$_jsonpath")"    # cleaned and reduced, needed in unique id's
 		_value_template_str=",*value_template*:*{{ $5 }}*"
-		local _devid="$(basename "$_topicpart")"
+		local _devid="${_topicpart##*/}" # take the last part of the topic as device id
 		local _configtopicpart="$(cTrd "][ /-" "$_topicpart")"
 		local _dev_unique_id="$sMe2$2" #   ="${sID}$2"
 	    local _dev_name="$2 ${_devid}" # "$2 ${_devid^}"
@@ -970,7 +970,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 			done > $fPipe &
 			nPidPeriodic=$!
 			
-			_tf=/dev/null ; [ "$bVerbose" ] && _tf=/tmp/$sMe.log ; # _tf=/tmp/mlog
+			_tf=$fNul ; [ "$bVerbose" ] && _tf=/tmp/$sMe.log ; # _tf=/tmp/mlog
 			if cCmv ubus ; then # enable a listener for the ubus bus on OpenWrt
 				# ( ubus listen | tee -a $_tf & echo $! > $dTmp/ubusPid ) | awk -v f=$fPipe '{print "UBUS LISTEN "$0 > f ; fflush(f) }' & # print "PERIODIC NOOP xxx" ; 
 				# ("tee /dev/null" is a workaround for a bug in OpenWrt")
@@ -1079,9 +1079,11 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 						localclients*|publicwifi/localclients*)				cmd="localclients" ;;
 						publicwifi/ssidshort/set) cmd="wifissid_$cmdopts" ;;
 						radio/channel24/set)		cmd="channel24" ;;
-						publicwifi/state/set) 	{ [ "$cmdopts" = true  -o "$cmdopts" = ON  -o "$cmdopts" = 1 ] && cmd="wifiup" ;} ||
-												{ [ "$cmdopts" = false -o "$cmdopts" = OFF -o "$cmdopts" = 0 ] && cmd="wifidown" ;} ||
-												cErr "Illegal cmdopts=$cmdopts"
+						publicwifi/state/set) 	case "$cmdopts" in 
+												true|ON|1)	cmd=wifiup ;;
+												false|OFF|0) cmd=wifidown ;;
+												*) false ;;
+												esac || cErr "Illegal cmdopts=$cmdopts"
 											;;
 						wifistatus*|radio/channel24|publicwifi/state|publicwifi/ssidshort|publicwifi/ssid) cmd="wifistatus" ;;
 						wifiup*|wifidown*|echo*|loop*|sSite*) cmd="${cmd%\*}"  ;;
@@ -1249,7 +1251,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				else
 					cEcho "$hFull: $MP not found .. determining install cmd .."
 					cSsh "command -v opkg || command -v apt || echo nothing" 2>$fNul
-					_scmd="$(basename "$ssh_data")" && _c="$_scmd update && $_scmd install mosquitto"
+					_scmd="${ssh_data##*/}" && _c="$_scmd update && $_scmd install mosquitto"
 					case "$_scmd" in
 					opkg|X)
 						# FIXME on newer Gluon - might needed for SSL downloads:
@@ -1387,43 +1389,53 @@ EOF
 				;;
 			filecopy|selfcopy)
 				cProbeNOMQTT
+				_check() { bash -x -n $1 && cCmv ash && ash -x -n $1 ; } # smoke test syntax of compressed script with bash and ash
 				fFile="${fFile:-$cmdopts}" # file must be in the local directory or a symbolic link in the local directory!
 				fFile="${fFile:-$0}"
 				fPath="$fFile"
-				fBase="$(basename "$fPath")"
+				fBase="${fPath##*/}"
 				#DELETE_BEGIN#   # Delete the following script part when compressing the script
 				_fn=$dCache/$fBase.$(date +%M)
-				cp -Lpr "$fPath" $_fn
-				if [ ! "$bDoAll" ] ; then
+				cp -Lpr "$fPath" $_fn 
+				_check $_fn
+				rc=$?
+				if [ ! "$bDoAll" -a $rc = 0 ] ; then				  
 				  sed '/[ \t]#DELETE_BEGIN#/,/[ \t]#DELETE_END#/d' -i $_fn &&
-					sed -e 's/^[ \t]*//' -e 's/\(^[ \t]*\| \+\)#\($\|#*[\t ]\+[^"].*$\)//g'  -i $_fn &&
+					sed -e 's/^[ \t]*//' -e 's/\(^[ \t]*\| \+\)#\($\|#*[\t ]\+[^"].*$\)//g' -i $_fn &&
 					#      ^Whitespace      WhiteSpace # Comment
 					  sed -e 's/() *{/(){/' -e 's/[\t ]*\t[\t ]*/\t/g' -e '/^$/d' -e 's/ *;/;/'   -e 's/  *"/ "/g' -e 's/"  */" /g' -e 's,\$( ,$(,g' -e 's, )",)",g'  -e 's,\$(echo ,$(e ,g' -e 's,\t+$,,g' -e 's,^local ,l ,'  -e 's,^echo ,e ,'  -e 's,\<cntnue\>$,c,'  -e 's,\<return\>,r,' -e "s,\<command\>,\$C,g" -e 's,_msg\>,_m,g'  -e 's,\<cMqtt,cM,g'  -i $_fn &&
 					  #       () *{            Whitesp tab Whitespace  emptyline  any WS before ;  WS bef DouQts   WS after DblQts  spaceAfter$(     spaceBefore)"    echo to e after $(     tab at eol     local to alias l    echo to e          cntnue to c            return to r          command  to  $C        suffix _msg to _m    command with cMqtt...
 						cp -p $_fn /tmp &&
-						  sed -E -i $_fn  -e 's/([^\];) +/\1/g'  -e 's,[ \t]*(&&|>|>>|\|)[ \t]*,\1,g' -e '/awk|lua|printf|test|:/!s,"([a-z0-9/-][a-z0-9/._-]+)",\1,g' && #  -e 's,[^\)]\) [^a-zA-Z],),g'  &&
+						  sed -E -i $_fn -e 's/([^\];) +/\1/g'  -e 's,[ \t]*(&&|>|>>|\|)[ \t]*,\1,g' -e '/awk|lua|printf|test|:/!s,"([a-z0-9/-][a-z0-9/._-]+)",\1,g' && #  -e 's,[^\)]\) [^a-zA-Z],),g'  &&
 						  #                  WS after ;       Whitesp around && or | , but not << or <  pure strings > 1c in double quotes   #FRAGILE
-						    bash -x -n $_fn && cCmv ash && ash -x -n $_fn # smoke test syntax of compressed script with bash and ash
+						    _check $_fn
 				  rc=$?
-				  dbg $cmd "$fPath ($( wc -c < $fPath )) trimmed to $_fn ($( wc -c < $_fn )): rc=$rc" # && cp $_fn /tmp/$(basename $_fn).$(date +%M)
-				  [ $rc != 0 ] && cErrAndExit "Reducing script $_fn returned error $rc!"
-				fi
+				  dbg $cmd "$fPath ($( wc -c < $fPath )) trimmed to $_fn ($( wc -c < $_fn )): rc=$rc" # && cp $_fn /tmp/$(basename $_fn).$(date +%M)				  
+				fi 
+				[ $rc != 0 ] && cErrAndExit "Verifying target script $_fn returned error $rc!"
 				if [ ! "$bDoAll" -o "$hDone" ] && diff -Nq $_fn $_fn.save && find $_fn.save -mmin -30 > $fNul ; then
-					_msg="No changes in $_fn (therefor no copy)"
-					cMR OK "source unchanged."
+					_msg="No changes in $_fn or no copy."
+					cMR OK "No copy."
+				elif [ "$sSshUser" = NOUSER ] ; then
+					_msg="No target host."
 				else
-					{ cp -p $_fn $_fn.save ; cp -p $_fn $dCache/$fBase.last ;} # 2>$fNul
+					cp -p $_fn $_fn.save
+					cp -p $_fn $dCache/$fBase.last
 					fPath=$_fn
 				#DELETE_END#
-					if _t="/sbin/$fBase" ; scp -O -p ${bQuiet:+-q} "$fPath" "$sSshUser:$_t" ; then
+					_t="/sbin/$fBase"
+					if scp -O -p ${bQuiet:+-q} "$fPath" "$sSshUser:$_t" ; then
 						_msg="$fPath copied to $_t"
 						cMR OK "path=$_t"
-					elif _t="/tmp/$fBase" ; scp -O -p "$fPath" "$sSshUser:$_t" && cSsh "rm /sbin/$fBase ; ln -s $_t /sbin" ; then
-						_msg="$fPath copied to /tmp and linked to /sbin"
-						cMR OK "path=$_t"
 					else
-						_msg="scp $fPath to /sbin or /tmp both failed"
-						cMR ERROR "$_msg:" 
+						_t="/tmp/$fBase"
+						if scp -O -p "$fPath" "$sSshUser:$_t" && cSsh "rm /sbin/$fBase ; ln -s $_t /sbin" ; then
+							_msg="$fPath copied to $_t and linked to /sbin"
+							cMR OK "path=$_t"
+						else
+							_msg="scp $fPath to /sbin or /tmp both failed"
+							cMR ERROR "$_msg:" 
+						fi
 					fi
 				#DELETE_BEGIN#
 				fi
@@ -1439,7 +1451,8 @@ EOF
 				cProbeNOMQTT
 				for i in $(seq "${cmdopts:-1}") ; do
 					cMR ONGOING "Trying shell (i=$i)"
-					ssh $sSshUser && break
+					dbg SHELL "$(date +%T)"
+					ping -W1 -c1 $hTarget >$fNul && ssh $sSshUser && break
 					sleep 5
 				done ;;
 			homie-update|discovery-update)
