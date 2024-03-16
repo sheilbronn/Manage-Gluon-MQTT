@@ -197,7 +197,7 @@ cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
 	sPubIf0=""
 	sPubIf1=""
 	if ! ssh_data="$(cCRead .ifs "${2:-9}")" ; then
-		cSsh "$C -v iwinfo >$fNul && iwinfo" || { cErr "no iwinfo" ; cMqttReply ERROR "no iwinfo:" ; return $ssh_rc ;} # only iwinfo works for this
+		cSsh "$C -v iwinfo >$fNul && iwinfo" || { cErr "no iwinfo" ; cMR ERROR "no iwinfo:" ; return $ssh_rc ;} # only iwinfo works for this
 		ssh_data="$( { cOut ; echo "" ;} | awk '/^$/ {if (l~/Mode: Master;.*;Encryption: none/) print l;l="";next} {gsub("^ +",";") ; gsub(" {2,9}",";") ;l=l$0 ;next}' )"
 		dbg REMOTE "Interfaces returned: $( cOut | head -10)"
 		cSsidBase
@@ -210,7 +210,7 @@ cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
 		_msg="Public interfaces empty, sPubIfs="
 		dbg PUBLIC "$_msg"
 		cErr "$_msg"
-		cMqttReply ERROR "$_msg::"
+		cMR ERROR "$_msg::"
 		sSsidBase=""
 		return $ssh_rc
 	fi
@@ -247,7 +247,7 @@ cTableToJSON() { # table is read from stdin. numerical values are made unquoted.
 					if (i<NF) continue
 					# now all fields are consumed
 				}
-				dq=(o ~ /^-?(0|([1-9][0-9]*))(\.[0-9]+)?$/) ? "" : "*"    # put no double quotes around numbers
+				dq=(o ~ /(^-?(0|([1-9][0-9]*))(\.[0-9]+)?$)|^\[.*\]$/) ? "" : "*"    # put no double quotes around numbers (nor arrays
 				printf "*%s*:%s%s" , names[(i>NH)?NH:i] , o=="" ? "null" : dq o dq, (i<NF||i<NH) ? "," : "" # print it
 				o=""
 			}
