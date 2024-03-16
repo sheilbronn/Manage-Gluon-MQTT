@@ -487,7 +487,7 @@ cProbe() { # returns 0, if command is to be executed, 1 if not, and 255 if last 
 	}
 alias cProbeGET="cProbe GET || cntnue"
 alias cProbeSET="cProbe SET || cntnue" # FIXME: logic not implemented consistently
-alias cProbeNOMQTT="cProbe NOMQTT || cntnue" # FIXME: covered by catchall
+alias cProbeNOMQTT="{ cProbe NOMQTT || cntnue ;}" # FIXME: covered by catchall
 
 cStackCommand() { cX ; cmdsToDo="$1${cmdsToDo:+,$cmdsToDo}" ; dbg STACKCOMMAND "$1 ($cmdsToDo)" ;}
 cIsNonGluon() { [ "$(cCRead .nodeip 9)" = NONGLUON ] ;} # return 0 if non-gluon, 1 if gluon or unknown # FIXME: not strong enough for detection
@@ -525,7 +525,8 @@ cMqttReply() { # $1=status $2_reply $3=moreopts|-M. If $2 is empty, use "$_cmd($
 		cX
 		local _cmd="${cmd%%[0-9]*}" # clean any trailing digits from the MQTT command
 		local _ms="${2%:}" # colon removed
-		[ "$1" = ERROR ] && _ms="${2:-$_cmd($cmdopts) failed:}" # if $1=ERROR  and  $2,$3 empty
+		_ms="${_ms:-$_cmd($cmdopts)}" # if $2 empty, only use "$_cmd($cmdopts)"
+		[ "$1" = ERROR ] && _ms="$_ms failed:" # if $1=ERROR  and  $2,$3 empty
 		if [ "$2" != "${2%:}" ] ; then
 			[ "$1" = ONGOING ] && _ms="${_ms:+$_ms. }Doing $_cmd($cmdopts)."   || 
 				_ms="${2%:} (rc=$ssh_rc${ssh_msg:+,$ssh_msg})" # if $2 ends in a colon then append ssh_rc and ssh_msg
@@ -1202,7 +1203,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				cProbeSET
 				ssh_data="$(cd $dCache && find . -maxdepth 1 -name "${hTarget:-XXX}.*" -type f -print -exec rm '{}' \; 2>&1)"
 				ssh_rc="$(cOut|cCount)"
-				cOut
+				cEcho
 				cMR OK "Command $cmd($cmdopts): $ssh_rc"				
 				;;
 			bridge|noop|ignore|echo|date)
@@ -1214,16 +1215,16 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				cProbeGET
 				cMqttBeacon
 				;;
-			dns)
-				cProbeNOMQTT
-				cSsh "nslookup $cmdopts" || { cMR ERROR "$ssh_data:" ; cntnue ;}
-				ssh_data="$(echo "$ssh_data"|tail +3|grep Address:|cut -d " " -f 2)"
-				cMR OK "Command $cmd($cmdopts):"
+			dns|dnslocal)
+				[ $cmd = dnslocal ] && _g="gluon-wan " && cProbeNOMQTT
+				cProbeNOMQTT # cProbeGET
+				cmdopts=${cmdopts:-openwrt.org}
+				cSsh "${_g}nslookup $cmdopts" || { cMR ERROR "Command $cmd($cmdopts) returned: $ssh_data:" ; cntnue ;}
+				# ssh_data="$(cOut|tail +3|grep Address|cut -d: -f 2)" # extract the IP addresses
+				ssh_data="$(cOut|awk 'NR>3 && /Address[0-9 ]*:/{gsub("Address[ 0-9]*: ","");print}')" # extract the IP addresses
+				cMR OK "Command $cmd($cmdopts)"
 				cEcho
-				ssh_data="$(echo "$ssh_data"|cWordsToJsonArray)"
-				ssh_data="$({ echo addresses ; echo -n "$cmdopts " ; cOut ; } | cTableToJSON 1)"
-				# echo $ssh_data
-				cMS /$cmd "$ssh_data"
+				cMS /$cmd "{*$cmdopts*:$(cOut|cWordsToJsonArray)}"
 				;;
 			autossh)
 				cProbeSET
