@@ -256,8 +256,9 @@ cTableToJSON() { # table is read from stdin. numerical values are made unquoted.
 		}
 		END {print "]"} '
   }
-  # set +x ; { echo spalte1 spalte2 ; echo a1 11 12 13 14 15 16; echo b1 2x ; echo c1 31 32; echo d1 ;} | cTableToJSON 1 ; exit
-  # set +x ; { echo "spalte1;spalte2" ; echo "a1;11;12;13;14;15;16" ; echo "b1;2x" ; echo d1 ;} | cTableToJSON 1 \; ; exit
+  # set -x ; { echo spalte1 spalte2 ; echo a1 11 12 13 14 15 16; echo b1 2x ; echo c1 31 32; echo d1 ;} | cTableToJSON 1 ; exit
+  # set -x ; { echo "spalte1;spalte2" ; echo "a1;11;12;13;14;15;16" ; echo "b1;2x" ; echo d1 ;} | cTableToJSON 1 \; ; exit
+  # set -x ; { echo "Head" ; echo "11" ; echo "22" ;} | cTableToJSON 0 ; exit
 
 cDelSimpleJsonAttr() { # $1: attr, $2: JSON-string  # but only covers very simple cases, i.e. with quotes or not  :(
     # jq -c "del($1)" <<< "$2"
@@ -278,7 +279,7 @@ cWordsToJsonArray() {
 	cX
 	awk 'BEGIN {printf "["} {printf lim "*" $0 "*" ; lim="," } END {printf "]"}'
   }
-  # set -x ; echo -n eins zwei | cWordsToJsonArray ; echo -n "" | cWordsToJsonArray ; exit 
+  # set -x ; { echo 1 2 ; echo 3 4 ; } | cWordsToJsonArray ; echo ==== ; echo -n "" | cWordsToJsonArray ; exit 
 
 cGetGluonDomainsStarred() {
 	cX
@@ -301,7 +302,7 @@ cLogger() {
 cErr() {
 	cX
 	_tmp="$1"
-	[ "$1" = : ] && _tmp="ssh to $sSshUser for $cmd failed" # default msg is ....
+	[ "$1" = : ] && _tmp="Ssh to $sSshUser for $cmd failed" # default msg is ....
 	[ "$1" != "${1%:}" ] && _tmp="${_tmp%:} (rc=$ssh_rc,$ssh_msg)" # if $1 ends in :, then add rc and msg
 	shift
 	ECHO "${OnRed}ERROR$Rst:" "$_tmp" "$@" 1>&2
@@ -520,7 +521,7 @@ cMqttStarred() {		# cMS(expandableTopic,message,moreMosquittoOptions)
 	}
 	alias cMS=cMqttStarred
 
-cMqttReply() { # $1=status $2_reply $3=moreopts|-M
+cMqttReply() { # $1=status $2_reply $3=moreopts|-M. If $2 is empty, use "$_cmd($cmdopts) failed:". If $2 ends in a colon, append ssh_rc and ssh_msg. 
 		cX
 		local _cmd="${cmd%%[0-9]*}" # clean any trailing digits from the MQTT command
 		local _ms="${2%:}" # colon removed
@@ -529,7 +530,7 @@ cMqttReply() { # $1=status $2_reply $3=moreopts|-M
 			[ "$1" = ONGOING ] && _ms="${_ms:+$_ms. }Doing $_cmd($cmdopts)."   || 
 				_ms="${2%:} (rc=$ssh_rc${ssh_msg:+,$ssh_msg})" # if $2 ends in a colon then append ssh_rc and ssh_msg
 		fi
-		cMS ${_cmd:+/$_cmd}/log "{*status*:*$1*${_ms:+,*details*:*$_ms*}${3:+,$3}${fPipe:+, *daemon*:*yes*}}" $3
+		cMS ${_cmd:+/$_cmd}/log "{*status*:*$1*${_ms:+,*details*:*$_ms*}${3:+,$3}${fPipe:+,*daemon*:*yes*}}" $3
 		[ "$1" != OK -a "$1" != ONGOING ] && cLogger info "$1: $_ms $3"
 		dbg MQTTREPLIED "$1: $_ms : $3"
 	}
@@ -990,7 +991,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 			trap_CHLD() {
 				[ "$1" ] && cErr "TRAP_CHLD: param=$1"
 			}		
-			trap trap_CHLD CHLD # FIXME: needed? helpful?
+			trap trap_CHLD CHLD # FIXME: needed at all?
 
 			echo PERIODIC NONE begin > $fPipe & # something has to be in the pipe immediately otherwise it fails due to race condition
 			sleep 1 # FIXME: shorter?
@@ -1016,7 +1017,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				nC=$((nC+nMqttSleep))
 				[ -r $fSleep ] && nMqttSleep="$(cat $fSleep)" && dbg PERIODIC "nMqttSleep=$nMqttSleep,rnd=$nC"
 				echo PERIODIC TELE "${nMqttSleep}_${nC}_$nSeconds secs"
-				[ $((nC+nMqttSleep)) -gt $nSeconds ] && nMqttSleep=$((nSeconds-nC)) && dbg PERIODIC "Final sleep nMqttSleep=$nMqttSleep"
+				[ $((nC+nMqttSleep)) -gt $nSeconds ] && nMqttSleep=$((nSeconds-nC)) && dbg PERIODIC "Final sleep $nMqttSleep"
 				[ $nC -ge $nSeconds ] && sleep 1 && echo PERIODIC TERMINATE over && sleep 2 && : rm -f $fPipe && break
 			done > $fPipe &
 			nPidPeriodic=$!
@@ -1212,6 +1213,17 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 			beacon)
 				cProbeGET
 				cMqttBeacon
+				;;
+			dns)
+				cProbeNOMQTT
+				cSsh "nslookup $cmdopts" || { cMR ERROR "$ssh_data:" ; cntnue ;}
+				ssh_data="$(echo "$ssh_data"|tail +3|grep Address:|cut -d " " -f 2)"
+				cMR OK "Command $cmd($cmdopts):"
+				cEcho
+				ssh_data="$(echo "$ssh_data"|cWordsToJsonArray)"
+				ssh_data="$({ echo addresses ; echo -n "$cmdopts " ; cOut ; } | cTableToJSON 1)"
+				# echo $ssh_data
+				cMS /$cmd "$ssh_data"
 				;;
 			autossh)
 				cProbeSET
@@ -1894,9 +1906,9 @@ EOF
  
 				# get the two table of the local clients on the node together, split them in awk further down
 				if ! cSsh "batctl dc && echo ==== && batctl tl" ; then
-					_msg="Connection to $sSshUser failed or no batctl:"
-					cErr "$_msg"
-				  	cMR ERROR "$_msg"
+					_msg="Connection to $sSshUser failed or no batctl"
+					cErr "$_msg:"
+				  	cMR ERROR "$_msg:"
 					cntnue
 				fi
 				cAddSuccHost
