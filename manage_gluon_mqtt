@@ -57,7 +57,7 @@ alias cData='[ "$ssh_data" ]'
 alias cOut='printf "%s\n" "$ssh_data"'
 cLine() { cOut | sed -n "$1"p ;} # print line n of ssh_data
 cCount() { cX ; _n=0 ; while read x; do _n=$((_n+1)) ; done ; echo $_n ;} # replace wc -l
-s() { cX ; [ "$1" ] && echo "*$1*" || echo null ;} # echo a non-empty string with stars
+s() { cX ; [ -z "$1" -o "$1" = null -o "$1" = UNKNOWN ] && echo null || echo "*$1*" ;} # echo only a non-empty string with stars, null otherwise
 
 # Initialize our own variables:
 bQuiet=""
@@ -210,7 +210,7 @@ cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
 		_msg="Public interfaces empty, sPubIfs="
 		dbg PUBLIC "$_msg"
 		cErr "$_msg"
-		cMR ERROR "$_msg::"
+		cMR ERROR "$_msg:"
 		sSsidBase=""
 		return $ssh_rc
 	fi
@@ -247,7 +247,7 @@ cTableToJSON() { # table is read from stdin. numerical values are made unquoted.
 					if (i<NF) continue
 					# now all fields are consumed
 				}
-				dq=(o ~ /(^-?(0|([1-9][0-9]*))(\.[0-9]+)?$)|^\[.*\]$/) ? "" : "*"    # put no double quotes around numbers (nor arrays
+				dq=(o ~ /(^-?(0|([1-9][0-9]*))(\.[0-9]+)?$)|^\[.*\]$|^null$/) ? "" : "*"    # put no double quotes around numbers (nor arrays nor the word null)
 				printf "*%s*:%s%s" , names[(i>NH)?NH:i] , o=="" ? "null" : dq o dq, (i<NF||i<NH) ? "," : "" # print it
 				o=""
 			}
@@ -256,7 +256,7 @@ cTableToJSON() { # table is read from stdin. numerical values are made unquoted.
 		}
 		END {print "]"} '
   }
-  # set -x ; { echo spalte1 spalte2 ; echo a1 11 12 13 14 15 16; echo b1 2x ; echo c1 31 32; echo d1 ;} | cTableToJSON 1 ; exit
+  # set -x ; { echo spalte1 spalte2 ; echo a1 11 12 13 14 15 null; echo b1 2x ; echo c1 null 32; echo d1 ;} | cTableToJSON 1 ; exit
   # set -x ; { echo "spalte1;spalte2" ; echo "a1;11;12;13;14;15;16" ; echo "b1;2x" ; echo d1 ;} | cTableToJSON 1 \; ; exit
   # set -x ; { echo "Head" ; echo "11" ; echo "22" ;} | cTableToJSON 0 ; exit
 
@@ -462,9 +462,9 @@ cGetMacVendor() { # $1=mac address
 	local _mac="$(cLower "$1" | tr - : )" #  allow for ":" or "-" in mac adresses
 	local _short="${_mac%:*:*:*}" # only first 3 bytes (=OUI) of the mac address = delete last three bytes
 	local _vd="$(cCRead "mac-$_short.vendor" 9)" # try to find result in cache
-	if ! [ "$_vd" ] ; then
+	if [ -z "$_vd" ] ; then
 		_vd="$(wget -q -O - "https://api.macvendors.com/$_mac")"
-		_vd="$(cTrd -c "A-Za-z0-9_.%, -()" "${_vd:-UNKNOWN}" | cCut " " 1-7)" # only first n words of the vendor name
+		_vd="$(cTrd -c "A-Za-z0-9_.%, -()" "${_vd:-null}" | cCut " " 1-7)" # only first n words of the vendor name
 		cCWrite "mac-$_short.vendor" "$_vd"
 	fi
 	echo "$_vd"
@@ -1219,12 +1219,14 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				[ $cmd = dnslocal ] && _g="gluon-wan " && cProbeNOMQTT
 				cProbeNOMQTT # cProbeGET
 				cmdopts=${cmdopts:-openwrt.org}
-				cSsh "${_g}nslookup $cmdopts" || { cMR ERROR "Command $cmd($cmdopts) returned: $ssh_data:" ; cntnue ;}
-				# ssh_data="$(cOut|tail +3|grep Address|cut -d: -f 2)" # extract the IP addresses
-				ssh_data="$(cOut|awk 'NR>3 && /Address[0-9 ]*:/{gsub("Address[ 0-9]*: ","");print}')" # extract the IP addresses
-				cMR OK "Command $cmd($cmdopts)"
+				if cSsh "${_g}nslookup $cmdopts" ; then
+					ssh_data="$(cOut|awk 'NR>2 && /Address[0-9 ]*:/{gsub("Address[ 0-9]*: ","");print}')" # extract the IP addresses
+					cMR OK "Command $cmd($cmdopts)"
+					cMS /$cmd "{*$cmdopts*:$(cOut|cWordsToJsonArray)}"
+				else
+					cMR ERROR "Command $cmd($cmdopts) returned: $ssh_data"
+				fi
 				cEcho
-				cMS /$cmd "{*$cmdopts*:$(cOut|cWordsToJsonArray)}"
 				;;
 			autossh)
 				cProbeSET
@@ -1924,14 +1926,15 @@ EOF
 				while IFS=\; read -r _mac _name _time _ipv4 _seen ; do
 					_vdr="$(cGetMacVendor "$_mac")"
 					_ping=null ; [ $sSshUser = LOCAL ] && { ping -q -W 1 -c 1 $_ipv4 >$fNul && _ping=1 || _ping=0 ;}
+					_seen="$(( ${_seen%:*}*60 + ${_seen#*:} ))" # convert mm:ss to seconds
 					_line="$_time;$_mac;$hTarget;$_vdr;$_name;$_ipv4;$_ping;$_seen"
 					echo "$_line" >> $fCollection # NEW! : # write  time;mac;node;vendor;name  to file
 					echo "$_line"
 					dbg IP "*$_mac* *$_name* *$_vdr* *$_time* *$_ipv4* *$_ping* *$_seen*" # IP: *6e:95:18:16:87:58* *Thomas3* *MySamsung* *2024_** 
-					cMS "$sSite/$sArea/$(cTrd : "$_mac")" "{*node*:*$hTarget*,*mac*:*$_mac*,*name*:$(s "$_name"),*vendor*:*$_vdr*,*ipv4*:*$_ipv4*,*pingable*:$_ping},*lastseen*:*$_seen*}" -M
+					cMS "$sSite/$sArea/$(cTrd : "$_mac")" "{*node*:*$hTarget*,*mac*:*$_mac*,*name*:$(s "$_name"),*vendor*:$(s "$_vdr"),*ipv4*:*$_ipv4*,*pingable*:$_ping},*lastseen*:$_seen}" -M
 				done <$fClients >$fClients.2
 				data="{*count*:$_n,*localclients*:[$(awk -F\; -v hname=$hTarget '{ 
-						printf lim "{*addr*:*%s*,*name*:*%s*,*vendor*:*%s*,*ipv4*:*%s*,*pingable*:%s,*lastseen*:*%s*}", $2, $5=="" ? $2 : $5, $4 , $6,$7,$8; lim="," }' < $fClients.2 |
+						printf lim "{*addr*:*%s*,*name*:*%s*,*vendor*:%s,*ipv4*:*%s*,*pingable*:%s,*lastseen*:%s}", $2, $5=="" ? $2 : $5, $4=="null" ? "null" : "*"$4"*" , $6,$7,$8; lim="," }' < $fClients.2 |
 						shorten_ethernet_addr_in_json $bDoAll)],*node*:*$hTarget*}"
 				cEcho "$(cStarredToJSON|json_pp)"
 				cMS /publicwifi/localclients ""	$([ "$cmdopts" ] || e "-M")
@@ -2283,8 +2286,11 @@ if [ "$nLocClients" -o "$bWorkAllClients" ] ; then
 		[ "$bVerbose" -a "$bWorkAllClients" ] && 
 			cMS "$sSite/$sArea/alllocalclients/debug" "$( { echo "addr;date;node;vendor;name;ipv4;pingable;seen" ; sort -t \; -k 1 $fCollection ;} | cTableToJSON 0 \; )"			
 
-		data="{*count*:$nLocClients,*hostcount*:$nHosts,*hosts*:*${sHosts#,}*,*id*:*$sArea*,*localclients*:[ $( awk -F\; -v quiet=$bQuiet '{ 
-				printf lim "{*addr*:*%s*,*name*:*%s*,*vendor*:*%s*,*node*:*%s*,*time*:*%s*,*ipv4*:*%s*,*ping*:*%s*,*seen*:*%s*}", $2 , $5==""?$2:$5,$4,$3, quiet? "" : $1, $6,$7,$8; lim="," }' < $fCollection |
+		data="{*count*:$nLocClients,*hostcount*:$nHosts,*hosts*:*${sHosts#,}*,*id*:*$sArea*,*localclients*:[ $( awk -F\; -v quiet=$bQuiet '
+			function s(str) {return (str=="null")?"null":"*"str"*"}
+			{ 
+				printf lim "{*addr*:*%s*,*name*:*%s*,*vendor*:%s,*node*:%s,*time*:%s,*ipv4*:%s,*pingable*:%s,*seen*:%s}", 
+					$2, $5==""?$2:$5,s($4),s($3),s(quiet? "" : $1),s($6),s($7),$8; lim="," }' < $fCollection |
 			shorten_ethernet_addr_in_json $bDoAll ) ]}"
 		cEcho "$data"
 		cEcho "$(cStarredToJSON | json_pp | tee /tmp/$sBase.lc.json)"
