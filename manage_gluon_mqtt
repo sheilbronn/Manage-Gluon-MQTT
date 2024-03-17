@@ -6,7 +6,7 @@
 #
 # Monitor and control Freifunk nodes (Gluon) or OpenWrt nodes - by command line and MQTT
 #
-# Repo: https://github.com/sheilbronn/Manage-Gluon-MQTT
+# Repository: https://github.com/sheilbronn/Manage-Gluon-MQTT
 
 # Some fixed constants and prelimenary (fixed) settings ...
 # semi-hungarian notation for vars: i(n)teger, (s)tring, (d)irectory, (c)ommand, (b)oolean usage, (f)ile, (h)ost, (_) local meaning only
@@ -37,11 +37,10 @@ if cCmv busybox ; then # prefer busybox for performance, memory usage and compat
 	alias xargs="busybox xargs -r"
 	alias diff="busybox diff"
 fi
-	[ "$(ec\ho -e)" = "-e" ] && alias ECHO=ec\ho || alias ECHO="echo -e" # some echo's know -e, some not. /bin/echo would be needed for color generalized interpretation, in case -e not understood
-	alias e=ec\ho
-	# alias e="printf \"%b %b %b\\n\""
-	alias l=loc\al # special quoting needed when compressing script for reduced storage
-	alias cntnue=continue # word continue to be compressed (outside of awk!)
+	[ "$(ec\ho -e)" = "-e" ] && alias ECHO=ec\ho || alias ECHO="echo -e" # some echo's know -e, some not. This avoids the impact of spawning of /bin/echo, in case -e not understood
+	alias e=ec\ho # special quoting needed when compressing script for reduced storage
+	alias l=loc\al 
+	alias cntnue=continue # word "continue" to be compressed (outside of awk!)
 	alias c=con\tinue
 	alias r=ret\urn
 	alias p='pri\ntf %s\\n'
@@ -89,6 +88,14 @@ sGrepSsid='.*'
 
 umask -S u=rwx,g=rx,o= # no rights for others
 
+if [ -t 1 -a ! "$NO_COLOR" ] ; then # only color code on terminals and not when NO_COLOR is set
+	F='\e[' # https://gist.github.com/bcap/5682077#file-terminal-control-sh
+	Yellow="${F}33m" ; Cyan="${F}36m" ; OnRed="${F}41m" ; Rst="${F}0m"
+	# Reg="${F}22;24m" ; RegF="${F}39m" ; RegB="${F}49m"  # Reset all coloring and style
+fi
+
+[ $# -le 1 ] && cMS() { cEcho "$@" ;} && cSEP() { cX ; cEcho "====$1" ;} && cmd=testing && cmdopts=99 && ECHO "$Yellow==========$Rst" # set some values and redefine functions for testing (assumed for no params)....
+
 # Notes for future enhancements:
 # ping ff node and up/down own public if accordingly
 # ( ping -c 3 2001:608:a01:103:62e3:27ff:febd:b8ba && echo yes ) || echo no
@@ -101,7 +108,7 @@ umask -S u=rwx,g=rx,o= # no rights for others
 cHelp() {
   echo "Usage: $sMe ... -v -m mqttserver -p -s node -c command ...
    Execute commands on Gluon/Freifunk/OpenWrt nodes using uci and other commands. Returns output on stdout and/or MQTT.
-   Either automatic (e.g. key-based) access to the Freifunk node using SSH or remote execution is necessary.
+   Either automatic (e.g. key-based) access to the Freifunk node using SSH or remote execution is required.
    Implemented commands:" 1>&2
    _cel='\)(\s*#.*|)$' # = comment til eol
   grep -E "^\s*[a-z_|-]+$_cel" "$0" | sed -E -e "s,$_cel,," -e 's,\|, ,g'  | xargs echo 1>&2 # extract coammands from this shell script
@@ -279,7 +286,7 @@ cWordsToJsonArray() {
 	cX
 	awk 'BEGIN {printf "["} {printf lim "*" $0 "*" ; lim="," } END {printf "]"}'
   }
-  # set -x ; { echo 1 2 ; echo 3 4 ; } | cWordsToJsonArray ; echo ==== ; echo -n "" | cWordsToJsonArray ; exit 
+  # set -x ; { echo 1 2 ; echo 3 4 ; } | cWordsToJsonArray ; cSEP ; echo -n "" | cWordsToJsonArray ; exit 
 
 cGetGluonDomainsStarred() {
 	cX
@@ -295,7 +302,7 @@ cGetGluonDomainsStarred() {
 	}
 
 cLogger() {
-		logger -p daemon.$1 -t "$sMe $hTarget" "$2"
+		logger -p daemon.$1 -t "$sMe $hTarget" -- "$2"
 	}
 	# set -x ; cLogger info "blabla" ; exit 1
 
@@ -319,16 +326,16 @@ cErrAndExit() {
 jsonfilter=$($C -v jq) || jsonfilter=$($C -v jsonfilter) || cErrAndExit "jsonfilter or jq must be made available"
 jsonfilter=${jsonfilter##*/}
 
-cEcho() { # log and output stuff (in color) unless to be quiet
+cEcho() { # log and output stuff (in color), unless to be quiet
 	cX
-	[ $bQuiet ] && return
 	o="${*:-$ssh_data}"
+	[ "$bQuiet" -o -z "$o" ] && return
 	# local _out="$*"
 	# FIXME:  [ "$1" = "${1#\{\*}" -a "$1" = "${1#\[\*}" ] && _out="$(cStarredToJSON "$*" | json_pp)"  # expand (only) "starred" pseudo-JSON
 	ECHO "$Cyan$o$Rst"
-	cLogger info "$o"
+	cLogger $(cIsVerbose && echo info || echo debug) "$o"
 	}
-	# set -x ; cEcho -e -e zwei ; exit 1
+	# set -x ; cEcho -e -e zwei ; cSEP ; cEcho "" ; exit 1
 
 dbg() { # output its args to stderr if verbosity set
 	cX
@@ -356,7 +363,7 @@ cKillChilds() { # $1=pid, $2=parent name, $3=child name using data from /proc
 	_rc=$?
 	return $_rc
 	}
-	# set -x ; bVerbose=y ; cKillChilds $1 ; echo === ; cKillChilds $1 xxxx ; echo === ; cKillChilds $1 ${2:-autossh} ; exit 99
+	# set -x ; bVerbose=y ; cKillChilds $1 ; cSEP ; cKillChilds $1 xxxx ; cSEP ; cKillChilds $1 ${2:-autossh} ; exit 99
 #  DELETE_END#
 
 for d in /eumel /var/log $TEMP $TMPDIR /tmp /data/data/com.termux/cache ; do # find a suitable writable dir. Prefer /var/log over /tmp on openhabian (because of zram).
@@ -371,14 +378,14 @@ cd $dTmp
 
 trap_EXIT() {
 	dbg TRAP_EXIT "cleaning up $dTmp (rc=$?)" && ls -lA "$dTmp" | head -n -1
-	sleep 2
+	sleep 1
 	cd "$dCache" || exit 2
 	# [ $bVerbose ] && ls -alt "$dCache" | head -15
 	[ -d $dTmp ] && { # could be deleted already
 		find $dTmp -mindepth 1 -exec mv ${bTrace:+-v} '{}' . \; # move all leftover files from below dTmp to dCache
 		rmdir $dTmp
 	}
-	find . -maxdepth 1 -path "./[0-9]*" -type d -mtime +6 -exec rm -r '{}' \; # remove old debug files
+	find . -maxdepth 1 -path "./[0-9]*" -type d -mtime +4 -exec rm -r '{}' \; # remove old debug files
 }
 trap trap_EXIT EXIT
 
@@ -438,12 +445,6 @@ cCRead() { # read a key/value pair to be cached across script invocations from t
   }
   # set -x ; bVerbose=y ; dCache=/var/log/manage_gluon_mqtt.openhabian ; cCRead jupiter.site ; cCRead jupiter.os_id ; sleep 1 ; exit
 
-if [ -t 1 -a ! "$NO_COLOR" ] ; then # only color code on terminals and not when NO_COLOR is set
-	F='\e[' # https://gist.github.com/bcap/5682077#file-terminal-control-sh
-	Yellow="${F}33m" ; Cyan="${F}36m" ; OnRed="${F}41m" ; Rst="${F}0m"
-	# Reg="${F}22;24m" ; RegF="${F}39m" ; RegB="${F}49m"  # Reset all coloring and style
-fi
-
 cFilter() {  #  cFilter(filterexpr,moreparam), filterexpr is a jq or jsonfilter expression
 	cX
 	if [ "$jsonfilter" = jsonfilter ] ; then
@@ -471,15 +472,15 @@ cGetMacVendor() { # $1=mac address
 	}
 	# set -x ; cGetMacVendor 38:B4:d3 ; cGetMacVendor  Aa:87:0b:24:61:b3 ; cGetMacVendor  A4:2A:95:45:20:B6 ; exit
 	# set -x ; cGetMacVendor 6e:95:18:16:87:58 ; cGetMacVendor  Aa:87:0b:24:61:b3 ; cGetMacVendor F0-8A:76:A9:57:80 ; exit
-	# set -x ; for m in $(arp -a| cut -d " " -f 4 | grep : ) ; do cGetMacVendor "$m" ; cGetMacVendor "$(p $m | sed 's/..:..:..$/00:00:00/' )" ; echo ==== ; done ; exit
-	# set +x ; for m in $(arp -a| cut -d " " -f 4 | grep : ) ; do echo $m ; wget -q -O - "https://api.macvendors.com/$(p $m | sed 's/..:..:..$/00:00:00/' )" ; echo " " ; echo ==== ; done ; exit
+	# set -x ; for m in $(arp -a| cut -d " " -f 4 | grep : ) ; do cGetMacVendor "$m" ; cGetMacVendor "$(p $m | sed 's/..:..:..$/00:00:00/' )" ; cSEP ; done ; exit
+	# set +x ; for m in $(arp -a| cut -d " " -f 4 | grep : ) ; do echo $m ; wget -q -O - "https://api.macvendors.com/$(p $m | sed 's/..:..:..$/00:00:00/' )" ; echo " " ; cSEP ; done ; exit
 
 shorten_ethernet_addr_in_json() { # remove some bytes für anonymization
 	[ "$1" ] && cat && return 0
 	sed -E -e 's/([*"][a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9]:)[a-f0-9][a-f0-9]:[a-f0-9][a-f0-9](:[a-f0-9][a-f0-9][*"])/\1..\2/g' "$@"
 	}
 
-cProbe() { # returns 0, if command is to be executed, 1 if not, and 255 if last ssh connection failed
+cProbe() { # returns 0 if command should be executed and 1 if not, and 255 if last ssh connection failed
 	cX # any local command line command is always trusted for now:
 	[ "$cmdsToDo" != bridge ] && { [ $ssh_rc = 255 ] && return 255 || return 0 ;} # if node wasn't reachable (255) don't tray again
 	[ "$hMqtt" != $LH ] && { cEcho "Untrusted MQTT $1 command .$cmd. ignored for .$fHost." ; return 1;} # for now: only trust commands from a MQTT broker on the same host.
@@ -527,15 +528,17 @@ cMqttReply() { # $1=status $2_reply $3=moreopts|-M. If $2 is empty, use "$_cmd($
 		local _ms="${2%:}" # colon removed
 		_ms="${_ms:-$_cmd($cmdopts)}" # if $2 empty, only use "$_cmd($cmdopts)"
 		[ "$1" = ERROR ] && _ms="$_ms failed:" # if $1=ERROR  and  $2,$3 empty
-		if [ "$2" != "${2%:}" ] ; then
+		if [ "$_ms" != "${_ms%:}" ] ; then
 			[ "$1" = ONGOING ] && _ms="${_ms:+$_ms. }Doing $_cmd($cmdopts)."   || 
-				_ms="${2%:} (rc=$ssh_rc${ssh_msg:+,$ssh_msg})" # if $2 ends in a colon then append ssh_rc and ssh_msg
+				_ms="${_ms%:} (rc=$ssh_rc${ssh_msg:+,$ssh_msg})" # if $2 ends in a colon then append ssh_rc and ssh_msg
 		fi
 		cMS ${_cmd:+/$_cmd}/log "{*status*:*$1*${_ms:+,*details*:*$_ms*}${3:+,$3}${fPipe:+,*daemon*:*yes*}}" $3
 		[ "$1" != OK -a "$1" != ONGOING ] && cLogger info "$1: $_ms $3"
 		dbg MQTTREPLIED "$1: $_ms : $3"
 	}
 	alias cMR=cMqttReply
+	# set -x ; for t in "" ":" ; do cMR ONGOING "Rushing$t" ; cSEP $t ; cMR OK "Okidoki$t" ; cSEP $t ; cMR ERROR "$t" ; cSEP ===$t ; done ; set +x ; exit 99
+	# set -x ; cMR ERROR ; set +x ; exit 99
 
 cMqttBeacon() {
 	_pubcmd="$cMPub -h $hPubMqtt" # caution: Freifunk/Gluon seems to need IPV6 connectivity, not all brokers have it!
@@ -980,13 +983,16 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 	else
 		cmdsToDo="$commands"
 		if e "$cmdsToDo" | grep -qw bridge ; then
+			_r="$(find $dCache -name p -mmin -3 -mindepth 2)" && [ "$_r" ] && ubus send skipbridgestart &&
+					cErrAndExit "Another bridge is probably running!" # FIXME: make it more robust
+			fPipe=$dTmp/p			
 			# prepare subscribing to MQTT messages...
 			mqttGroup="$(cExpand $mqttGroup)"
-			fPipe=$dTmp/p
+
 			{ mkfifo $fPipe && chmod go-rwx $fPipe ;} || cErrAndExit "Failed on $fPipe (rc=$?)"
 			for t in $hTarget $mqttGroup ; do
 				_p="-t $sSite/$t"
-				_subscriptions="$_p/+/get $_p/+/+/get $_p/+/set $_p/+/+/set"
+				_subscriptions="$_subscriptions $_p/+/get $_p/+/+/get $_p/+/set $_p/+/+/set"
 			done
 			[ "$homie" ] && _subscriptions="$_subscriptions -t homie/$hTarget/+/+/set"
 			trap_CHLD() {
@@ -995,11 +1001,10 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 			trap trap_CHLD CHLD # FIXME: needed at all?
 
 			echo PERIODIC NONE begin > $fPipe & # something has to be in the pipe immediately otherwise it fails due to race condition
-			sleep 1 # FIXME: shorter?
+			sleep 1 # FIXME: make it shorter?
 			# spawn subprocess to terminate after nSeconds:
 			# [ "$nSeconds" ] && { sleep $nSeconds ; echo PERIODIC TERMINATE ; sleep 2 ; rm -f $fPipe ;} > $fPipe & # rm pipe just to be sure
-
-			nPidTerminate=$!
+			# nPidTerminate=$!
 
 			dbg "SUBSCRIBING to MQTT broker: \"$hMqtt $_subscriptions\", homie=$homie, fPipe=$fPipe"
 			_last_will_options="--will-qos 0 --will-topic $sSite/$hTarget/bridge/log --will-payload {\"status\":\"OFF\"}"
@@ -1208,7 +1213,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				;;
 			bridge|noop|ignore|echo|date)
 				dbg COMMAND "cmd=$cmd,$cmdopts,($(date +%T))"
-				[ $cmd = echo ] && { cMR OK "Command $cmd($(cExpand "$cmdopts")) from $(cat $fHost) at $(date +"%T") (V: $sMeAge)" ; [ "$cmdopts" = TESTERROR ] && cErr "Test error" ;}
+				[ $cmd = echo ] && { _msg="$(cExpand "$cmdopts")" ; cEcho "$_msg" ; cMR OK "Command $cmd($_msg) from $(cat $fHost) at $(date +"%T") (V: $sMeAge)" ; [ "$cmdopts" = TESTERROR ] && cErr "Test error" ;}
 				[ $cmd = date ] && { _msg="$(date) (PID=$(cPid))" ; cEcho "$_msg" ; cMR OK "Command $cmd($cmdopts): $_msg" ;}
 				;;
 			beacon)
@@ -1300,25 +1305,28 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 					fi
 				# fi
 				;;
-			loop)
+			loop|check)
 				cProbeGET
-				_msg="$cmd: Invalid parameter '$cmdopts'"
-				_opts=$(cSaniNum "${cmdopts:-5}") || { cMR ERROR "$_msg" ; cntnue ;} # "$cmd: Invalid parameter '$cmdopts'" 
+				_opts=  #  empty _opts signals "check" command
+				[ $cmd = check ] && cmdopts="" || {
+					_opts=$(cSaniNum "${cmdopts:-5}") && [ "$_opts" -ge 1 -a "$_opts" -le 99 ]  || 
+							{ cMR ERROR "$cmd: Invalid parameter '$cmdopts'" ; cntnue ;} # "$cmd: Invalid parameter '$cmdopts'" 
+				}
 				cMR ONGOING :
 				_cmd='cSsh date -u +%s'
-				if [ "$_opts" -ge 1 -a "$_opts" -le 99 ] && $_cmd ; then
+				if $_cmd ; then
 					data="$ssh_data"
 					cEcho
-					i=$_opts
+					i=${_opts:-0}
 					while [ $i -gt 0 ] ; do
 						$_cmd
-						dbg $cmd "$ssh_data"
+						dbg "$cmd($i)" "$ssh_data"
 						i=$((i-1))
 					done
 					cEcho
-					cMR OK "Command $cmd: Performed $_opts-times /bin/date in $(( ssh_data - data)) seconds: $data-$ssh_data"
+					cMR OK "${_opts:+Command $cmd($_opts) cycles of /bin/date in $(( ssh_data - data)) seconds: $data-$ssh_data}"
 				else
-					cMR ERROR "$_msg or command failed:"
+					cMR ERROR
 				fi
 				;;
 			install)
@@ -1348,7 +1356,9 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				# STEP: change the shell prompt PS1
 				# PS1='\[\033[31;1m\]\h \[\033[32;1m\]$PWD\[\033[0m\] \[\033[31m\]\$\[\033[0m\] ' # nicer prompt on OpenWrt
 				# 'X=${SHLVL#1}' \; 'X=${X:+($X)}' ...
-				echo PS1=\''\[\033[31;1m\]\h \[\033[32;1m\]$PWD\[\033[0m\] '\#\ \' | cSsh 'd=/etc/profile.d ; [ -d $d ] && ! grep -wsq PS1= $d/my.sh && tee /tmp/my.sh >> $d/my.sh'
+				{ echo PS1=\''\[\033[31;1m\]\h \[\033[32;1m\]$PWD\[\033[0m\] '\#\ \' ; 
+					echo 'mp() { mosquitto_pub -t "$1" -m "$2" $3 $4 $5 }'
+				} | cSsh 'd=/etc/profile.d ; [ -d $d ] && ! grep -wsq PS1= $d/my.sh && tee /tmp/my.sh >> $d/my.sh'
 				_rc=$?
 				dbg INSTALL "Prompt written (rc=$_rc)"
 
@@ -1734,7 +1744,7 @@ EOF
 					cEcho "Illegal shortssid: $_ssid"
 					cntnue
 				fi
-				# echo ================
+				# cEcho ====
 				cSsh ": set -x &&
 						_hn=\"\$(tr A-Z a-z <$fHost)\" &&
 						other=\"\$( printf %s \"$otherssid\" | sed -e \"s,MYHOSTNAME,\$_hn,\" -e \"s,%s,\$_hn,\" )\"  &&
@@ -1908,7 +1918,7 @@ EOF
 				[ -r $fMacIDs ] || touch $fMacIDs || fMacIDs=$fNul
  
 				# get the two table of the local clients on the node together, split them in awk further down
-				if ! cSsh "batctl dc && echo ==== && batctl tl" ; then
+				if ! cSsh "batctl dc && echo === && batctl tl" ; then
 					_msg="Connection to $sSshUser failed or no batctl"
 					cErr "$_msg:"
 				  	cMR ERROR "$_msg:"
@@ -2201,7 +2211,7 @@ EOF
 				# -O: OS detection
 				# SPECIAL: nmap must be run as root or must have been privileged:  sudo setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip $(which nmap)
 				[ $bDoAll ] && _opts="-sV --osscan-guess --version-intensity 5" || _opts="--osscan-limit --version-intensity 1"
-				_opts="$_opts --privileged" # assure nmap that is has the necessary privileges
+				_opts="$_opts --privileged" # assure to nmap that is has the required privileges
 				cmdopts="$(p "${cmdopts:-192.168.178.0/24}" | tr _ / )" # network to be scanned
 				cMR ONGOING "With nmap options: $_opts:"
 				data="$(nmap $_opts "$cmdopts" 2>&1 | 
@@ -2302,11 +2312,11 @@ fi
 exit # now calling trap_EXIT()
 # End of main.
 
-# { echo TRUE  ; true  ;} || { echo TRUE  ; true ;} && echo YES ; echo =====
-# { echo FALSE ; false ;} || { echo TRUE  ; true ;} && echo YES ; echo =====
-# { echo TRUE  ; true ;} || { echo FALSE ; false ;} && echo YES ; echo =====
-# { echo FALSE ; false ;} || { echo FALSE ; false ;} && echo YES ; echo =========
-# { echo TRUE  ; true  ;} || { echo TRUE  ; true ;} || echo YES ; echo =====
-# { echo FALSE ; false ;} || { echo TRUE  ; true ;} || echo YES ; echo =====
-# { echo TRUE  ; true ;} || { echo FALSE ; false ;} || echo YES ; echo =====
-# { echo FALSE ; false ;} || { echo FALSE ; false ;} || echo YES ; echo =====
+# { echo TRUE  ; true  ;} || { echo TRUE  ; true ;} && echo YES ; cEcho ===
+# { echo FALSE ; false ;} || { echo TRUE  ; true ;} && echo YES ; cEcho ===
+# { echo TRUE  ; true ;}  || { echo FALSE ; false ;} && echo YES ; cEcho ===
+# { echo FALSE ; false ;} || { echo FALSE ; false ;} && echo YES ; cEcho ===
+# { echo TRUE  ; true  ;} || { echo TRUE  ; true ;} || echo YES ; cEcho ===
+# { echo FALSE ; false ;} || { echo TRUE  ; true ;} || echo YES ; cEcho ===
+# { echo TRUE  ; true ;}  || { echo FALSE ; false ;} || echo YES ; cEcho ===
+# { echo FALSE ; false ;} || { echo FALSE ; false ;} || echo YES ; cEcho ===
