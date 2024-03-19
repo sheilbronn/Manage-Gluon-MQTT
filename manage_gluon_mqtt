@@ -23,7 +23,6 @@ LH=localhost
 C=comman"d"
 
 cCmv()	{ command -v "$@" >$fNul ;} # find out whether a command exists
-# cLower() { { [ "$*" ] && echo "$*" || cat ;} | awk '{print tolower($0)}' ;}
 cLower() { awk -v s="$*" 'BEGIN {print tolower(s)}' < $fNul ;} # simplified for args only
 # set -x ; cLower "AA Bb" ; exit 99
 cPid() { sh -c 'echo $$' ;}
@@ -195,7 +194,7 @@ cGetHostname() { # $2=cachetimeout
 cCut() { cut -d"$1" -f${2:-1} $3 ;} # $1=seperator, $2=field(s) or 1, $3=file(s) or other options
 
 cSsidBase() {
-		sSsidBase="$(cOut | awk -F\; '{print$2;exit}' | tr -d \" | awk -F": " '{gsub("/.*","",$2); print $2}' )"
+		sSsidBase="$(cOut| awk -F\; '{print$2;exit}' | tr -d \" | awk -F": " '{gsub("/.*","",$2); print $2}' )"
 	}
 
 cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
@@ -302,7 +301,7 @@ cGetGluonDomainsStarred() {
 	}
 
 cLogger() {
-		logger -p daemon.$1 -t "$sMe $hTarget" -- "$2"
+		logger -p daemon.$1 -t "$sMe($$,$hTarget)" -- "$2"
 	}
 	# set -x ; cLogger info "blabla" ; exit 1
 
@@ -378,7 +377,6 @@ cd $dTmp
 
 trap_EXIT() {
 	dbg TRAP_EXIT "cleaning up $dTmp (rc=$?)" && ls -lA "$dTmp" | head -n -1
-	sleep 1
 	cd "$dCache" || exit 2
 	# [ $bVerbose ] && ls -alt "$dCache" | head -15
 	[ -d $dTmp ] && { # could be deleted already
@@ -889,7 +887,7 @@ shift "$((OPTIND-1))"   # Discard the options parsed so far and leave the rest o
 # [ $bQuiet	] || alias cEcho=": cEcho"
 [ $bVerbose	] || alias dbg="false dbg"
 [ $bVeryVerbose ] && alias dbg2=dbg || alias dbg2="false dbg2"
-[ $nSeconds ] && [ $nMqttSleep -gt $((nSeconds + 5)) ] && nMqttSleep=$((nSeconds + 5))
+[ $nSeconds ] && [ $nMqttSleep -gt $((nSeconds + 2)) ] && nMqttSleep=$((nSeconds + 2))
 
 if [ "$homie" -o "$hMqtt" -o "$bMosqFile" ] ; then # enable MQTT
 	: dbg "MQTT commands real."
@@ -983,7 +981,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 	else
 		cmdsToDo="$commands"
 		if e "$cmdsToDo" | grep -qw bridge ; then
-			_r="$(find $dCache -name p -mmin -3 -mindepth 2)" && [ "$_r" ] && ubus send skipbridgestart &&
+			_r="$(find $dCache -mindepth 2 -mmin -3 -name p)" && [ "$_r" ] && ubus send skipbridgestart &&
 					cErrAndExit "Another bridge is probably running!" # FIXME: make it more robust
 			fPipe=$dTmp/p			
 			# prepare subscribing to MQTT messages...
@@ -1000,11 +998,8 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 			}		
 			trap trap_CHLD CHLD # FIXME: needed at all?
 
-			echo PERIODIC NONE begin > $fPipe & # something has to be in the pipe immediately otherwise it fails due to race condition
-			sleep 1 # FIXME: make it shorter?
-			# spawn subprocess to terminate after nSeconds:
-			# [ "$nSeconds" ] && { sleep $nSeconds ; echo PERIODIC TERMINATE ; sleep 2 ; rm -f $fPipe ;} > $fPipe & # rm pipe just to be sure
-			# nPidTerminate=$!
+			# echo PERIODIC NONE begin > $fPipe & # something has to be in the pipe immediately otherwise it fails due to race condition
+			# sleep 1 # FIXME: make it shorter?
 
 			dbg "SUBSCRIBING to MQTT broker: \"$hMqtt $_subscriptions\", homie=$homie, fPipe=$fPipe"
 			_last_will_options="--will-qos 0 --will-topic $sSite/$hTarget/bridge/log --will-payload {\"status\":\"OFF\"}"
@@ -1012,7 +1007,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 			# cMqttSub -F "MQTT %t %p" -R $_subscriptions $_last_will_options > $fPipe &    # ... doesn't work: mosquitto_sub exits if pipe not ready....  
 			# mosquitto_sub -h localhost -F "MQTT %t %p" -R $_subscriptions $_last_will_options > $fPipe &    # ... doesn't work: mosquitto_sub exits if pipe not ready....  
 			# FIXME: proper buffering still doesn't work :( :( :
-			cMqttSub -F "MQTT %t %p" ${nSeconds:+-W $((nSeconds+5))} -R $_subscriptions $_last_will_options | awk -v f=$fPipe '$1=="MQTT"{print>f;fflush(f)}' & #  no multi-line commands avoiding injections
+			cMqttSub -F "MQTT %t %p" ${nSeconds:+-W $((nSeconds+5))} -R $_subscriptions $_last_will_options 2>&1 | awk -v f=$fPipe 'NR==1&&!/^MQTT/{print "PERIODIC TERMINATE MQTT:"$0>f} $1=="MQTT"{print>f;fflush(f)}' & #  no multi-line commands avoiding injections
 			nPidMosq=$!
 			dbg "SUBSCRIBED: nPidMosq=$nPidMosq" 
 			ln -fs $fPipe $dCache/p # for the convenience of injecting debug helpers
@@ -1041,7 +1036,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 					}' & nPidUbus=$!
 				sleep 1
 				dbg UBUS "Ubus listen PID is $nPidUbus: others\n$(pgrep -lfa "ubus listen")" # pgrep -s 0 -n -lfa "ubus listen"
-				{ sleep 1 ; ubus send $sMe '{"debug":"bridge starting"}' ;} &
+				{ sleep 2 ; ubus send $sMe '{"debug":"bridge startup"}' ;} &
 				# ubus call system info
 				# ubus call hostapd.client1 get_status
 				# ubus call hostapd.client0 get_clients			
@@ -1069,10 +1064,10 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				sleep 1
 				nPidLogread="$(cat $dTmp/logreadPid)"
 				dbg LOGREAD "Background logread PID is: others\n$(pgrep -lfa "logread -f")" 
-				{ sleep 1 ; cLogger info "Started." ;} &
+				{ sleep 3 ; cLogger info "Started." ;} &
 			fi
 
-			dbg PROCIDS "nPidMosq=$nPidMosq,nPidTerminate=$nPidTerminate,nPidPeriodic=$nPidPeriodic,nPidUbus=$nPidUbus,nPidLogread=$nPidLogread,fPipe=$fPipe"
+			dbg PROCIDS "nPidMosq=$nPidMosq,nPidPeriodic=$nPidPeriodic,nPidUbus=$nPidUbus,nPidLogread=$nPidLogread,fPipe=$fPipe"
 			
 			trap_SIGNAL() {
 					pids="$nPidMosq $nPidTerminate $nPidPeriodic $nPidUbus $nPidLogread"
@@ -1104,13 +1099,21 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				read -r sType cmd cmdopts <$fPipe
 				rc=$?
 				dbg RAW "Read sType=$sType,cmd=$cmd,cmdopts=$cmdopts,rc=$rc($_x)" && [ $rc -ne 0 ] # && jobs
-				if [ "$rc" -ne 0 ] ; then
+				for t in nPidMosq=$nPidMosq nPidPeriodic=$nPidPeriodic nPidUbus=$nPidUbus nPidLogread=$nPidLogread ; do
+					p=${t#*=}
+					# dbg "${t%%=*}=$p" "$([ -r /proc/${p:-0}/cmdline ] && echo ok)"  # to be removed
+				done
+				if ! [ -r /proc/$nPidMosq/cmdline -a -r /proc/$nPidPeriodic/cmdline ] ; then
+					dbg PROCMISS && ls -al /proc/$nPidMosq/cmdline /proc/$nPidPeriodic/cmdline 
+					cMR OFF "Exiting (nPidMosq or nPidPeriodic gone)."
+					break 9
+				elif [ "$rc" -ne 0 ] ; then
 					_msg="rc=$rc,server=$sServer,started=$(date +%T),pid=$$"
 					if [ -p $fPipe ] ; then # pipe exists
 						nErrors=$((nErrors + 1)) # FIXME: Remove stuff for debugging
 						_msg="Read error pipe $fPipe ($_msg,nErrors=$nErrors)"
 						cMR ERROR "$_msg"
-						sleep 3 ${bQuiet:+7}
+						sleep 2 ${bQuiet:+5}
 						[ $nErrors -gt 100 ] && cErrAndExit "$_msg: $(ls -l $fPipe 2>&1)"
 						cntnue
 					else # pipe gone
@@ -1137,7 +1140,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 					[ $bVerbose ] && cMS /bridge/state "{*TelePeriod*:$nMqttSleep}" # FIXME: nMqttSleep might have been modified in subshell
 					[ "$cmd" = PULSE ] && cStackCommand echo+pulse
 					[ "$cmd" = TELE  ] && { cIsNonGluon && cStackCommand echo+BRIDGEALIVE_$cmdopts || cStackCommand wifistatus,statistics ;}
-					[ "$cmd" = TERMINATE ] && cmd=bridge && { cMR OFF "Terminating $sMe (pid=$$) after $nSeconds" ; sleep 1 ; break 9 ;}
+					[ "$cmd" = TERMINATE ] && cmd=bridge && { cMR OFF "Terminating $sMe (pid=$$) after ${nSeconds}s" ; sleep 1 ; break 9 ;}
 					cntnue
 				elif [ $sType = MQTT ] ; then
 					nMqttCommands=$((nMqttCommands + 1))
@@ -2083,7 +2086,6 @@ EOF
 			debug_msub) # FIXME: remove this after explore mosquitto_sub stalling bug
 				# for i in $(seq 20) ; do  $MP -t ffmuc/jupiter/echo/get -m $i ; echo $i ; sleep 0 ; done
 				if [ "$cmdopts" = s ] ; then
-					# cMqttSub -t $sSite/\# -v -R | { set +x ; while true ; do read -r x ; echo "// $x" ; sleep 1 ; done } # create a stalling pipe
 					cMqttSub -t $sSite/\# -v -R | awk -v f=$fPipe '{print "//" $0 ; system("sleep 1") }' 
 					exit 0
 				else
@@ -2174,7 +2176,7 @@ EOF
 				}
 				gen_removecmd() {
 					printf "sed "
-					echo "$* xyzx" | xargs -n1 | awk '{ printf " -e /^%s/d", $1 }' 
+					echo "$* xyzx" | xargs -n1 | awk '{printf " -e /^%s/d", $1}' 
 				}
 				removecmd="$(gen_removecmd "$sRemoveList")"
 
