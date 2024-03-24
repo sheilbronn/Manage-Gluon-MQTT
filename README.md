@@ -87,7 +87,7 @@ See command ```install´´´ for more details.
 The commands for the -c option are:
 
 * _bridge_: Script will become a daemon waiting for MQTT commands, any subsequent commands are ignored (Use case D)
-* _noop_: Do nothing (for testing purposes)
+* _bridgestop_: Try to stop another, already running bridge (A,B only)
 * _echo_: Just echo the received command options
 * _date_: Return the current system date (for testing purposes)
 * _install_: Install if necessary the Mosquitto package, a firewall rule, a sample crontab entry, and then run _filecopy_.
@@ -105,17 +105,19 @@ The commands for the -c option are:
 * _site_: return site code of Freifunk network, e.g. "ffmuc"
 * _gluondata_: Lots of Gluon configuration data
 * _machine-data_: Version and CPU info of the  node
-* _speedtest_: Get a large file, measure the time it takes and calculate download speed im MB/s
+* _speedtest_: Get a large file, measure the time it takes and calculate download speed in MB/s
 * _status_: Load and uptime of the node
-* _localclients_: Amount and fingerprints of clients attached to the node
-* _nodeinfo_ ...
-* _neighbours_ ...
-* _statistics_: JSON results from the invocation of `gluon-neighbour-info` with these commands as the resp. option.
+* _localclients_: Amount and fingerprints of Freifunk clients connected to the node
+* _nodeinfo_:  JSON results from the invocation of `gluon-neighbour-info nodeinfo`
+* _neighbours_: JSON results from the invocation of `gluon-neighbour-info neighbours`
+* _statistics_: JSON results from the invocation of `gluon-neighbour-info statistics`
 * _addresses_: show output of `ip -6 -j addr` (JSON).
 * _showsite_: JSON info from command `gluon-show-site`
 * _mountsizes_: show size, type and allocation of mounted partitions
 * _memory_: show output of "free -t" as JSON
 * _reboot_: Reboot the node (limited to A,B)
+* _loop_: Run a command in a repeated loop (A,B only)
+* _noop_: Do nothing (used for testing purposes)
 
 ### Example invocations
 
