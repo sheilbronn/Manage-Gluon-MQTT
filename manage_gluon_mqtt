@@ -68,7 +68,7 @@ sBase=$(p $sMe | sed 's/\..*//')
 sMe2="$(cTrd _ $sBase)"
 sMID="$sMe2-$$"
 sID=$(cTrd -c a-zA-Z0-9 $sMID) # sanitize the ID
-sMeAge=$(date +%Y-%m-%d -r "$(readlink -f "$0")")
+sMeAge=$(date +%Y%m%d%H -r "$(readlink -f "$0")")
 sManufacturer=Linux
 export ssh_rc=0
 export ssh_data=
@@ -96,7 +96,11 @@ if [ -t 1 -a ! "$NO_COLOR" ] ; then # only color code on terminals and not when 
 	# Reg="${F}22;24m" ; RegF="${F}39m" ; RegB="${F}49m"  # Reset all coloring and style
 fi
 
-[ $# -le 1 ] && cMS() { cEcho "$@" ;} && cSEP() { cX ; cEcho "====$1" ;} && cmd=testing && cmdopts=99 && ECHO "$Yellow==========$Rst" # set some values and redefine functions for testing (assumed for no params)....
+#BEGIN_DELETE
+# set some values and redefine functions for testing (assumed for no script params)
+[ $# -le 1 ] && cMS() { cEcho "$@" ;} && cmd=testing && cmdopts=99 && ECHO "$Yellow==========$Rst"
+cSEP() { cX ; cEcho "====$1" ;}
+#END_DELETE
 
 # Notes for future enhancements:
 # ping ff node and up/down own public if accordingly
@@ -282,7 +286,8 @@ cFirstJsonAttr() { # take string and extract the value of the first attribute if
 	[ "${m#{}" = "$m" ] && e "$m" && return # non-JSON
 	e "$m" | sed -e 's/[,}].*//g' -e 's/[^:]*://' -e 's/[^a-zA-Z0-9]*//g' # ... else JSON
 	}
-# set -x ; x='{ eins:"first" , zwei:second }' ; cFirstJsonAttr "$x" ; cFirstJsonAttr "blabla,bla:blub" ; exit # TEST
+	# set -x ; x='{ eins:"first" , zwei:second }' ; cFirstJsonAttr "$x" ; cFirstJsonAttr "blabla,bla:blub" ; exit # TEST
+	# set -x ; x=' {"custom_event":{"key":"value","number":123}  }' ; cFirstJsonAttr "$x" ; exit 99 # TEST
 
 cWordsToJsonArray() {
 	cX
@@ -347,10 +352,12 @@ dbg() { # output its args to stderr if verbosity set
 	true # return true if verbose
 	}
 
-cShortenString() { # shorten string $1 to at most $2 chars plus ....
+ cShorten() { # shorten string $1 to at most $2 chars plus some ellipses
 	cX
-	printf "%.${2:-5}s%s" "$1" "$( [ ${#1} -gt "${2:-5}" ] && printf "...")"
+	printf "%.${2:-33}s%s" "$1"
+	[ ${#1} -gt "${2:-33}" ] && printf "..."
 	}
+	# set -x; cShorten "1234567890" 7 ; cSEP ; cShorten "1234567890" ; exit 99
 
 cIsPid() {  # $1=pid
 	cX
@@ -384,7 +391,7 @@ done
 cd $dTmp
 
 trap_EXIT() {
-	dbg TRAP_EXIT "cleaning up $dTmp (rc=$?)" && ls -lA "$dTmp" | head -n -1
+	dbg TRAP_EXIT "cleaning up $dTmp (rc=$?)" && ls -lA "$dTmp" | tail -n +2
 	cd "$dCache" || exit 2
 	# [ $bVerbose ] && ls -alt "$dCache" | head -15
 	[ -d $dTmp ] && { # could have been deleted already
@@ -394,7 +401,7 @@ trap_EXIT() {
 	find . -maxdepth 1 -path "./[0-9]*" -type d -mtime +3 -exec rm -r '{}' \; # remove old debug dirs
 	_d=$(($(date +%s)-nStartTime))
 	[ $nSeconds ] && [ $((_d-nSeconds)) -ge 0 ] && cCWrite bridgedelta $((_d-nSeconds))
-	cMqttReply OFF "Final(duration=$_d,pid=$$,nSeconds=$nSeconds)"
+	cMqttReply OFF "End(d=$_d,pid=$$${nSeconds:+,nSeconds=$nSeconds})"
 }
 trap trap_EXIT EXIT
 
@@ -410,9 +417,10 @@ cStoreWrite() { # write a key/value pair to a dir: key,value,dir,filesuffix # if
 		cErrAndExit "$_t($1, \"$2\", $_dir) = #INVALIDPARAM#"
 	}
 	mkdir -p $_dir && echo "$2" > "$_f"
-	_rc=$?
-	dbg $_t "($1,\"$2\",$3) = $_rc"
-	return $_rc
+	_rc=${_rc#0}
+	dbg $_t "($1,\"$2\"$([ "$3" != "$dCache" ] && e ",$3"))${_rc:+ = $_rc}" # more debug data, only if unusual or unsuccessful
+	[ "$_rc" ] &&
+	return ${_rc:-0}
   }
 cUserWrite() {  # write a key/value pair permanently across script invocations
 		cStoreWrite "$1" "$2" $dUser
@@ -437,7 +445,7 @@ cStoreRead() { # read key/value pair from cache or user storage  (1:key, 2:cache
 			[ "$_val" ] || _res="#EMPTY#"
 		fi
 	fi
-	dbg STORE_READ "($1,$2,${_fn#/var/log/})=\"$(cShortenString "$_val" 23)\",$_res)"
+	dbg STORE_READ "(${_fn#$dCache/},$2)=\"$(cShorten "$_val")\"$([ "$_res" != "#OK#" ] && e "($_res)")"
 	p "$_val"
 	[ "$_val" ] # return 1 if empty, 0 otherwise
   }
@@ -452,7 +460,7 @@ cCRead() { # read a key/value pair to be cached across script invocations from t
 	cX
 	cStoreRead "$1" "$2" $dCache
   }
-  # set -x ; bVerbose=y ; dCache=/var/log/manage_gluon_mqtt.openhabian ; cCRead jupiter.site ; cCRead jupiter.os_id ; sleep 1 ; exit
+  # set -x ; bVerbose=y ; dCache=/var/log/manage_gluon_mqtt.openhabian ; cCRead herkules.site ; cSEP ; cCRead herkules.neighbours ; sleep 1 ; exit
   # set -x ; bVerbose=y ; dCache=/var/log/manage_gluon_mqtt.openhabian ; cCRead noneexistingfile.none ; exit
 
 cFilter() {  #  cFilter(filterexpr,moreparam), filterexpr is a jq or jsonfilter expression
@@ -500,7 +508,7 @@ alias cProbeGET="cProbe GET || cntnue"
 alias cProbeSET="cProbe SET || cntnue" # FIXME: logic not implemented consistently
 alias cProbeNOMQTT="{ cProbe NOMQTT || cntnue ;}" # FIXME: covered by catchall
 
-cStackCommand() { cX ; cmdsToDo="$1${cmdsToDo:+,$cmdsToDo}" ; dbg STACKCOMMAND "$1 ($cmdsToDo)" ; true ;}
+cStackCommand() { cX ; cmdsToDo="$1${cmdsToDo:+,$cmdsToDo}" ; dbg STACKCOMMAND "$1 ($cmdsToDo)" ; : ;}
 cIsNonGluon() { [ "$(cCRead .nodeip 9)" = NONGLUON ] ;} # return 0 if non-gluon, 1 if gluon or unknown # FIXME: not strong enough for detection
 
 bMosqFile=$( cR $HOME/.config/$MP && echo yes)
@@ -511,7 +519,7 @@ cMqtt() { # cMqtt(topic,msg, options) # expanding a leading / in topic to $sSite
 	local _comp="" && [ "$3" = "-M" ] && _comp=y || _o="$3"
 	local _topic="$1"
 	[ "$1" != "${1#/}" ] && _topic="$sSite/$hTarget$1" # ... expand shortcut starting with "/"
-	dbg PUB_MQTT "$_topic  $2  ${3:+OPTIONS=$3}${bVeryVerbose:+ (hMqtt=$hMqtt;hTarget=$hTarget)}"
+	dbg PUB_MQTT "$_topic  $2  ${3:+OPT=$3}${bVeryVerbose:+ (hMqtt=$hMqtt;hTarget=$hTarget)}"
 	[ "$_comp" -a "$bModified" ] && _f="mqtt.$(p $_topic|cSanitize)" && _pv="$(cCRead $_f 0.1)" && [ "$_pv" = "$2" ] && return 0 # ... skip if value is unchanged
 	for h in $hMqtt ; do
 		#  passing $3 without quotes on purpose:
@@ -997,7 +1005,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				_p=${_p#./} ; _p=${_p%/p}
 				if cIsPid $_p ; then
 					cCmv ubus && ubus send $sMe "{\"debug\":\"$$:skipbridgestart:other=$_p\"}"
-					cmd=bridge cErrAndExit "$$: Another bridge ($_p) probably still running?! "
+					cmd=bridge cErrAndExit "$$: Another bridge ($_p ?) probably still running!"
 				else
 					dbg BRIDGE "Removing stale bridge dir: $_p"
 					rm -r $dCache/$_p
@@ -1006,6 +1014,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 			fPipe=$dTmp/p			
 			# prepare subscribing to MQTT messages...
 			mqttGroup="$(cExpand $mqttGroup)"
+			nSeconds=${nSeconds:-99999999}
 
 			{ mkfifo $fPipe && chmod go-rwx $fPipe ;} || cErrAndExit "Failed on $fPipe (rc=$?)"
 			for t in $hTarget $mqttGroup ; do
@@ -1014,27 +1023,36 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 			done
 			[ "$homie" ] && _subscriptions="$_subscriptions -t homie/$hTarget/+/+/set"
 			trap_CHLD() {
-				[ "$1" ] && cErr "TRAP_CHLD: param=$1"
+				# [ "x$1" ] && cErr "TRAP_CHLD"
+				for t in # nPidMosq=$nPidMosq nPidSleep=$nPidSleep nPidUbus=$nPidUbus nPidLogread=$nPidLogread
+				do
+					n=${t%%=*} ; p=${t#*=}
+					[ $p ] && ! cIsPid $p && { # check whether an important child has disappeared
+							# dbg PROCMISS "$n=$p"
+							cErr "TRAP_CHLD: $n=$p VANISHED"
+						}
+				done
+
 			}		
 			trap trap_CHLD CHLD # FIXME: needed at all?
 
 			# echo PERIODIC NONE begin > $fPipe & # something has to be in the pipe immediately otherwise it fails due to race condition
 			# sleep 1 # FIXME: make it shorter?
 
-			cLogger info "ONGOING: bridge startup"
 
 			_d=$(cCRead bridgedelta) || _d=2
-			[ "$_d" -gt 0 ] && 
+			[ "$_d" -gt 0 ] &&
 				nSeconds=$(( nSeconds - $_d - $([ -d $dGluon ] && e 5 || e 1) ))  # Starting with 4++ seconds should be fine for small devices
+			cLogger info "ONGOING: bridge startup ($nSeconds secs)"
 			dbg OPTIMIZED "_d=$(cCRead bridgedelta), nSeconds=$nSeconds"
 			dbg "SUBSCRIBING to MQTT broker (nSeconds=$nSeconds): \"$hMqtt $_subscriptions\", homie=$homie, fPipe=$fPipe"
 
-			_last_will_options="--will-qos 0 --will-topic $sSite/$hTarget/bridge/log --will-payload {\"status\":\"OFF\"}"
+			_last_will_options="--will-qos 1 --will-topic $sSite/$hTarget/bridge/log --will-payload {\"status\":\"OFF\",\"alive\":0} --will-retain"
 
 			# cMqttSub -F "MQTT %t %p" -R $_subscriptions $_last_will_options > $fPipe &    # ... doesn't work: mosquitto_sub exits if pipe not ready....
 			# mosquitto_sub -h localhost -F "MQTT %t %p" -R $_subscriptions $_last_will_options > $fPipe &    # ... doesn't work: mosquitto_sub exits if pipe not ready....
 			# FIXME: proper buffering still doesn't work :( :( :
-			cMqttSub -F "MQTT %t %p" ${nSeconds:+-W $((nSeconds+0))} -R $_subscriptions $_last_will_options 2>&1 | 
+			cMqttSub -F "MQTT %t %p" ${nSeconds:+-W $((nSeconds+0))} -R $_subscriptions $_last_will_options 2>&1 |
 					awk -v f=$fPipe 'NR==1&&!/^MQTT/{print "PERIODIC TERMINATE MQTT:"$0>f} $1=="MQTT"{print>f;fflush(f)}' & #  prevent multi-line commands thus avoiding injections
 			nPidMosq=$!
 			dbg "SUBSCRIBED: nPidMosq=$nPidMosq"
@@ -1050,18 +1068,25 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				[ $((nSum+nMqttSleep)) -gt $nSeconds ] && nMqttSleep=$((nSeconds-nSum)) && dbg PERIODIC "Final sleep $nMqttSleep"
 				[ $nSum -ge $nSeconds ] && echo PERIODIC TERMINATE lastone && sleep 2 && : rm -f $fPipe && break
 			done > $fPipe &
-			nPidPeriodic=$!
+			nPidSleep=$!
 			
 			_tf=$fNul ; [ $bVerbose ] && _tf=/tmp/$sMe.log ; # _tf=/tmp/mlog
 			if cCmv ubus ; then # enable a background listener for the ubus bus on OpenWrt
 				# make ubus listen a real subprocess and pipe its (modified) output to fPipe:
-				awk -v f=$fPipe 'BEGIN {cmd="ubus listen"; while (cmd|getline line) {
-							if (line~/^\{/) print "UBUS LISTEN "line>f
+				# to test: for i in $(seq 1 199) ; do ubus send ==== ; for n in $(seq 1 4) ; do ping -qc $n 192.168.178.1 > /dev/null ; echo $i.$n ; ubus send chime$i.$n ; ubus send anotherfast ; done ; sleep 1 ; done
+				# WARNING: On Gluon (OpenWrt?) it seems that "ubus listen" stalls ...
+				# WARNING: ... if it is not read fast enough (makes it unreliable for logging)
+				# we'll make it restart in a loop, if it ends - for now.
+				awk -v f=$fPipe 'BEGIN { cmd="while : ; do ubus listen ; rc=$? ; echo \"{ RESTARTING($rc) }\" ; done"
+						while (cmd|getline line) {
+							if (line~/^\{/) { print "UBUS LISTEN "line>>f
+								# ; print "UBUS LISTEN "line>>"/tmp/u"
+							}
 						}
 					}' &
 				nPidUbus=$!
 				sleep 1
-				dbg UBUS "Ubus listen PID is $nPidUbus: others\n$(pgrep -lfa "ubus listen")" # pgrep -s 0 -n -lfa "ubus listen"
+				dbg UBUS "nPidUbus=$nPidUbus: others\n$(pgrep -lfa "ubus listen")" # pgrep -s 0 -n -lfa "ubus listen"
 				_n=$$ ; { sleep 1 ; ubus send $sMe "{\"debug\":\"$_n:bridge startup(mosq=$nPidMosq,ubus=$nPidUbus):${nMqttSleep}s\"}" ;} &
 				# ubus call system info
 				# ubus call hostapd.client1 get_status
@@ -1094,10 +1119,10 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				{ sleep 2 ; cLogger info "Started." ;} &
 			fi
 
-			dbg PROCIDS "nPidMosq=$nPidMosq,nPidPeriodic=$nPidPeriodic,nPidUbus=$nPidUbus,nPidLogread=$nPidLogread,fPipe=$fPipe"
+			dbg PROCIDS "nPidMosq=$nPidMosq,nPidSleep=$nPidSleep,nPidUbus=$nPidUbus,nPidLogread=$nPidLogread,fPipe=$fPipe"
 			
 			trap_SIGNAL() {
-					pids="$nPidMosq $nPidTerminate $nPidPeriodic $nPidUbus $nPidLogread"
+					pids="$nPidMosq $nPidSleep $nPidUbus $nPidLogread"
 					_msg="Removing fPipe=$fPipe and killing $pids."
 					dbg TRAP_SIGNAL "$_msg"
 					[ "$cmd" = bridge ] && cMR ONGOING "$_msg"
@@ -1126,19 +1151,15 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				read -r sType cmd cmdopts <$fPipe
 				rc=$?
 				dbg RAW "Read sType=$sType,cmd=$cmd,cmdopts=$cmdopts,rc=$rc($_x)" && [ $rc -ne 0 ] # && jobs
-				for t in nPidMosq=$nPidMosq nPidPeriodic=$nPidPeriodic nPidUbus=$nPidUbus nPidLogread=$nPidLogread ; do
-					p=${t#*=}
-					# dbg "${t%%=*}=$p" "$(cR /proc/${p:-0}/cmdline && echo ok)"  # to be removed
+				for t in nPidMosq=$nPidMosq nPidSleep=$nPidSleep nPidUbus=$nPidUbus nPidLogread=$nPidLogread ; do
+					n=${t%%=*} ; p=${t#*=}
+					[ $p ] && ! cIsPid $p && { # check whether an important child has disappeared
+							dbg PROCMISS "$n=$p"
+							cMR OFF "EXITING ($n=$p VANISHED)."
+							break 9
+						}
 				done
-				if ! cIsPid $nPidMosq ; then
-					dbg PROCMISS nPidMosq=$nPidMosq
-					cMR OFF "Exiting (nPidMosq=$nPidMosq gone)."
-					break 9
-				elif ! cIsPid $nPidPeriodic ; then # FIXME: Refactor for script size
-					dbg PROCMISS nPidMosq=$nPidPeriodic
-					cMR OFF "Exiting (nPidPeriodic=$nPidPeriodic gone)."
-					break 9
-				elif [ "$rc" -ne 0 ] ; then
+				if [ "$rc" -ne 0 ] ; then
 					_msg="rc=$rc,server=$sServer,started=$(date +%T),pid=$$"
 					if [ -p $fPipe ] ; then # pipe exists
 						nErrors=$((nErrors + 1)) # FIXME: Remove stuff for debugging
@@ -1159,9 +1180,10 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				sType="$(cTrd -c A-Z "$sType")" || cntnue
 
 				if [ $sType = UBUS -o $sType = LOGREAD -o $sType = "{" ] ; then
-					dbg READ "TYPE=$sType,$cmd,$cmdopts" || cEcho "$cmdopts"
+					dbg READ "TYPE=$sType,$cmd,$cmdopts"
 					# set -- $cmdopts # cmdopts=27 00:35:35 2024 daemon.info manage_gluon_mqtt herkules: READ Will read /var/log/manage_gluon_mqtt.root/4458/p ...,rc=0
 					# [ "$6" = daemon.info -a "$7" = $sMe ] && cntnue
+					cEcho "$sType:$cmdopts"
 					[ "$(e "$cmdopts" | cCut " " 6,7)" = "daemon.info $sMe" ] && cntnue
 					cMqtt "/$(p $sType | tr A-Z a-z)/log" "$cmdopts"
 					cntnue
@@ -1259,6 +1281,8 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				else
 					cMR OK "Command $cmd($cmdopts) found no pipe."
 				fi
+				sleep 1
+				dbg BRIDGESTOP "ubus procs:\n$(pgrep -lfa "ubus listen")"
 				;;
 			beacon)
 				cProbeGET
@@ -1353,7 +1377,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				cProbeGET
 				_opts=  #  empty _opts signals "check" command
 				[ $cmd = check ] && cmdopts="" || {
-					_opts=$(cSaniNum "${cmdopts:-5}") && [ "$_opts" -ge 1 -a "$_opts" -le 99 ]  ||
+					_opts=$(cSaniNum "${cmdopts:-5}") && [ $_opts -ge 1 -a $_opts -le 99 ]  ||
 							{ cMR ERROR "$cmd: Invalid parameter '$cmdopts'" ; cntnue ;} # "$cmd: Invalid parameter '$cmdopts'"
 				}
 				cMR ONGOING :
@@ -1438,7 +1462,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				fi
 				[ $ssh_rc -ne 0 ] && { cEcho "cSsh failed: $_c, aborting ... (rc=$ssh_rc)" ; cntnue ;}
 
-				# STEP: get a autoupdater setting 
+				# STEP: get a autoupdater setting
 				# then comes a Gluon-specific part - determine Gluon by checking for the UCI entry autoupdater_branch
 				cSsh -v "uci get autoupdater.settings.branch" && _lxlvl=4 # indicates we are probably on Gluon
 				_auto="$ssh_data"
@@ -1549,13 +1573,13 @@ EOF
 			filecopy|selfcopy)
 				cProbeNOMQTT
 				_check() { bash -x -n $1 && cCmv ash && ash -x -n $1 ;} # smoke test syntax of compressed script with bash and ash
-				fFile="${fFile:-$cmdopts}" # file must be in the local directory or a symbolic link in the local directory!
-				fFile="${fFile:-$0}"
+				fFile="${cmdopts:+$HOME/.local/bin/$(basename $cmdopts)}" # file is supposed to be in ~/.local/bin or a symbolic link there!
+				fFile="${fFile:-$0}" # take this script as default
 				fPath="$fFile"
 				fBase="${fPath##*/}"
 				#DELETE_BEGIN#   # Delete the following script part when compressing the script
 				_fn=$dCache/$fBase.$(date +%M)
-				cp -Lpr "$fPath" $_fn
+				cp -Lpr "$fPath" $_fn || { cEcho "Copying $fPath to $_fn failed." ; exit 77 ;}
 				_check $_fn
 				rc=$?
 				if [ ! "$bDoAll" -a $rc = 0 ] ; then				
@@ -1941,12 +1965,12 @@ EOF
 				fi
 				;;
 			status)
-				cSsh "echo $sMeAge ;cat /proc/uptime /proc/loadavg"
+				cSsh "cat /proc/uptime /proc/loadavg"
+				cEcho $sMeAge
 				cEcho
 				data="$(cOut|awk '
-					NR==1 { age=$0 }
-					NR==2 { uptime=sprintf("%d", $1) }
-					NR==3 { printf "{*uptime*:%s,*load*:%.2f,*version*:*%s*}",uptime,$1,age }' )" # uptime in seconds
+					NR==1 { uptime=sprintf("%d", $1) }
+					NR==2 { printf "{*uptime*:%s,*load*:%.2f,*version*:*%s*}",uptime,$1,sMeAge }' )" # uptime in seconds
 				cMS /$cmd
 				;;
 			printmap)
@@ -1965,7 +1989,7 @@ EOF
 
 				# get the two table of the local clients on the node together, split them in awk further down
 				if ! cSsh "batctl dc && echo === && batctl tl" ; then
-					_msg="Connection to $sSshUser failed or no batctl"
+					_msg="Connection to $sSshUser failed or batctl"
 					cErr "$_msg:"
 				  	cMR ERROR "$_msg:"
 					cntnue
@@ -1982,16 +2006,17 @@ EOF
 				while IFS=\; read -r _mac _name _time _ipv4 _seen ; do
 					_vdr="$(cGetMacVendor "$_mac")"
 					_ping=null ; [ $sSshUser = LOCAL ] && { ping -q -W 1 -c 1 $_ipv4 >$fNul && _ping=1 || _ping=0 ;}
-					_seen="$(( ${_seen%:*}*60 + ${_seen#*:} ))" # convert mm:ss to seconds
+					_s=${_seen#*:} # the seconds
+					_seen="$(( ${_s#0} + 60*${_seen%:*} ))" # convert mm:ss to seconds
 					_line="$_time;$_mac;$hTarget;$_vdr;$_name;$_ipv4;$_ping;$_seen"
-					echo "$_line" >> $fCollection # NEW! : # write  time;mac;node;vendor;name  to file
-					echo "$_line"
 					dbg IP "*$_mac* *$_name* *$_vdr* *$_time* *$_ipv4* *$_ping* *$_seen*" # IP: *6e:95:18:16:87:58* *Thomas3* *MySamsung* *2024_**
+					echo "$_line" >> $fCollection # NEW! : # write  time;mac;node;vendor;name  to collection file, too
+					echo "$_line"
 					cMS "$sSite/$sArea/$(cTrd : "$_mac")" "{*node*:*$hTarget*,*mac*:*$_mac*,*name*:$(s "$_name"),*vendor*:$(s "$_vdr"),*ipv4*:*$_ipv4*,*pingable*:$_ping},*lastseen*:$_seen}" -M
 				done <$fClients >$fClients.2
 				data="{*count*:$_n,*localclients*:[$(awk -F\; -v hname=$hTarget '{
-						printf lim "{*addr*:*%s*,*name*:*%s*,*vendor*:%s,*ipv4*:*%s*,*pingable*:%s,*lastseen*:%s}", $2, $5=="" ? $2 : $5, $4=="null" ? "null" : "*"$4"*" , $6,$7,$8; lim="," }' < $fClients.2 |
-						shorten_ethernet_addr_in_json $bDoAll)],*node*:*$hTarget*}"
+						printf lim "{*addr*:*%s*,*name*:*%s*,*vendor*:%s,*ipv4*:*%s*,*pingable*:%s,*lastseen*:%s}", $2, $5=="" ? $2 : $5, $4=="null" ? "null" : "*"$4"*" , $6,$7,$8; lim="," }' $fClients.2 |
+						shorten_ethernet_addr_in_json $bDoAll)],*node*:*$hTarget*${cmdopts:+,*opts*:*$cmdopts*}}"
 				cEcho "$(cStarredToJSON|json_pp)"
 				cMS /publicwifi/localclients ""	$([ "$cmdopts" ] || e "-M")
 				[ $bWorkAllClients ] && nLocClients=$((nLocClients + _n))
@@ -2075,7 +2100,7 @@ EOF
 			sleep)
 				cProbeNOMQTT
 				[ "$cmdopts" ] || cmdopts=51
-				[ "${cmdopts%%[0-9]*}" = "var" ] && n=${cmdopts#var} && cmdopts=$(printf %d "'$(cLower ahTarget)") && cmdopts=$(( (cmdopts-97)/3+4+ ${n:-0} ))  # "$(echo $hTarget | od -An -t dC | awk '{ print int(($1 - 6*16)/2) }')"
+				[ "${cmdopts%%[0-9]*}" = "var" ] && n=${cmdopts#var} && cmdopts=$(printf %d "'$(cLower $hTarget)") && cmdopts=$(( (cmdopts-97)/4+4+ ${n:-0} ))
 				dbg $cmd "Sleeping $cmdopts secs ..."
 				cMR ONGOING :
 				sleep "${cmdopts:-51}"
@@ -2127,7 +2152,7 @@ EOF
 				fi
 				;;
 			debug_msub) # FIXME: remove this after explore mosquitto_sub stalling bug
-				# for i in $(seq 20) ; do  $MP -t ffmuc/jupiter/echo/get -m $i ; echo $i ; sleep 0 ; done
+				# for i in $(seq 20) ; do  $MP -t ffmuc/herkules/echo/get -m $i ; echo $i ; sleep 0 ; done
 				if [ "$cmdopts" = s ] ; then
 					cMqttSub -t $sSite/\# -v -R | awk -v f=$fPipe '{print "//" $0 ; system("sleep 1") }'
 					exit 0
