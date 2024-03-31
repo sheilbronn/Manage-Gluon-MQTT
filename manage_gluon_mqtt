@@ -22,7 +22,7 @@ MP=mosquitto_pub
 LH=localhost
 C=comman"d"
 
-cCmv()	{ command -v "$@" >$fNul ;} # find out whether a command exists
+cCmv()	{ command -v "$@" >$fNul ;} # true if a command exists
 cLower() { awk -v s="$*" 'BEGIN {print tolower(s)}' < $fNul ;} # simplified for args only
 # set -x ; cLower "AA Bb" ; exit 99
 cPid() { sh -c 'echo $$' ;}
@@ -36,7 +36,8 @@ if cCmv busybox ; then # prefer busybox for performance, memory usage and compat
 	alias xargs="busybox xargs -r"
 	alias diff="busybox diff"
 fi
-	[ "$(ec\ho -e)" = "-e" ] && alias ECHO=ec\ho || alias ECHO="echo -e" # some echo's know -e, some not. This avoids the impact of spawning of /bin/echo, in case -e not understood
+	# This avoids the impact of spawning of /bin/echo, in case -e not understood:
+	[ "$(ec\ho -e)" = "-e" ] && alias ECHO=ec\ho || alias ECHO="echo -e" # some echo's know -e, some not. 
 	alias e=ec\ho # special quoting needed when compressing script for reduced storage
 	alias l=loc\al
 	alias cntnue=continue # word "continue" to be compressed (outside of awk!)
@@ -55,13 +56,14 @@ cSaniStr() { cTrd -c "/A-Za-z0-9_.%,\ -" "${1:-$OPTARG}" ;}
 cSaniNum() { cX ; n="$(cTrd -c 0-9 "${1:-$OPTARG}")" || { echo "$0: ${1:+-$opt }${1:-$OPTARG} must be numerical!" 1>&2 ; return 1 ;} && echo $n ;}
 alias cData='[ "$ssh_data" ]'
 alias cOut='printf "%s\n" "$ssh_data"'
+cCmv ubus || alias ubus=": ubus"
 cLine() { cOut | sed -n "$1"p ;} # print line n of ssh_data
 cCount() { cX ; _n=0 ; while read x; do _n=$((_n+1)) ; done ; echo $_n ;} # replace wc -l
 s() { cX ; [ -z "$1" -o "$1" = null -o "$1" = UNKNOWN ] && echo null || echo "*$1*" ;} # echo only a non-empty string with stars, null otherwise
 
 # Initialize our own variables:
 bQuiet=
-bVerbose= # set it to y for debugging right from the start
+bVerbose=${INIT_TRACE:+y} # set it to y for debugging right from the start
 set -o noglob  # set noglob will limit security and escaping problems
 sMe=$(cTrd -c A-Za-z0-9_.- "${0##*/}") # script fails on purpose if its name contains white space
 sBase=$(p $sMe | sed 's/\..*//')
@@ -311,7 +313,8 @@ cGetGluonDomainsStarred() {
 cLogger() {
 		logger -p daemon.$1 -t "$sMe($$,$hTarget)" -- "$2"
 	}
-	# set -x ; cLogger info "blabla" ; exit 1
+	cCmv logger || alias cLogger=": logger" # for systems without logger command
+	# set -x ; cLogger info "blabla" ; exit 99
 
 cErr() {
 	cX
@@ -1004,7 +1007,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 			if [ "$_p" ] ; then
 				_p=${_p#./} ; _p=${_p%/p}
 				if cIsPid $_p ; then
-					cCmv ubus && ubus send $sMe "{\"debug\":\"$$:skipbridgestart:other=$_p\"}"
+					ubus send $sMe "{\"debug\":\"$$:skipbridgestart:other=$_p\"}"
 					cmd=bridge cErrAndExit "$$: Another bridge ($_p ?) probably still running!"
 				else
 					dbg BRIDGE "Removing stale bridge dir: $_p"
@@ -1038,7 +1041,6 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 
 			# echo PERIODIC NONE begin > $fPipe & # something has to be in the pipe immediately otherwise it fails due to race condition
 			# sleep 1 # FIXME: make it shorter?
-
 
 			_d=$(cCRead bridgedelta) || _d=2
 			[ "$_d" -gt 0 ] &&
@@ -1155,7 +1157,9 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 					n=${t%%=*} ; p=${t#*=}
 					[ $p ] && ! cIsPid $p && { # check whether an important child has disappeared
 							dbg PROCMISS "$n=$p"
-							cMR OFF "EXITING ($n=$p VANISHED)."
+							_msg="EXITING ($n=$p VANISHED)."
+							cMR OFF "$_msg."
+							cErr "$_msg"	
 							break 9
 						}
 				done
@@ -1273,10 +1277,10 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				[ $cmd = echo ] && { _msg="$(cExpand "$cmdopts")" ; cEcho "$_msg" ; cMR OK "Command $cmd($_msg) by $(cat $fHost) at $(date +"%T") (V: $sMeAge)" ; [ "$cmdopts" = TESTERROR ] && cErr "Test error" ;}
 				[ $cmd = date ] && { _msg="$(date) (PID=$(cPid))" ; cEcho "$_msg" ; cMR OK "Command $cmd($cmdopts): $_msg" ;}
 				;;
-			bridgestop) # inject command into p to stop a running bridge
+			bridgestop) # inject a command into p to stop a running bridge
 				cProbeNOMQTT
 				if [ -p $dCache/p ] ; then  # cErrAndExit "No pipe $(ls -l $dCache/p|xargs)!"
-					echo "PERIODIC TERMINATE bridgestop" > $dCache/p
+					echo "PERIODIC TERMINATE bridgestop${cmdopts:++$cmdopts}" > $dCache/p
 					cMR OK "Command $cmd($cmdopts) sent."
 				else
 					cMR OK "Command $cmd($cmdopts) found no pipe."
@@ -1392,7 +1396,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 						i=$((i-1))
 					done
 					cEcho
-					cMR OK "${_opts:+Command $cmd($_opts) cycles of /bin/date in $(( ssh_data - data)) seconds: $data-$ssh_data}"
+					cMR OK "${_opts:+Command $cmd($_opts) cycles of /bin/date in $((ssh_data - data)) seconds: $data-$ssh_data}"
 				else
 					cMR ERROR
 				fi
@@ -1572,7 +1576,7 @@ EOF
 				;;
 			filecopy|selfcopy)
 				cProbeNOMQTT
-				_check() { bash -x -n $1 && cCmv ash && ash -x -n $1 ;} # smoke test syntax of compressed script with bash and ash
+				_check() { bash -xn $1 && cCmv ash && ash -xn $1 ;} # smoke test syntax of compressed script with bash and ash
 				fFile="${cmdopts:+$HOME/.local/bin/$(basename $cmdopts)}" # file is supposed to be in ~/.local/bin or a symbolic link there!
 				fFile="${fFile:-$0}" # take this script as default
 				fPath="$fFile"
@@ -1989,7 +1993,7 @@ EOF
 
 				# get the two table of the local clients on the node together, split them in awk further down
 				if ! cSsh "batctl dc && echo === && batctl tl" ; then
-					_msg="Connection to $sSshUser failed or batctl"
+					_msg="Connection to $sSshUser failed or batctl" # .. failed
 					cErr "$_msg:"
 				  	cMR ERROR "$_msg:"
 					cntnue
@@ -2184,7 +2188,7 @@ EOF
 				cProbeNOMQTT
 				cmdopts="${cmdopts##0}"
 				_n="${cmdopts:-1}" # times to be repeated
-				_m=24
+				_m=24 # 24 for /24, 27 for /27
 
 				_awk() {
 					awk -F: -v key="$1" '$1 ~ "\"" key "\"" && $0 !~ ".255.255" { gsub(/,$/, "",$2) ; gsub( / *\"$/, "",$2) ; gsub(/^ *\"/, "",$2) ; print $2 }'
