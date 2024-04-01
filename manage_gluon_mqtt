@@ -22,7 +22,7 @@ MP=mosquitto_pub
 LH=localhost
 C=comman"d"
 
-cCmv()	{ command -v "$@" >$fNul ;} # true if a command exists
+cCmv() { command -v "$@" >$fNul ;} # true if a command exists
 cLower() { awk -v s="$*" 'BEGIN {print tolower(s)}' < $fNul ;} # simplified for args only
 # set -x ; cLower "AA Bb" ; exit 99
 cPid() { sh -c 'echo $$' ;}
@@ -41,7 +41,7 @@ fi
 	alias e=ec\ho # special quoting needed when compressing script for reduced storage
 	alias l=loc\al
 	alias cntnue=continue # word "continue" to be compressed (outside of awk!)
-	alias c=con\tinue
+	alias c=cont\inue
 	alias r=ret\urn
 	alias p='pri\ntf %s\\n'
 
@@ -293,7 +293,7 @@ cFirstJsonAttr() { # take string and extract the value of the first attribute if
 
 cWordsToJsonArray() {
 	cX
-	awk 'BEGIN {printf "["} {printf lim "*" $0 "*" ; lim="," } END {printf "]"}'
+	awk 'BEGIN{printf "["} {printf lim "*" $0 "*" ; lim="," } END{printf "]"}'
   }
   # set -x ; { echo 1 2 ; echo 3 4 ; } | cWordsToJsonArray ; cSEP ; echo -n "" | cWordsToJsonArray ; exit
 
@@ -323,7 +323,7 @@ cErr() {
 	[ "$1" != "${1%:}" ] && _tmp="${_tmp%:} (rc=$ssh_rc,$ssh_msg)" # if $1 ends in :, then add rc and msg
 	shift
 	ECHO "${OnRed}ERROR$Rst:" "$_tmp" "$@" 1>&2
-	[ -t 2 ] || cLogger error "$_tmp" "$@"
+	cLogger error "$_tmp" "$@"
 	}
 
 cErrAndExit() {
@@ -533,7 +533,7 @@ cMqtt() { # cMqtt(topic,msg, options) # expanding a leading / in topic to $sSite
   # set -x ; cMPub=mosquitto_pub ; export hMqtt=localhost ; echo ==1== ; cMqtt hhh mmm -M ; echo ==2== ; cMqtt hhh mmm -M ; echo ==3== ; cMqtt hhh mm2 -M ; exit 99
 
 cStarredToJSON() {
-	awk -v a="${*:-$data}" 'BEGIN { gsub("\"","'\''",a) ; gsub("*","\"",a) ; print a }' # " => ' , then * => "
+	awk -v a="${*:-$data}" 'BEGIN {gsub("\"","'\''",a) ; gsub("*","\"",a) ; print a }' < $fNul # " => ' , then * => "
 	}
 
 cMqttStarred() {		# cMS(expandableTopic,message,moreMosquittoOptions)
@@ -653,7 +653,8 @@ cHassAnnounce() {
   }
 
 cMqttSub() {
-		mosquitto_sub ${hMqtt:+-h $hMqtt} ${sMID:+-i $sMID} "$@" || dbg ERROR "mosquitto_sub to $hMqtt terminated/failed." # would fail when used with multiple hosts...
+		mosquitto_sub ${hMqtt:+-h $hMqtt} ${sMID:+-i $sMID} "$@" || # would fail when used with multiple hosts...
+			dbg ERROR "mosquitto_sub to $hMqtt terminated/failed." 
 	}
 
 cHomieReady() {
@@ -864,7 +865,7 @@ do
 		;;
 	M) bModified=yes
 		;;
-	m)	[ "$OPTARG" -a $cMPub = : ] && cErr "$MP is missing!"
+	m)	[ $cMPub = : ] && cErr "$MP is missing!"
 		case "$OPTARG" in     # see http://www.steves-internet-guide.com/mqtt-hosting-brokers-and-servers/
 		-)	_m=localhost ;;
 		test)	_m=$hPubMqtt ;;
@@ -879,18 +880,18 @@ do
 	g) mqttGroup="$(cSaniStr)"
 		;;
 	p|P) homie=yes ; [ $opt = p ] && bHassOnly=yes
-		[ $cMPub = : ] && cErrAndExit "MQTT client $MP is not installed, but -$opt was requested"
+		[ $cMPub = : ] && cErrAndExit "$MP is not installed, but -$opt was requested"
 		;;
 	R) sArea="$(cSaniStr)"
 		;;
 	f) fFile="$(cSaniStr)"
-		# commands=filecopy # Changed: must be now be given as -c filecopy explicitly, too.
 		dbg FILE "$fFile"
 		;;
 	n) sExtraOption="$(cSaniStr)"
 		sGrepSsid="$OPTARG"
 		;;
-    c) commands="$OPTARG" # one or more, comma-seperated command to be executed
+    c) commands="$OPTARG" # one or more, comma-separated command to be executed
+		[ $cMPub = : ] && expr match "$OPTARG" bridge >$fNul && cErrAndExit "$MP not installed"
         ;;
 	C) nExitAfter="$(cSaniNum)" || exit 1 # exit after nn MQTT commands
 		;;
@@ -1055,9 +1056,9 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 			# mosquitto_sub -h localhost -F "MQTT %t %p" -R $_subscriptions $_last_will_options > $fPipe &    # ... doesn't work: mosquitto_sub exits if pipe not ready....
 			# FIXME: proper buffering still doesn't work :( :( :
 			cMqttSub -F "MQTT %t %p" ${nSeconds:+-W $((nSeconds+0))} -R $_subscriptions $_last_will_options 2>&1 |
-					awk -v f=$fPipe 'NR==1&&!/^MQTT/{print "PERIODIC TERMINATE MQTT:"$0>f} $1=="MQTT"{print>f;fflush(f)}' & #  prevent multi-line commands thus avoiding injections
+					awk -v f=$fPipe 'NR==1&&!/^MQTT/{print "PERIODIC TERMINATE MQTT:"$0>f ; exit 1} $1=="MQTT"{print>f;fflush(f)}' & #  prevent multi-line commands thus avoiding injections
 			nPidMosq=$!
-			dbg "SUBSCRIBED: nPidMosq=$nPidMosq"
+			dbg SUBSCRIPTION "nPidMosq=$nPidMosq"
 			ln -fs $fPipe $dCache/p # for the convenience of injecting debug commands
 			cmd=bridge
 			cMR ONGOING "Subscribed $(awk -v a="$_subscriptions" 'BEGIN {gsub("-t ","",a) ; print a}' )"
@@ -1079,7 +1080,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				# WARNING: On Gluon (OpenWrt?) it seems that "ubus listen" stalls ...
 				# WARNING: ... if it is not read fast enough (makes it unreliable for logging)
 				# we'll make it restart in a loop, if it ends - for now.
-				awk -v f=$fPipe 'BEGIN { cmd="while : ; do ubus listen ; rc=$? ; echo \"{ RESTARTING($rc) }\" ; done"
+				awk -v f=$fPipe -v t=$((nSeconds + 10)) -v pid=$$ 'BEGIN { cmd="while [ -d /proc/" pid " ];do ubus -t " t " listen ;rc=$? ;echo \"{ RESTARTING($rc," t ") }\" ;done"
 						while (cmd|getline line) {
 							if (line~/^\{/) { print "UBUS LISTEN "line>>f
 								# ; print "UBUS LISTEN "line>>"/tmp/u"
@@ -1307,75 +1308,71 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				;;
 			autossh)
 				cProbeSET
-				_ml="$((${cmdopts:-12} * 3600 - 15	))" # Default = almost 12 hours
-				dbg AUTOSSH "maxlife=${_ml}s : ffhosts=$ffhosts"
-				# if [ "${ffhosts#"$hFull"}" != "$ffhosts" ] ; then # do it for all hosts at once, in the first iteration
+				_ml="$((${cmdopts:-12} * 3600 - 10))" # Default = almost 12 hours
 
-					# AUTOSSH_GATETIME    # how long must an ssh session be established before we decide it really was established
-					#                       (in seconds). Default is 30 seconds; use of -f  flag sets this to 0.
-					# AUTOSSH_LOGFILE     # file to log to (default is to use the syslog facility)
-					# AUTOSSH_LOGLEVEL    # level of log verbosity, corresponding to the levels used by syslog; so 0-7 with 7 being the chattiest
-					export AUTOSSH_MAXLIFETIME=$_ml # set the maximum time to live (seconds) # 604800s = 1 week
-					export AUTOSSH_MAXSTART=-1    # max times to restart (default -1 means no limit)
-					# AUTOSSH_MESSAGE     # message to append to echo string (max 64 bytes)
-					# AUTOSSH_PATH        # path to ssh if not default
-					export AUTOSSH_PIDFILE=$dTmp/autossh.pid     # write pid to this file
-					export AUTOSSH_POLL=40        # how often to check the connection (default 600 seconds)
-					# AUTOSSH_FIRST_POLL  # time before first connection check (seconds)
-					# AUTOSSH_PORT        # port to use for monitor connection
-					# AUTOSSH_DEBUG       # turn logging to maximum verbosity and log to                           stderr
-					[ $bVerbose ] && env | grep AUTOSSH | xargs 1>&2
-					# set -x #  manage_gluon_mqtt -m - -c bridge -v
-					if [ "var1" ] ; then
-						_mpcmd="$cMPub -r -h localhost -t $sSite/$hTarget/autossh/checktime"
-						cSsh "d=\$(date '+%c (heartbeat)') && $_mpcmd -m \"\$d\" && $sMe -m - -c memory"
-						_msg="${cmdopts:+($cmdopts) }"
-						if [ $ssh_rc = 0 ] ; then
-							cMR OK "${_msg}already had MQTT listener, doing nothing."
-						else
-							_msg="${_msg}check result: ${ssh_msg:-$ssh_rc}, "
-							if [ $ssh_rc = 127 ] ; then
-								_msg="${_msg}no $MP? - run -c install first!"
-								dbg AUTOSSH "$_msg"
-								cErr "$_msg"
-								cMR ERROR "$_msg:"
-							elif [ $ssh_rc = 255 ] ; then
-								_msg="${_msg}doing nothing."
-								dbg AUTOSSH "$_msg"
-								cMR ERROR "$_msg:"
-							else
-								_msg="${_msg}will start autossh ($cmdopts) and run a check"
-								dbg AUTOSSH "$_msg"
-								_spec="[::]:1883:localhost:1883" # "[::]:1883:localhost:1883"
-								# this line must be in /etc/config/dropbear on remote host:
-								# option GatewayPorts 'on'
-								autossh -f -N -T ${bVeryVerbose:+-v} -R "$_spec" $hFull "$sMe -m - -S $_ml -c echo+AUTOSSHBRIDGE,bridge ${mqttGroup:+-g $mqttGroup}" # || dbg AUTOSSH "rc=$?"
-								sleep 3
-								_pid="$(cat $AUTOSSH_PIDFILE)"
-								dbg AUTOSSH "pid=$_pid"
-								cSsh "date '+%c (restarted autossh)' | $_mpcmd -l"
-								# cSsh "netstat -l | grep 1883"
-								cMR OK "Command $cmd($cmdopts) executed."								
-							fi
-						fi
+				# AUTOSSH_GATETIME    # how long must an ssh session be established before we decide it really was established
+				#                       (in seconds). Default is 30 seconds; use of -f  flag sets this to 0.
+				# AUTOSSH_LOGFILE     # file to log to (default is to use the syslog facility)
+				# AUTOSSH_LOGLEVEL    # level of log verbosity, corresponding to the levels used by syslog; so 0-7 with 7 being the chattiest
+				export AUTOSSH_MAXLIFETIME=$_ml # set the maximum time to live (seconds) # 604800s = 1 week
+				export AUTOSSH_MAXSTART=-1    # max times to restart (default -1 means no limit)
+				# AUTOSSH_MESSAGE     # message to append to echo string (max 64 bytes)
+				# AUTOSSH_PATH        # path to ssh if not default
+				export AUTOSSH_PIDFILE=$dTmp/autossh.$hTarget.pid  # write pid to this file
+				export AUTOSSH_POLL=60    # how often to check the connection (default 600 seconds)
+				# AUTOSSH_FIRST_POLL  # time before first connection check (seconds)
+				# AUTOSSH_PORT        # port to use for monitor connection
+				# AUTOSSH_DEBUG       # turn logging to maximum verbosity and log to                           stderr
+				dbg AUTOSSH "maxlife=${_ml}s" && env|awk '/AUTOSSH/{printf gensub("AUTOSSH_"," ","1")} END{print""}' 1>&2
+				if [ "var1" ] ; then
+					_mpcmd="$cMPub -r -h localhost -t $sSite/$hTarget/autossh/checktime"
+					cSsh "d=\$(date '+%c (heartbeat)') && $_mpcmd -m \"\$d\" && $sMe -m - -c memory"
+					_msg="$cmd${cmdopts:+($cmdopts)} "
+					if [ $ssh_rc = 0 ] ; then
+						_msg="${_msg}already had MQTT listener, doing nothing."
+						cMR OK "${_msg}"
 						cAddSuccHost
-#DELETE_BEGIN#
 					else
-						# nPidAutoSSH=$! # nPidAutoSSH="$(cat $AUTOSSH_PIDFILE)"
-						# dbg AUTOSSH "pid=$nPidAutoSSH for: $ffhosts"
-						sleep 10
-						trap_AUTOSSH() {
-							cmd=autossh && cMR ONGOING "Exiting."
-							jobs
-							wait $nPidAutoSSH
-							kill $nPidAutoSSH 2>$fNul || :
-							dbg AUTOSSH "Killed nPidAutoSSH=$nPidAutoSSH, now stopping at $(date)"
-							trap_EXIT
-						}		
-						trap trap_AUTOSSH EXIT
-#DELETE_END#
+						_msg="${_msg}check"
+						if [ $ssh_rc = 127 ] ; then
+							_msg="${_msg}no $MP? - run -c install first!"
+							cErr "$_msg:"
+							cMR ERROR "$_msg:"
+						elif [ $ssh_rc = 255 ] ; then
+							cErr "$_msg:"
+							cMR ERROR "$_msg:"
+						else
+							dbg AUTOSSH "${_msg}will start autossh ($cmdopts) and run a check"
+							_spec="[::]:1883:localhost:1883" # "[::]:1883:localhost:1883"
+							# this line MUST be in /etc/config/dropbear on remote host:
+							# option GatewayPorts 'on'
+							autossh -f -N -T ${bVeryVerbose:+-v} -R "$_spec" $hFull "$sMe -m - -S $_ml -c echo+AUTOSSHBRIDGE,bridge ${mqttGroup:+-g $mqttGroup}" # || dbg AUTOSSH "rc=$?"
+							sleep 3
+							_pid="$(cat $AUTOSSH_PIDFILE)"
+							_msg="pid=$_pid"
+							cSsh "date '+%c (restarted autossh)' | $_mpcmd -l"
+							# cSsh "netstat -l | grep 1883"
+							cMR OK "Command $cmd($cmdopts) executed."
+							cAddSuccHost							
+						fi
 					fi
-				# fi
+					[ $ssh_rc = 0 ] && cEcho "$hTarget: $_msg"
+#DELETE_BEGIN#
+				else
+					# nPidAutoSSH=$! # nPidAutoSSH="$(cat $AUTOSSH_PIDFILE)"
+					# dbg AUTOSSH "pid=$nPidAutoSSH for: $ffhosts"
+					sleep 10
+					trap_AUTOSSH() {
+						cmd=autossh && cMR ONGOING "Exiting."
+						jobs
+						wait $nPidAutoSSH
+						kill $nPidAutoSSH 2>$fNul || :
+						dbg AUTOSSH "Killed nPidAutoSSH=$nPidAutoSSH, now stopping at $(date)"
+						trap_EXIT
+					}		
+					trap trap_AUTOSSH EXIT
+#DELETE_END#
+				fi
 				;;
 			loop|check)
 				cProbeGET
@@ -2116,8 +2113,8 @@ EOF
 					cEcho
 				elif [ $cmd = pstree ] && cSsh "{ ps axu 2>$fNul || ps w ;} |awk 'NR==1 || ( /$cmdopts/ && ! /$cmd.$cmdopts/) {gsub(/ busybox /,\" \");print}'" ; then
 					cEcho
-					cMS /$cmd "{*table*:$(cOut|cTableToJSON), *grepexp*:$(s "$cmdopts"), *count*:$(( $(cOut|cCount) - 1 ))}"
-					cMS "/$cmd${cmdopts:+/$(cTrd -c "A-Za-z0-9.!-+" "$cmdopts")}" "{*table*:$(cOut|cTableToJSON), *grepexp*:*$cmdopts*, *count*:$(( $(cOut|cCount) - 1 ))}"
+					cMS /$cmd "{*table*:$(cOut|cTableToJSON), *grepexp*:$(s "$cmdopts"), *count*:$(( $(cOut|cCount) - 1))}"
+					cMS "/$cmd${cmdopts:+/$(cTrd -c "A-Za-z0-9.!-+" "$cmdopts")}" "{*table*:$(cOut|cTableToJSON), *grepexp*:*$cmdopts*, *count*:$(( $(cOut|cCount) - 1))}"
 				else
 					cMR ERROR
 					cErr :
@@ -2248,12 +2245,12 @@ EOF
 				}
 				gen_removecmd() {
 					printf "sed "
-					echo "$* xyzx" | xargs -n1 | awk '{printf " -e /^%s/d", $1}'
+					echo "$* xyzx" | awk -v RS=" " -v ORS=" " '{printf " -e /^%s/d", $1}'
 				}
 				removecmd="$(gen_removecmd "$sRemoveList")"
 
 				dbg2 NMAP2 "nmap -sn $network/$_m"
-				while  [ "$_n" -gt 0 ] ; do # now scan _n times for ports
+				while [ "$_n" -gt 0 ] ; do # now scan _n times for ports
 					cMR ONGOING "Will do $cmd($network/$_m) number $_n."
 					# IP;HOSTNAME;MAC;VENDOR;http://IP;ssh://IP :
 					netprobe | eval "$removecmd" |
@@ -2267,14 +2264,19 @@ EOF
 					echo "$diffres2" | grep "^+" |
 						while IFS=\; read -r ip host mac vdr httpopen sshopen rest ; do    # 2. MQTT output only for lines with "+"
 							ip="${ip#+}"
-							cMqtt /$cmd/$network/member "$host  ${httpopen:+http://}$ip"
+							cMqtt /$cmd/$network/member/$ip "$host  ${httpopen:+http://}$ip"
 							cEcho "$host  ${httpopen:+http://}$ip ${sshopen:+ssh://$ip}"
 						done
-					[ "$fFile" ] && cp $fScanTmp $fFile.scan.txt
+					# generate text file of the hosts and convert it to a very simple html:
+					[ "$fFile" ] && ! diff ${bQuiet:+-q} -U 0 $fScanTmp $fFile.scan.txt && {
+						dbg NETWORKPROBE "Creating new $fFile.scan.html"
+						cp -p $fScanTmp $fFile.scan.txt &&
+							awk -F\; '/http/ { printf "%s <a href=\"%s\">http://%s</a><br/>\n", $1, ($8>"") ?$8:$6, $2 ;next} {print $1, $2 "<br/>"}' $fFile.scan.txt > $fFile.scan.html
+						}
 					cp $fScanTmp $dCache
 					mv $fScanTmp $fScanTmp.prev
 					_n=$((_n-1))
-					sleep 9
+					[ $_n = 0 ] || sleep 9
 				done
 				cMR OK "Command $cmd($cmdopts): $network/$_m"
 				;;
