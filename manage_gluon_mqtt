@@ -15,6 +15,7 @@
 
 nWifiSleep=7 # seconds to sleep after "wifi up"
 dGluon=/lib/gluon
+fOpenWrt=/etc/openwrt_release
 sSite="" #  will be set to something like "ffmuc".... but could also be frozen here
 fMacIDs=/srv/openhab-conf/phones # file is only for presence detection in mapping known phones to known people at....
 fNul=/dev/null
@@ -86,7 +87,7 @@ sArea=$(cLower "$sArea") # lowercase only
 sSsidBase=UNKNOWN # would be an an error
 sPubIfs= # will be determined on first call to every node, then cached
 nStartTime=$(date +%s)
-nMqttSleep=1199 # 1190
+nMqttSleep=1199
 sHassPrefix=homeassistant/sensor
 hPubMqtt=test.mosquitto.org
 basetopic=xyz  # default MQTT topic prefix
@@ -349,10 +350,11 @@ cEcho() { # log and output stuff (in color), unless to be quiet
 
 dbg() { # output its args to stderr if verbosity set
 	cX
-	[ $bVerbose ] || return 1
-	{ [ "$#" = 2 ] && ECHO "$Yellow$1:$Rst" "$2" || ECHO "${Yellow}debug$Rst" "$*" ;
+	 [ $bVerbose ] && {
+		{ [ "$#" = 2 ] && ECHO "$Yellow$1:$Rst" "$2" || ECHO "${Yellow}debug$Rst" "$*" ;
 			[ $bVeryVerbose ] && cLogger info "$*" ;} 1>&2
-	true # return true if verbose
+		: # return true if verbose	
+	 }
 	}
 
 cShorten() { # shorten string $1 to at most $2 chars plus some ellipses
@@ -859,6 +861,23 @@ do
 			ffhosts="$(p "$ffhosts" | sed "s/+/$_tmp/g" | cSanitize)" # replace + and sanitize
 			bWorkAllClients=yes
 		fi
+		# set -x
+		ffhosts="$(cLower "${ffhosts:-$LH}" | tr -s , " ")"
+		dbg FFHOSTSIN "$ffhosts"
+		if [ "$ffhosts" != "${ffhosts% -*}" ] ; then # host with "-" prefix exists
+			_h=${ffhosts#* -} ; # _h=${h%* }
+			# now remove any host prefixed with "-" from ffhosts
+			ffhosts="$(echo $ffhosts | awk '{
+				for (i=1;i<=NF;i++) { if ($i ~ "^-+") { gsub("^-","",$i) ; x[$i]=1 } }
+				for (i=1;i<=NF;i++) { 
+					# print "CHECKING:", $i, gensub("-.*","","",$i)
+					if (!x[gensub("-.*","","",$i)] && !x[$i]) { 
+						printf $i " "
+					}
+				} 
+			  }')"
+			dbg FFHOSTS "$ffhosts"
+		fi
         ;;
     G) [ $nGiveHost ] && nGiveHost=2 || nGiveHost=1 # file descriptor to send output to: -G = stdout, -G -G = stderr
 		;;
@@ -942,7 +961,7 @@ fi
 
 [ -z "$commands" -a -z "$*" ] && cErr "$sMe: No commands!"
 
-if [ -d $dGluon -o -x /usr/sbin/print_map.sh ] ; then   # I'm running on Gluon (which is based on OpenWrt)
+if cR $fOpenWrt ; then   # I'm running on OpenWrt (base of Gluon)
 	[ "$hMqtt" -o "$bMosqFile" ] || hMqtt=$hPubMqtt
 	fMacIDs=/tmp/phones
 else                                      # on rest-of-world (e.g. Raspi or (FIXME) some fullblown OpenWrt)
@@ -955,7 +974,7 @@ fSleep=$dTmp/sl
 nHosts=0
 sHosts=""
 
-ffhosts="$(cLower "${ffhosts:-$LH}" | tr -s , " ")" # if none given, take localhost
+ffhosts="${ffhosts:-$LH}" # if none given, take localhost
 for hFull in $ffhosts ; do # do it for each given target node (or maybe just one)...
 	ssh_rc=0 # reset cache of the last connection return code
 	if [ "$hFull" = localhost ] ; then
@@ -1008,8 +1027,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 	sNewSSID=""
 	
 	if [ "$sUciQuery" ] ; then
-		cSsh "uci show $sUciQuery"
-		[ $ssh_rc != 0 ] && cErr "$hFull: $ssh_cmd:" && [ $ssh_rc = 127 ] && cntnue
+		cSsh "uci show $sUciQuery" || cErr "$hFull: $ssh_cmd:" && [ $ssh_rc = 127 ] && cntnue
 		[ $bDoAll ] && cEcho && cntnue # for debugging
 		data="$(cOut|cut -d= -f2)"
 		if ! [ "$sUciVal" ] ; then # query only = nothing to be written
@@ -1036,7 +1054,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 			fi
 			fPipe=$dTmp/p			
 			# prepare subscribing to MQTT messages...
-			mqttGroup="$(cExpand $mqttGroup)"
+			mqttGroup="$(cExpand $mqttGroup|tr "," " ")"
 			nSeconds=${nSeconds:-99999999}
 
 			{ mkfifo $fPipe && chmod go-rwx $fPipe ;} || cErrAndExit "Failed on $fPipe (rc=$?)"
@@ -1064,16 +1082,13 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 			# sleep 1 # FIXME: make it shorter?
 
 			nBridgeDelta=$(cCRead bridgedelta) && [ "$nBridgeDelta" -gt 0 ] || nBridgeDelta=2
-			[ -d $dGluon ] && nSeconds=$((nSeconds-11)) # on Gluon crond notices the process end only after up to 11 seconds before the full minute
+			cR $fOpenWrt && nSeconds=$((nSeconds-12)) # on Gluon/OpenWrt crond notices the process end only after up to 112 seconds before the full minute
 			[ $nSeconds -lt 3 ] && nSeconds=3
-			cLogger info "ONGOING: bridge startup (for $nSeconds secs)"
+			cLogger info "ONGOING: bridge startup (for $nSeconds(-$nBridgeDelta) secs, $(cR $fOpenWrt && echo "OpenWrt") )"
 			dbg SUBSCRIPTION "\"$hMqtt $_subscriptions\", homie=$homie, fPipe=$fPipe"
 
 			_last_will_options="--will-qos 1 --will-topic $sSite/$hTarget/bridge/log --will-payload {\"status\":\"OFF\",\"alive\":0} --will-retain"
 
-			# cMqttSub -F "MQTT %t %p" -R $_subscriptions $_last_will_options > $fPipe &    # ... doesn't work: mosquitto_sub exits if pipe not ready....
-			# mosquitto_sub -h localhost -F "MQTT %t %p" -R $_subscriptions $_last_will_options > $fPipe &    # ... doesn't work: mosquitto_sub exits if pipe not ready....
-			# FIXME: proper buffering still doesn't work :( :( :
 			cMqttSub -F "MQTT %t %p" ${nSeconds:+-W $((nSeconds+72))} -R $_subscriptions $_last_will_options 2>&1 |
 					awk -v f=$fPipe 'NR==1&&!/^MQTT/{print "PERIODIC TERMINATE MQTT:"$0>f ; exit 1} $1=="MQTT"{print>f;fflush(f)}' & #  prevent multi-line commands thus avoiding injections
 			nPidMosq=$!
@@ -1241,7 +1256,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 					[ "$cmd" = PULSE ] && cStackCommand echo+pulse
 					[ "$cmd" = TELE  ] && { cIsNonGluon && cStackCommand echo+BRIDGEALIVE_$cmdopts || cStackCommand wifistatus,statistics ;}
 					[ "$cmd" = TERMINATE ] && cmd=bridge && 
-							{ : cMR OFF "Terminating $sMe ($cmdopts,${nSeconds}s)" ; sleep 1 ; break 9 ;}
+							{ : cMR OFF "Terminating $sMe ($cmdopts,${nSeconds}s)" ; sleep 1 ; break 9 ;} # FIXME: remove cMR if really not needed
 					cntnue
 				elif [ $sType = MQTT ] ; then
 					nMqttCommands=$((nMqttCommands + 1))
@@ -1318,7 +1333,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 			bridge|noop|ignore|echo|date)
 				cProbeGET
 				dbg COMMAND "cmd=$cmd,$cmdopts,($(date +%T))"
-				[ $cmd = echo ] && { _msg="$(cExpand "$cmdopts")" ; cEcho "$_msg" ; cMR OK "Command $cmd($_msg) by $(cat $fHost) at $(date +"%T") (V: $sMeAge, NPID=$(cPid))" ; [ "$cmdopts" = TESTERROR ] && cErr "Test error" ;}
+				[ $cmd = echo ] && { _msg="$(cExpand "${cmdopts:-%s}")" ; cEcho "$_msg" ; cMR OK "Command $cmd($_msg) by $(cat $fHost) at $(date +"%T") (V=$sMeAge,NPID=$(cPid))" ; [ "$cmdopts" = TESTERROR ] && cErr "Test error" ;}
 				[ $cmd = date ] && { _msg="$(date +"%F %T")" ; cEcho "$_msg" ; cMR OK "Command $cmd($cmdopts): $_msg" ;}
 				;;
 			bridgestop) # inject a command into p to stop a running bridge
@@ -1514,7 +1529,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				[ ! $bDoAll ] && {
 					# only minimal install requested: abort hereafter			
 					cEcho "Done partly install for target $hTarget (autoupdater_branch=$_auto,bDoAll=$bDoAll)..."
-					ssh_data="$_sizedata" # inject the previously saved size data...
+					ssh_data="$_sizedata" # inject the previously saved size data into mountsizes_prev ...
 					cmdsToDo="mountsizes_prev${cmdsToDo:+,$cmdsToDo},mountsizes"
 					cntnue # quit installation here, unless on Gluon or $bDoAll = yes
 				}
@@ -1837,7 +1852,6 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 					cEcho "Illegal shortssid: $_ssid"
 					cntnue
 				fi
-				# cEcho ====
 				cSsh ": set -x &&
 						_hn=\"\$(tr A-Z a-z <$fHost)\" &&
 						other=\"\$( printf %s \"$otherssid\" | sed -e \"s,MYHOSTNAME,\$_hn,\" -e \"s,%s,\$_hn,\" )\"  &&
@@ -2005,6 +2019,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				;;			
 			localclients)
 				cProbeGET
+				[ -d $dGluon ] || { cMR ERROR "$cmd not implemented on Non-Gluon" ; cntnue ;}
 				fCollection=$dTmp/clientcollection
 				touch $fCollection && chmod g+w $fCollection
 				fClients=$fCollection.$hTarget
@@ -2013,7 +2028,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 
 				# get the two table of the local clients on the node together, split them in awk further down
 				if ! cSsh "batctl dc && echo === && batctl tl" ; then
-					_msg="Connection to $sSshUser failed or batctl" # .. failed
+					_msg="$sSshUser not reachable or batctl" # .. failed
 					cErr "$_msg:"
 				  	cMR ERROR "$_msg:"
 					cntnue
@@ -2021,7 +2036,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				cAddSuccHost
 				dbg "**1" " result batctl dc/tl ***" && cOut # output of both batctl commands
 				# Split and merge all data together... :
-				cOut|awk -v a=$bDoAll 'ARGIND==1 {FS=";";s[$1]=$2;next}  ARGIND>1 {FS=" "} $1=="*" {i[$3]=$2;l[$3]=$5;next}   $3=="[....W.]" {print $1";"s[$1]";" strftime("%F" (a?"_%T":"")) ";" i[$1] ";" l[$1]}' $fMacIDs - > $fClients
+				cOut|awk -v a=$bDoAll 'ARGIND==1 {FS=";";s[$1]=$2;next}  ARGIND>1 {FS=" "}  $1=="*" {i[$3]=$2;l[$3]=$5;next}  $3=="[....W.]" {print $1";"s[$1]";" strftime("%F" (a?"_%T":"")) ";" i[$1] ";" l[$1]}' $fMacIDs - > $fClients
 				dbg "**2" " fClients=$fClients ***" && cat $fClients # mac;name;time;ipv4
 
 				_n=$(cCount<$fClients)
@@ -2049,7 +2064,8 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				rm -f $fClients $fClients.2
 				;;
 			nodeinfo|neighbours|statistics)
-				# [ ! -d $dGluon ] && dbg "Not on Gluon: Skipping cmd $cmd on node $hTarget" && cntnue
+				cProbeGET
+				[ -d $dGluon -a $hFull = localhost ] || { cMR ERROR "$cmd not implemented on Non-Gluon" ; cntnue ;}
 				ssh_rc=0
 				ffnodeip="$(cCRead .nodeip 9)" || ffnodeip="::1" # localhost, better than next line
 				_msg="IP of remote node undeterminable ($ffnodeip)"
@@ -2146,7 +2162,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				;;
 			mountsizes|mountsizes_prev)
 				cProbeGET
-				[ $cmd != mountsizes_prev ] && cSsh "df -PhT" # little workaround to have before/after datas when using "install"
+				[ $cmd != mountsizes_prev ] && cSsh "df -PhT" # little workaround to preserve the before/after datas when using "install"
 				cmd=mountsizes
 				if [ $ssh_rc -ne 0 ] ; then
 					cMR ERROR
@@ -2162,7 +2178,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				cMS /$cmd "$(cTableToJSON)" # transforms stdin to JSON table consuming header line and column leads (see "memory" above)
 				;;
 			reboot)
-				cProbeSET
+				cProbeNOMQTT
 				cMR ONGOING :
 				_key="gluon-setup-mode.@setup_mode[0].enabled"
 				[ "$cmdopts" = config ] && _more="uci set $_key=1 && uci commit &&" || _more="" # reboot to config mode on next boot
