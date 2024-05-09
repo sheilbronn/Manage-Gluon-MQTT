@@ -137,12 +137,12 @@ cSortAndTailFile() { # $1=file $2=col(1) $3=sep $4=lines(40)
 
 cExpand() { # expand some shortcuts: %w: site, %s: host name of target, %g: intended MQTT group
 	[ "$*" ] && awk -v a="$*" "BEGIN {gsub(\"%w\",\"$sSite\",a);gsub(\"%s\",\"$hTarget\",a);gsub(\"%g\",\"$mqttGroup\",a);print a}"
-	}
+  }
 # echo $(cExpand w=%w s=%s g=%g) ; exit 0
 
 _helper() {
 		cOut|awk -F= "/^$1=/"' {gsub("\"","");print$2}'
-    }
+	}
 cGetOSData() {
 	cX
 	if ! _val="$(cCRead .os_data 1)" ; then
@@ -242,7 +242,7 @@ cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
 # echo :"$IFS":
 # h() { local - ; IFS='' ; set -- $@ ; echo $2 ;}
 # h "eins zwei" drei
-# echo :"$IFS":   ;   exit
+# echo :"$IFS":  ;   exit
 # set -x ; d=yy ; h() {  if local d=xx ; ! false ; then echo yes$d ; else echo no$d ; fi ; echo $d: ;} ; h ; echo $d ; exit
 
 cTableToJSON() { # table is read from stdin. numerical values are made unquoted. $1: (optional) number of missing headers, e.g. 1 in free -t
@@ -855,22 +855,22 @@ do
 		[ "$cMPub" = : ] && cErrAndExit "$MP is not installed (consider running \"-c install\"!"
         exit 1
         ;;
-    h|s) ffhosts="$OPTARG" # one or more Freifunk nodes: "host1,host2,host3" (without double quotes)
+    h|s) hAll="$OPTARG" # one or more nodes: "host1,host2,host3" (without double quotes)
 		[ $opt = h ] && dbg WARNING "Option -h will be deprecated, use -s instead."
 		if [ "$OPTARG" != "${OPTARG%+*}" ] ; then # substitute '+' for a set of predefined hosts in $dUser/myhosts.persist
 			_tmp="$(cUserRead myhosts)" || cErrAndExit "config for collection of hosts is missing: $dUser/myhosts.persist"
-			ffhosts="$(p "$ffhosts" | sed "s/+/$_tmp/g" )" # replace +
+			hAll="$(p "$hAll" | sed "s/+/$_tmp/g" )" # replace +
 			bWorkAllClients=yes
 		fi
-		ffhosts="$(cLower "$ffhosts" | tr -s , " " | cSanitize )"
-		dbg FFHOSTS "$ffhosts"
-		if [ "$ffhosts" != "${ffhosts% -*}" ] ; then # some host with "-" prefix given, not at the front
-			# generously remove any host prefixed with "-" from ffhosts:
-			ffhosts="$(echo $ffhosts | awk '{
+		hAll="$(cLower "$hAll" | tr -s , " " | cSanitize )"
+		dbg HOSTS "$hAll"
+		if [ "$hAll" != "${hAll% -*}" ] ; then # some host with "-" prefix given, not at the front
+			# generously remove any host prefixed with "-" from hAll:
+			hAll="$(echo $hAll | awk '{
 				for (i=1;i<=NF;i++) { if ($i ~ "^-+") { gsub("^-","",$i) ; x[$i]=1 } }
 				for (i=1;i<=NF;i++) { if (!x[gensub("-.*","","",$i)] && !x[$i]) {printf $i" "} 				} 
 			  }')"
-			dbg FFHOSTSREDUCED "$ffhosts"
+			dbg FFHOSTSREDUCED "$hAll"
 		fi
         ;;
     G) [ $nGiveHost ] && nGiveHost=2 || nGiveHost=1 # file descriptor to send output to: -G = stdout, -G -G = stderr
@@ -931,7 +931,7 @@ do
     w) sUciVal="$OPTARG" ; commands=uciwrite
 		# echo sUciVal="$sUciVal"
         ;;
-	*) cErrAndExit "Option -$opt not implemented yet."
+	*) cErrAndExit "Option -$opt not implemented."
 		;;
     esac
 done
@@ -968,8 +968,8 @@ fSleep=$dTmp/sl
 nHosts=0
 sHosts=""
 
-ffhosts="${ffhosts:-$LH}" # if none given, take localhost
-for hFull in $ffhosts ; do # do it for each given target node (or maybe just one)...
+hAll="${hAll:-$LH}" # if none given, take localhost
+for hFull in $hAll ; do # do it for each given target node (or maybe just one)...
 	ssh_rc=0 # reset cache of the last connection return code
 	if [ "$hFull" = localhost ] ; then
 		sSshUser=LOCAL
@@ -1010,8 +1010,8 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 			fi
 			return $ssh_rc
   		  }	
-		# remove any trailing "-<letter>"  also the domain name
-		hTarget=$(p "$hFull" | awk '{ $0=tolower($0) ; gsub("\\..*","") ; gsub("-[a-z]$","") ; print }' )
+		# remove any trailing "-<letter>", also the domain name (FIXME: why necessary?)
+		hTarget=$(p "$hFull" | awk '{ $0=tolower($0) ; gsub("\\.[^0-9.]+$","") ; gsub("-[a-z]$","") ; print }' )
 		[ $nMaxGoneDays ] && [ -z "$(cCRead .sshcnt $nMaxGoneDays)" ] && continue # dont try this node if not seen for N days
 	fi
 	_msg="" && [ $sSshUser = "${sSshUser%${hTarget}-e}" -a $sSshUser = "${sSshUser%${hTarget}}" ] && _msg="($hTarget) "
@@ -1167,7 +1167,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 			
 			trap_SIGNAL() {
 					pids="$nPidMosq $nPidSleep $nPidUbus $nPidLogread"
-					_msg="Delete pipe=$fPipe, kill ${pids%% }."
+					_msg="Delete p=$fPipe, kill ${pids%% }."
 					dbg TRAP_SIGNAL "$_msg (cmd=$cmd)"
 					rm -f $fPipe # rm pipe as early as possible to allow for next bridge!
 					[ $nSeconds ] && {
@@ -1423,7 +1423,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 #DELETE_BEGIN#
 				else
 					# nPidAutoSSH=$! # nPidAutoSSH="$(cat $AUTOSSH_PIDFILE)"
-					# dbg AUTOSSH "pid=$nPidAutoSSH for: $ffhosts"
+					# dbg AUTOSSH "pid=$nPidAutoSSH for: $hAll"
 					sleep 10
 					trap_AUTOSSH() {
 						cmd=autossh && cMR ONGOING "Exiting."
@@ -1465,11 +1465,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				cProbeNOMQTT
 				cSsh -v "id -nu"
 				_user="$(cOut|cSanitize)"
-				if ! [ "$_user" ] ; then
-					cErr "targetuser on targethost could not be determined. Debug your SSH setup:"
-					cntnue # abort install
-				fi
-				_auto="" # use autoupdater_branch setting as indicator for seeing if we are on Gluon
+				[ "$_user" ] || { cErr "user@$hFull could not be determined. Debug your SSH setup:" ; cntnue ;}
 				_lxlvl=1 # determine "Linux level", 0=Basic/1=GNU_Linux-like/2=e.g. Debian-like/3=OpenWrt (implied UCI)/4=Gluon
 
 				if [ "$hFull" != localhost -o "$(dirname "$0")" != /sbin ] && [ "$_user" = root ] ; then
@@ -1529,7 +1525,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				# STEP: get a autoupdater setting
 				# then comes a Gluon-specific part - determine Gluon by checking for the UCI entry autoupdater_branch
 				cSsh -v "uci get autoupdater.settings.branch" && _lxlvl=4 # indicates we are probably on Gluon
-				_auto="$ssh_data"
+				_auto="$ssh_data" # use autoupdater_branch setting as indicator for seeing whether we are on Gluon
 				dbg AUTOUPDATER "branch=$_auto"
 				[ ! $bDoAll ] && {
 					# only minimal install requested: abort hereafter			
@@ -1566,18 +1562,17 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 					{ _gen_opt mqtt wan 1883 ; _gen_opt mqtt mesh 1883
 					} | cSsh "xargs ${bVerbose:+-t} -n 1 uci set && uci commit"
 				fi
-				cSsh -v "/etc/init.d/firewall reload" || dbg "Failed to reload firewall."
-				cOut
+				
+				_rlfw() { cSsh -v "/etc/init.d/firewall reload" || dbg FW "Failed to reload firewall." ; cOut ;}
+				_rlfw
 				
 				# STEP: add more firewall rules (only on Gluon)
 				if [ "$_lxlvl" -ge 4 -a "$bDoExperiment" ] ; then
 					cEcho "... adding other firewall rules for outgoing MQTT..."
 					for x in loc_client wan mesh ; do
 						_gen_opt mqtt $x 1883
-					done | cSsh "xargs ${bVerbose:+-t} -n 1 uci set ; uci commit"
-					
-					cSsh -v "/etc/init.d/firewall reload" || dbg "Failed to reload firewall."
-					cOut
+					done | cSsh "xargs ${bVerbose:+-t} -n 1 uci set ; uci commit"					
+					_rlfw
 					exit 55
 				fi
 				
@@ -1682,7 +1677,8 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 					dbg SHELL "$(date +%T)"
 					ping -W1 -c1 $hTarget >$fNul ; _rc=$?
 					[ $_rc = 0 -o $_rc = 2 ] && ssh $sSshUser && break
-					sleep 5
+					dbg PING "rc=$_rc"
+					sleep 4
 				done ;;
 			homie-update|discovery-update)
 				cProbeGET
@@ -2024,7 +2020,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				;;			
 			localclients)
 				cProbeGET
-				[ -d $dGluon ] || { cMR ERROR "$cmd not implemented on Non-Gluon" ; cntnue ;}
+				[ ! -d $dGluon -a $hFull = localhost ] && { cMR ERROR "$cmd only implemented on Gluon" ; cntnue ;}
 				fCollection=$dTmp/clientcollection
 				touch $fCollection && chmod g+w $fCollection
 				fClients=$fCollection.$hTarget
@@ -2070,7 +2066,7 @@ for hFull in $ffhosts ; do # do it for each given target node (or maybe just one
 				;;
 			nodeinfo|neighbours|statistics)
 				cProbeGET
-				[ -d $dGluon -a $hFull = localhost ] || { cMR ERROR "$cmd not implemented on Non-Gluon" ; cntnue ;}
+				[ ! -d $dGluon -a $hFull = localhost ] && { cMR ERROR "$cmd only implemented on Gluon" ; cntnue ;}
 				ssh_rc=0
 				ffnodeip="$(cCRead .nodeip 9)" || ffnodeip="::1" # localhost, better than next line
 				_msg="IP of remote node undeterminable ($ffnodeip)"
