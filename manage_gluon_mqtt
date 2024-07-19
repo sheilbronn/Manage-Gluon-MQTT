@@ -978,7 +978,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 			ssh_msg=""
 			ssh_data=""
 			{ [ "$1" = -t ] && shift ;} && eval "$*" || ssh_data="$(eval "$*")"
-			ssh_data="$(eval nice "$*")" # FIXME: see https://www.shellcheck.net/wiki/SC2294
+			ssh_data="$(eval "$*")" # FIXME: see https://www.shellcheck.net/wiki/SC2294
 			ssh_rc=$?
 			ssh_cmd="$*"
 			[ $ssh_rc -ne 0 ] && cLogger error "$* = $ssh_rc"
