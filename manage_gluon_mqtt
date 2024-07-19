@@ -1524,19 +1524,22 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 
 				# STEP: get a autoupdater setting
 				# then comes a Gluon-specific part - determine Gluon by checking for the UCI entry autoupdater_branch
-				cSsh -v "uci get autoupdater.settings.branch" && _lxlvl=4 # indicates we are probably on Gluon
-				_auto="$ssh_data" # use autoupdater_branch setting as indicator for seeing whether we are on Gluon
-				dbg AUTOUPDATER "branch=$_auto"
+				cSsh -v 'uci get autoupdater.settings.branch && { autoupdater -n ; echo rc=$? ; }' 
+				_branch="$(cLine 1)" # use autoupdater_branch setting as indicator for seeing whether we are on Gluon
+				[ "$_branch" ] && _lxlvl=4 # indicates we are probably on Gluon
+				_rc="$(cOut|awk -F= '/rc=/{print $2}')"
+				# [ "$_rc" -ne 0 ] && { cEcho "autoupdater -n failed:\nssh_data=$ssh_data\nAborting ..." ; cntnue ;}
+				dbg AUTOUPDATER "branch=$_branch,lxlvl=$_lxlvl,rc=$_rc,autoupdater_rc=$_rc"
 				[ ! $bDoAll ] && {
 					# only minimal install requested: abort hereafter			
-					cEcho "Done partly install for target $hTarget (autoupdater_branch=$_auto,bDoAll=$bDoAll)..."
+					cEcho "Done partly install for target $hTarget (autoupdater_branch=$_branch,bDoAll=$bDoAll)..."
 					ssh_data="$_sizedata" # inject the previously saved size data into mountsizes_prev ...
 					cmdsToDo="mountsizes_prev${cmdsToDo:+,$cmdsToDo},mountsizes"
 					cntnue # quit installation here, unless on Gluon or $bDoAll = yes
 				}
 				cCWrite .autoupdater_branch
 
-				# generate command options (keys/values) need for uci set in the next steps:
+				# generate the command options (keys/values) need for uci set in the next steps:
 				_gen_opt() { # $1: type, $2:src, $3:dest_port
 					_b="firewall.$2_$1"
 					echo "$_b=rule
@@ -2281,30 +2284,32 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				}
 				netprobe() {
 					#  FIXME: /24 instead /25 /26 (was for debugging!)
-					nmap -sn "$network/$_m" | clean_scan | awk -F\; -v OFS=\; -v v=$bVerbose '{
+					nmap -sn "$network/$_m" | clean_scan | awk -F\; -v OFS=\; -v v=$bVerbose -v vv=$bVeryVerbose '{
 						sfx=".tcp *open"
-						nmapcmd="ping -q -W 1 -c 2 " $1 " >/dev/null && echo 0/tcp open && { nmap --top-ports=10000 " $1 " ; nmap -pT:5007,1883,9443 " $1 " ;} | grep -E \"^[0-9]+/tcp\" || echo 0/tcp NOT"
+						nmapcmd="ping -q -W 1 -c 2 " $1 " >/dev/null && echo 0/tcp open && { nmap --host-timeout 1m --top-ports=10000 " $1 " && nmap -pT:5007,1883,9443 " $1 " ;} | grep -E \"^[0-9]+/tcp\" || echo 0/tcp NOT"
+						if (v) { print "NMAP2+: running " (vv ? nmapcmd : $1) > "/dev/stderr" }
 						while (nmapcmd | getline line) { res = res ";" line ; if (line~sfx) { ports=ports gensub(sfx ".*", "", 0, line) "," } }
 						print $2,$1,$3,$4, res ~ ";0" sfx ? "pingyes" : "pingno", res ~ ";80" sfx ? "http://" $1 : "", res ~ ";22" sfx ? "ssh://" $1 : "", res ~ ";443" sfx ? "https://" $1 : "", gensub(",$","",0,ports)
 						res=""
-						ports=""				
+						ports=""
 					}' # | tee /tmp/scanni.$USER
+					set +x
 				}
 				gen_removecmd() {
 					printf "sed "
-					echo "$* xyzx" | awk -v RS=" " -v ORS=" " '{printf " -e /^%s/d", $1}'
+					echo "${*:-xyzx}" | awk -v RS=" " -v ORS=" " '{printf " -e /^%s/d", $1}'
 				}
 
-				dbg2 NMAP2 "nmap -sn $network/$_m"
+				dbg2 NMAP2 "nmap -sn $network/$_m ($_n times)"
 				while [ "$_n" -gt 0 ] ; do # now scan _n times for ports
 					cMR ONGOING "Will do $cmd($network/$_m) number $_n."
 					# IP;HOSTNAME;MAC;VENDOR;http://IP;ssh://IP :
 					netprobe | eval "$(gen_removecmd "$sRemoveList")" |
-						awk -F\; -v OFS=\; 'ARGIND==1 {a[$2]=$3 OFS $4 OFS $5 OFS $6 OFS $7 OFS $8;next} {print $0 , a[$1]  }' - $fList > $fScanTmp
-					dbg "Scanned hosts of $network/$_m (n=$_n, $(date +%F) )" && cat $fScanTmp
+						awk -F\; -v OFS=\; 'ARGIND==1 {a[$2]=$3 OFS $4 OFS $5 OFS $6 OFS $7 OFS $8;next} {print $0 , a[$1] }' /tmp/awk.input $fList > $fScanTmp
+					dbg "NMAP3" "Scanned hosts of $network/$_m (n=$_n, $(date +%F) )" && cat $fScanTmp
 
-					diffres1="$( diff -N -bw -up -B -U 0 $fScanTmp.prev $fScanTmp 2>&1 | grep -v "^-$" )"
-					diffres2="$(p -n "$diffres1"  | grep -E '^\+[^+]|^\-[^-]' )" # only lines with one +/-
+					diffres1="$(diff -N -bw -up -B -U 0 $fScanTmp.prev $fScanTmp 2>&1 | grep -v "^-$" )"
+					diffres2="$(p -n "$diffres1" | grep -E '^\+[^+]|^\-[^-]' )" # only lines with one +/-
 
 					[ "$diffres2" ] && echo "$diffres2" | sed -E -e "s/^(.)/& $(date +%F) /" # insert space after +/-  # 1. Stdout Output
 					echo "$diffres2" | grep "^+" |
