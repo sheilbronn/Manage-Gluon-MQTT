@@ -214,7 +214,7 @@ cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
 	sPubIf0=""
 	sPubIf1=""
 	if ! ssh_data="$(cCRead .ifs "${2:-9}")" ; then
-		cSsh "$C -v iwinfo >$fNul && iwinfo" || { cErr "no iwinfo" ; cMR ERROR "no iwinfo:" ; return $ssh_rc ;} # only iwinfo works for this
+		cSsh "$C -v iwinfo >$fNul && iwinfo" || { cErr "no iwinfo" ; cMqttReply ERROR "no iwinfo:" ; return $ssh_rc ;} # only iwinfo works for this
 		ssh_data="$( { cOut ; echo "" ;} | awk '/^$/ {if (l~/Mode: Master;.*;Encryption: none/) print l;l="";next} {gsub("^ +",";") ; gsub(" {2,9}",";") ;l=l$0 ;next}' )"
 		dbg REMOTE "Interfaces returned: $( cOut | head -10)"
 		cSsidBase
@@ -227,7 +227,7 @@ cGetPubIF() { # $1=cachetimeout  ## TODO ## -1 for forced reloading
 		_msg="Public interfaces empty, sPubIfs="
 		dbg PUBLIC "$_msg"
 		cErr "$_msg"
-		cMR ERROR "$_msg:"
+		cMqttReply ERROR "$_msg:"
 		sSsidBase=""
 		return $ssh_rc
 	fi
@@ -359,8 +359,8 @@ dbg() { # output its args to stderr if verbosity set
 
 cShorten() { # shorten string $1 to at most $2 chars plus some ellipses
 	cX
-	printf "%.${2:-33}s%s" "$1"
-	[ ${#1} -gt "${2:-33}" ] && printf "..."
+	printf "%.${2:-45}s%s" "$1"
+	[ ${#1} -gt "${2:-45}" ] && printf "..."
 	}
 	# set -x; cShorten "1234567890" 7 ; cSEP ; cShorten "1234567890" ; exit 99
 
@@ -384,7 +384,7 @@ cKillChilds() { # $1=pid, $2=parent name, $3=child name using data from /proc
 	[ "$1" -a -d /proc/$1 ] || return 1
 	[ "$2" ] && { [ $2 = "$(awk '$1=="Name:" {print$2}' /proc/$1/status )" ] || return 1 ; }		
 	set +o noglob
-	cpids="$(awk -v v=$bVerbose -v pid=$1 -e '$2==pid && $1=="PPid:" {split(FILENAME,f,"/") ; printf "%d ", f[3] ; system("kill "f[3]" 1>&2")}' /proc/*/status)"
+	cpids="$(awk -v pid=$1 -e '$2==pid && $1=="PPid:" {split(FILENAME,f,"/") ; printf "%d ", f[3] ; system("kill "f[3]" 1>&2")}' /proc/*/status)"
 	set -o noglob
 	dbg KILLCHILDS "pid=$1,cpids=$cpids."
 	# [ "$cpids" ] && kill $cpids # a race condition in between should be hardly achievable
@@ -1583,7 +1583,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 						dbg MODIFY "A crontab line already containing '$sMe' was found... Leaving crontab unmodified."
 					else
 						cEcho "crontab entry with '$sMe' not found... adding a simple one... pls adapt it later!!"
-						_line="0 * * * * sleep 50 ; $sMe -M -c echo+LOCALCHIME${_auto:+,machine-data,statistics} -m $hPubMqtt,localhost"
+						_line="0 * * * * sleep 50 ; $sMe -M -c echo+LOCALCHIME${_branch:+,machine-data,statistics} -m $hPubMqtt,localhost"
 						cSsh "{ crontab -l ; echo \"$_line\" ;} | crontab - ; ${bVerbose:+echo crontab is now: ; crontab -l}"
 						cEcho
 					fi
@@ -1625,7 +1625,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					sed -e 's/^[ \t]*//' -e 's/\(^[ \t]*\| \+\)#\($\|#*[\t ]\+[^"].*$\)//g' -i $_fn &&
 					#      ^Whitespace      WhiteSpace # Comment
 					  sed -e 's/() *{/(){/' -e 's/[\t ]*\t[\t ]*/\t/g' -e '/^$/d' -e 's/ *;/;/'   -e 's/  *"/ "/g' -e 's/"  */" /g' -e 's,\$( ,$(,g' -e 's, )",)",g'  -e 's,\$(echo ,$(e ,g' -e 's,\t+$,,g' -e 's,^local ,l ,'  -e 's,^echo ,e ,'  -e 's,\<cntnue\>$,c,'  -e 's,\<return\>,r,' -e "s,\<command\>,\$C,g" -e 's,_msg\>,_m,g'  -e 's,\<cMqtt,cM,g'  -i $_fn &&
-					  #       () *{            Whitesp tab Whitespace  emptyline  any WS before ;  WS bef DouQts   WS after DblQts  spaceAfter$(     spaceBefore)"    echo to e after $(     tab at eol     local to alias l    echo to e          cntnue to c            return to r          command  to  $C        suffix _msg to _m    command with cMqtt...
+					  #  kompr: () *{            Whitesp tab Whitespace  emptyline  any WS before ;  WS bef DouQts   WS after DblQts  spaceAfter$(     spaceBefore)"    echo to e after $(     tab at eol     local to alias l    echo to e          cntnue to c            return to r          command  to  $C        suffix _msg to _m    command with cMqtt...
 						cp -p $_fn /tmp &&
 						  sed -E -i $_fn -e 's/([^\];) +/\1/g'  -e 's,[ \t]*(&&|>|>>|\|)[ \t]*,\1,g' -e '/awk|lua|printf|test|:/!s,"([a-z0-9/-][a-z0-9/._-]+)",\1,g' && #  -e 's,[^\)]\) [^a-zA-Z],),g'  &&
 						  #                  WS after ;       Whitesp around && or | , but not << or <  pure strings > 1c in double quotes   #FRAGILE
@@ -1679,7 +1679,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					[ $_rc = 0 -o $_rc = 2 ] && ssh $sSshUser && break
 					dbg PING "rc=$_rc"
 					sleep 4
-				done ;;
+				done
+				;;
 			homie-update|discovery-update)
 				cProbeGET
 				_cmd="cat /proc/uptime"
@@ -1981,7 +1982,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					filesize="$(cLine 2)"
 					endtime="$(cLine 3)"
 					_val="$((endtime - starttime))"
-					speedMB="$( awk "BEGIN { printf \"%.1f\" , $filesize*8 / ($_val+0.000001) / 1048576}" )"
+					speedMB="$( awk "BEGIN { printf \"%.2g\" , $filesize*8 / ($_val+0.000001) / 1048576}" )"
 					if [ "$filesize" -lt 20000 ] ; then
 						dbg "File size ${filesize}B for $_url too small, will abort."
 						cStackCommand speedtest0000000000 # head for abort
@@ -1996,6 +1997,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 						cEcho "$speedMB"
 						cMS /speedtest "{*speedMb*:$speedMB,*filesize*:$filesize,*elapsedtime*:$_val,*unit*:*Mb/s*${sLastSpeed}}"
 						cCWrite .lastspd "$speedMB"
+						cAddSuccHost
 					fi
 				else
 					cEcho "ERROR: $ssh_rc"
@@ -2020,7 +2022,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				;;			
 			localclients)
 				cProbeGET
-				[ ! -d $dGluon -a $hFull = localhost ] && { cMR ERROR "$cmd only implemented on Gluon" ; cntnue ;}
+				[ ! -d $dGluon -a $hFull = localhost ] && { cMR ERROR "$cmd on Gluon" ; cntnue ;}
 				fCollection=$dTmp/clientcollection
 				touch $fCollection && chmod g+w $fCollection
 				fClients=$fCollection.$hTarget
@@ -2046,13 +2048,14 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				while IFS=\; read -r _mac _name _time _ipv4 _seen ; do
 					_vdr="$(cGetMacVendor "$_mac")"
 					_ping=null ; [ $sSshUser = LOCAL ] && { ping -q -W 2 -c 3 $_ipv4 >$fNul && _ping=1 || _ping=0 ;}
-					_s=${_seen#*:} # the seconds
-					_seen="$(( ${_s#0} + 60*${_seen%:*} ))" # convert mm:ss to seconds
+					_m=${_seen%:*} # the minutes
+					_seen=${_seen#*:} # the seconds
+					[ "$_seen" ] && _seen="$(( 60 * $_m + ${_seen#0} ))" # convert mm:ss to seconds
 					_line="$_time;$_mac;$hTarget;$_vdr;$_name;$_ipv4;$_ping;$_seen"
 					dbg IP "*$_mac* *$_name* *$_vdr* *$_time* *$_ipv4* *$_ping* *$_seen*" # IP: *6e:95:18:16:87:58* *Thomas3* *MySamsung* *2024_**
 					echo "$_line" >> $fCollection # NEW! : # write  time;mac;node;vendor;name  to collection file, too
 					echo "$_line"
-					cMS "$sSite/$sArea/$(cTrd : "$_mac")" "{*node*:*$hTarget*,*mac*:*$_mac*,*name*:$(s "$_name"),*vendor*:$(s "$_vdr"),*ipv4*:*$_ipv4*,*pingable*:$_ping},*lastseen*:$_seen}" -M
+					cMS "$sSite/$sArea/$(cTrd : "$_mac")" "{*node*:*$hTarget*,*mac*:*$_mac*,*name*:$(s "$_name"),*vendor*:$(s "$_vdr"),*ipv4*:*$_ipv4*,*pingable*:$_ping,*lastseen*:$_seen}" -M
 				done <$fClients >$fClients.2
 				data="{*count*:$_n,*localclients*:[$(awk -F\; -v bA=$bDoAll -v hname=$hTarget '{
 						printf lim "{*addr*:*%s*,*name*:*%s*,*vendor*:%s,*ipv4*:*%s*,*pingable*:%s%s}", $2, $5=="" ? $2 : $5, $4=="null" ? "null" : "*"$4"*" , $6, $7, (bA) ? ",*lastseen*:"$8 : "" ; lim="," }' $fClients.2 |
@@ -2133,6 +2136,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					# cStarredToJSON "$(cOut|cTableToJSON 1)" | json_pp
 					cEcho
 					cMS /$cmd "$(cOut|tr -d :|cTableToJSON 1)"
+					cAddSuccHost
 				else
 					cMR ERROR
 					cErr :
@@ -2313,7 +2317,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					[ "$fFile" ] && ! diff ${bQuiet:+-q} -U 0 $fScanTmp $fFile.scan.txt && {
 						dbg NETWORKPROBE "Creating new $fFile.scan.html"
 						cp -p $fScanTmp $fFile.scan.txt &&
-							awk -F\; '/http/ { printf "%s <a href=\"%s\">http://%s</a><br/>\n", $1, ($8>"") ?$8:$6, $2 ;next} {print $1, $2 "<br/>"}' $fFile.scan.txt > $fFile.scan.html
+							awk -F\; -v dat="$(date +%F_%H)" 'BEGIN {print "0.0.0.0", dat "<br/>"} /http/ {printf "%s <a href=\"%s\">http://%s</a><br/>\n", $1, ($8>"") ?$8:$6, $2 ;next} {print $1, $2 "<br/>"}' $fFile.scan.txt > $fFile.scan.html
 						}
 					cp $fScanTmp $dCache
 					mv $fScanTmp $fScanTmp.prev
