@@ -2259,12 +2259,13 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				# 1. scan for known devices and provide local, reverse DNS....
 				# https://nmap.org/book/reduce-scantime.html
 				# https://hackertarget.com/nmap-cheatsheet-a-quick-reference-guide/
-				dbg2 NMAP1 "nmap -v -sL $network/$_m"
-				ssh_data=$( cSsh "nmap -oG - -sL $network/$_m" && cOut | awk '$3 ~ /^\(.+\)/ {print $2 ";" gensub(/[)()]/,"","g",$3)}' ) || # all hosts known by DNS
-					cntnue # FIXME: more error info, e.g. nmap not installed ?
+				dbg2 NMAP1a "nmap -oG - -sL $network/$_m"
+				ssh_data=$( cSsh "nmap -oG - -sL $network/$_m" && cOut |
+						awk '$3 ~ /^\(.+\)/ {print $2 ";" gensub(/[)()]/,"","g",$3)}' ) || # all hosts known by DNS
+					cntnue # FIXME: more error info, e.g. nmap not properly installed ?
 				cEcho
 				cOut > $fList
-				[ "$fFile" ] && cOut > $fFile.list.txt
+				[ "$fFile" ] && cOut > $fFile.list.txt && dbg "NMAP1b" "Also saved to $fFile.list.txt"
 				cMS "/$cmd/$network/known" "{ *knowndevices* : $( { echo ";name" ; cOut ;} | cTableToJSON 0 \; ), *count*:$(cCount<$fList) }"
 				
 				# fFile: 192.168.178.23;fritz.repeater;32:91:AB:43:EA:FB;VENDOR;pingyes;http://192.168.178.23;;https://192.168.178.23
@@ -2305,7 +2306,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					cMR ONGOING "Will do $cmd($network/$_m) number $_n."
 					# IP;HOSTNAME;MAC;VENDOR;http://IP;ssh://IP :
 					netprobe | eval "$(gen_removecmd "$sRemoveList")" |
-						awk -F\; -v OFS=\; 'ARGIND==1 {a[$2]=$3 OFS $4 OFS $5 OFS $6 OFS $7 OFS $8;next} {print $0 , a[$1] }' /tmp/awk.input $fList > $fScanTmp
+						awk -F\; -v OFS=\; 'ARGIND==1 {a[$2]=$3 OFS $4 OFS $5 OFS $6 OFS $7 OFS $8;next} {print $0 , a[$1] }' $fList > $fScanTmp
 					dbg "NMAP3" "Scanned hosts of $network/$_m (n=$_n, $(date +%F) )" && cat $fScanTmp
 
 					diffres1="$(diff -N -bw -up -B -U 0 $fScanTmp.prev $fScanTmp 2>&1 | grep -v "^-$" )"
