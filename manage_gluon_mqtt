@@ -13,7 +13,7 @@
 
 # manage_gluon_mqtt -m localhost -v -c noop,ignore,echo,date,loop,filecopy,wifidown,wifiup,wifistatus,limit,ffcond,gluonreconfigure,site,gluondata,speedtest,status,printmap,localclients,nodeinfo,neighbours,statistics,showsite,memory
 
-nWifiSleep=7 # seconds to sleep after "wifi up"
+nWifiSleep=7 # seconds to sleep after "wifi up" 
 dGluon=/lib/gluon
 fOpenWrt=/etc/openwrt_release
 sSite="" #  will be set to something like "ffmuc".... but could also be frozen here
@@ -24,7 +24,7 @@ LH=localhost
 C=comman"d"
 
 cCmv() { command -v "$@" >$fNul ;} # true if a command exists
-cLower() { awk -v s="$*" 'BEGIN {print tolower(s)}' < $fNul ;} # simplified for args only
+cLower() { awk -v s="$*" 'BEGIN {print tolower(s)}' ;} # simplified for args only
 # set -x ; cLower "AA Bb" ; exit 99
 cPid() { sh -c 'echo $$' ;}
 # echo TEST: ; cPid ; cPid ; exit 99
@@ -550,8 +550,9 @@ cMqtt() { # cMqtt(topic,msg, options) # expanding a leading / in topic to $sSite
   # set -x ; cMPub=mosquitto_pub ; export hMqtt=localhost ; echo ==1== ; cMqtt hhh mmm -M ; echo ==2== ; cMqtt hhh mmm -M ; echo ==3== ; cMqtt hhh mm2 -M ; exit 99
 
 cStarredToJSON() { # ...  replace double quotes by single quotes and stars by double quotes
-	awk -v a="${*:-$data}" 'BEGIN {gsub("\"","'\''",a) ; gsub("*","\"",a) ; print a }' < $fNul # " => ' , then * => "
+	awk -v a="${*:-$data}" 'BEGIN {gsub("\"","'\''",a) ; gsub("*","\"",a) ; print a }' # " => ' , then * => "
 	}
+	# set -x ; cStarredToJSON "{*a*:0}"  ; exit
 
 cMqttStarred() {   # cMS(expandableTopic,message,moreMosquittoOptions)
 		cX
@@ -999,7 +1000,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 			ssh_data="$(cTrd '`' "$_r")"
 			if [ $ssh_rc = 255 ] ; then
 				ssh_msg="UNREACHABLE"
-			else # elif [ $bVerbose ] ; then
+			else
 				_n="$(cCRead .sshcnt)"
 				cCWrite .sshcnt $((_n+1))
 			fi
@@ -1624,7 +1625,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				_check $_fn
 				rc=$?
 				if [ ! "$bDoAll" -a $rc = 0 ] ; then				
-				  sed '/^[ \t]*#DELETE_BEGIN#/,/^[ \t]*#DELETE_END#/d' -i $_fn &&
+				  sed -e '/^[ \t]*#DELETE_BEGIN#/,/^[ \t]*#DELETE_END#/d' -e '/#DELETE_LINE#[ \t]*$/d' -i $_fn &&
 					sed -e 's/^[ \t]*//' -e 's/\(^[ \t]*\| \+\)#\($\|#*[\t ]\+[^"].*$\)//g' -i $_fn &&
 					#      ^Whitespace      WhiteSpace # Comment
 					  sed -e 's/() *{/(){/' -e 's/[\t ]*\t[\t ]*/\t/g' -e '/^$/d' -e 's/ *;/;/'   -e 's/  *"/ "/g' -e 's/"  */" /g' -e 's,\$( ,$(,g' -e 's, )",)",g'  -e 's,\$(echo ,$(e ,g' -e 's,\t+$,,g' -e 's,^local ,l ,'  -e 's,^echo ,e ,'  -e 's,\<cntnue\>$,c,'  -e 's,\<return\>,r,' -e "s,\<command\>,\$C,g" -e 's,_msg\>,_m,g'  -e 's,\<cMqtt,cM,g'  -i $_fn &&
@@ -1669,9 +1670,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				dbg FILECOPY "$_msg"
 				[ $bQuiet ] || cSsh "[ -r .config/$MP ] && $fBase -c echo+FILECOPY || $fBase -m $LH,$hPubMqtt -c echo+FILECOPY" 2>$fNul & # dont wait for this...
 				sleep 2
-				#DELETE_BEGIN#
-				rm $_fn
-				#DELETE_END#
+				rm $_fn #DELETE_LINE#
 				;;
 			sh)
 				cProbeNOMQTT
@@ -2149,7 +2148,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				cProbeNOMQTT
 				[ "$cmdopts" ] || cmdopts=51
 				[ "${cmdopts%%[0-9]*}" = "var" ] && n=${cmdopts#var} && cmdopts=$(printf %d "'$(cLower $hTarget)") && cmdopts=$(( (cmdopts-97)/4+4+ ${n:-0} ))
-				dbg $cmd "Sleeping $cmdopts secs ..."
+				[ $cmdopts -gt 12 ] && dbg $cmd "Sleeping $cmdopts secs ..."
 				cMR ONGOING :
 				sleep "${cmdopts:-51}"
 				;;
