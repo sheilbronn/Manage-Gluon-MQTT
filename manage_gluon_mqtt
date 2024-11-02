@@ -422,7 +422,7 @@ trap_EXIT() {
 	# 		cCWrite bridgedelta $_over
 	# 	}
 	# }
-	[ $bQuiet ] || cMqttReply OFF "END(ran=$(cRan),pid=$$${nSeconds:+,nSeconds=$nSeconds})"
+	[ -z $bQuiet ] && [ $(cRan) -gt 3 ] && cMqttReply OFF "END(ran=$(cRan),pid=$$${nSeconds:+,nSeconds=$nSeconds})"
 }
 trap trap_EXIT EXIT
 
@@ -1957,25 +1957,25 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				sLastSpeed="$(cCRead .lastspd 1)" && sLastSpeed=",*lastSpeedMb*:$sLastSpeed"
 				_spcmd="$( [ $bDoAll ] || cCRead .lastspdcmd 2)" # prefer the previous one for at most 2 days
 				[ -z "$_spcmd" -o $cmd = speedtest0 -o $cmd != "${cmd#"$_spcmd"}" ] && _spcmd=$cmd # make it at least as big as the previous max.
-				_u="15MB 30MB 70MB 150MB 250MB 300MB" # https://link.testfile.org/15MB
-				# _u="1MB 5MB 10MB 50MB 100MB 1GB" # http://speedtest.tele2.net/1MB
-				#_u="5MB 10MB 20MB 50MB 100MB 200MB 512MB 1GB" # http://ipv4.download.thinkbroadband.com/5MB
-				#_u="100M 1G 10G" # http://speedtest.belwue.net/100M
+				# _u="15MB 30MB 70MB 150MB 250MB 300MB" # https://link.testfile.org/15MB
+				# _u="1MB 5MB 10MB 50MB 100MB 512MB 1GB 2GB 5GB 10GB" # http://speedtest.tele2.net/1MB
+				_u="5MB 10MB 20MB 50MB 100MB 200MB 512MB 1GB" # http://ipv6.download.thinkbroadband.com/5MB.zip
+				# _u="100M 1G 10G" # http://speedtest.belwue.net/100M
 				[ "$_spcmd" = speedtest ] && _spcmd=speedtest0
 				_sht=${_spcmd#speedtest}
 				_url="$(e $_u | cut -d" " -f ${#_sht} )" # cut out the x'th element
-				if ! [ "$_url" ] ; then
+				if [ -z "$_url" ] ; then
 					cErr "speedtestcmd '$_spcmd' too excessive or fetching failed!"
 					cMR ERROR "Last result ${_val}s or file size ${filesize}B too small"
 					cCWrite .lastspdcmd speedtest0
 					cntnue
 				fi
-				_url="https://link.testfile.org/$_url" ;
+				# _url="https://link.testfile.org/$_url" ;
 				# _url="http://speedtest.tele2.net/$_url.zip" ;
-				# _url="http://ipv6.download.thinkbroadband.com:8080/$_url.zip"
-				# _url=http://ipv4.download.thinkbroadband.com/$_url.zip # 80.249.99.148
-				#_url=http://129.143.4.238/$_url
-				#_url=http://speedtest.belwue.net/$_url
+				_url="https://ipv6.download.thinkbroadband.com/$_url.zip"
+				# _url="http://ipv4.download.thinkbroadband.com:80/$_url.zip" # IPV4 doesn't work in Freifunk?
+				# _url="http://129.143.4.238/$_url"
+				# _url="http://speedtest.belwue.net/$_url"
 				dbg SPEEDTEST "Using $_url ..."
 				cMR ONGOING "Trying $_url"
 				cSsh "date -u +%s; wget $_spparam -O - $_url | wc -c ; date -u +%s"
@@ -1992,7 +1992,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 						_spcmd="${_spcmd}0" # try next bigger size
 						_s="Result ${_val}s too small for file size ${filesize}B"
 						dbg "$_s, redo with $_spcmd"
-						cMR ONGOING "$_s. Retrying larger file." "*speedMb*:*$speedMB*"
+						cMR ONGOING "$_s. Retrying larger file (*speedMb*:*$speedMB*)"
 						cCWrite .lastspdcmd "$_spcmd" # cache bigger file speedtest for next time
 						cStackCommand "${_spcmd}"
 					else
