@@ -145,8 +145,12 @@ _helper() {
 	}
 cGetOSData() {
 	cX
-	if ! _val="$(cCRead .os_data 1)" ; then
-		cSsh "cat /usr/lib/os-release" || return $? # cancel func
+	if ! _val="$(cCRead .os_datay 1)" ; then
+		f=/usr/lib/os-release
+		cSsh "cat $f" || ssh_data="PRETTY_NAME=unknown
+NAME=$(uname -o)
+ID=$(uname -s)" 
+		# || return $? # cancel func
 		if cData ; then
 			_val="$(cOut|awk -F= '
 				BEGIN { lim="{*os*:{" } END {printf "}}"}
@@ -159,7 +163,7 @@ cGetOSData() {
 	fi
 	p "$_val"
 	[ "$_val" ] # return 0 if non-empty
-	}
+  }
 
 cGetSitecode() { # $1=cachetimeout
 	cX
@@ -313,7 +317,7 @@ cGetGluonDomainsStarred() {
 	}
 
 cLogger() {
-		logger -p daemon.$1 -t "$sMe($$,$hTarget)" -- "$2"
+		logger -p daemon.$1 -t "$sMe($$,$hTarget)" -- "$2" || alias cLogger=": logger" # for systems without logger command	
 	}
 	cCmv logger || alias cLogger=": logger" # for systems without logger command
 	# set -x ; cLogger info "blabla" ; exit 99
@@ -493,7 +497,7 @@ cFilter() {  #  cFilter(filterexpr,moreparam), filterexpr is a jq or jsonfilter 
 	fi
 	# p "$_data"
   }
-# set -x ; cFilter .addr '{ "addr": "addr_value\\n" }' ; cOut ; exit 99
+  # set -x ; cFilter .addr '{ "addr": "addr_value\\n" }' ; cOut ; exit 99
 
 cGetMacVendor() { # $1=mac address
 	cX
@@ -832,8 +836,9 @@ cAddSuccHost() {
 	[ $ssh_rc = 0 ] && nHosts=$((nHosts+1)) && sHosts="$sHosts,$hTarget" # ... since we were successful
   }
 
-OPTIND=1   # reset to 1 in case getopts had been processed previously in this shell.
+# set -x ; cSsh() { ssh_data="$(eval "$*")" ; } ; cGetOSData ; exit 99
 
+# OPTIND=1   # reset to 1 in case getopts had been processed previously in this shell.
 # Initialize more variables
 bDoAll=""
 commands="" # commands="mesh-id"
@@ -965,9 +970,9 @@ else                                      # on rest-of-world (e.g. Raspi or (FIX
 fi
 
 fCollection=""
-fSleep=$dTmp/sl
 nHosts=0
 sHosts=""
+
 
 hAll="${hAll:-$LH}" # if none given, take localhost
 for hFull in $hAll ; do # do it for each given target node (or maybe just one)...
@@ -1105,7 +1110,6 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				_ran=$(cRan)
 				_s="${nMqttSleep}_${_ran}_$nSeconds secs"
 				dbg PERIODIC "Periodic wake-up: $_s"
-				# cR $fSleep && nMqttSleep="$(cat $fSleep)" && dbg PERIODIC "$_s,\$\$=$$" # injected a new sleep value
 				[ $_ran -ge $nSeconds ] && { echo PERIODIC TERMINATE "$_s" ; sleep 1 ; break ;}
 				_o=NOOP
 				[ $((_ran+nMqttSleep+1)) -ge $nSeconds ] && nMqttSleep=$((nSeconds-_ran)) && _o=FINAL &&
@@ -1393,7 +1397,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					cSsh "d=\$(date '+%F %T (produced on $hTarget)') && $_mpcmd -m \"\$d\" && $sMe -m - -c memory"
 					_msg="$cmd${cmdopts:+($cmdopts)} "
 					if [ $ssh_rc = 0 ] ; then
-						_msg="${_msg}already had MQTT listener, doing nothing."
+						_msg="${_msg}already had MQTT listener."
 						cMR OK "${_msg}"
 						cAddSuccHost
 					else
@@ -2146,11 +2150,12 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				;;
 			sleep)
 				cProbeNOMQTT
+				set -x
 				[ "$cmdopts" ] || cmdopts=51
 				[ "${cmdopts%%[0-9]*}" = "var" ] && n=${cmdopts#var} && cmdopts=$(printf %d "'$(cLower $hTarget)") && cmdopts=$(( (cmdopts-97)/4+4+ ${n:-0} ))
 				[ $cmdopts -gt 12 ] && dbg $cmd "Sleeping $cmdopts secs ..."
 				cMR ONGOING :
-				sleep "${cmdopts:-51}"
+				sleep "$cmdopts"
 				;;
 			ps|pstree)
 				cProbeNOMQTT
