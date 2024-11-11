@@ -96,8 +96,8 @@ sGrepSsid='.*'
 
 umask -S u=rwx,g=rx,o= # no rights for others
 
-if [ -t 1 -a ! "$NO_COLOR" ] ; then # only color code on terminals and not when NO_COLOR is set
-	F='\e[' # https://gist.github.com/bcap/5682077#file-terminal-control-sh
+if [ -t 1 -a ! "$NO_COLOR" ] ; then # only color code on terminals and not when NO_COLOR is set tbd: -a ! "$TERMUX_VERSION" 
+	F='\033[' # https://gist.github.com/bcap/5682077#file-terminal-control-sh
 	Yellow="${F}33m" ; Cyan="${F}36m" ; OnRed="${F}41m" ; Rst="${F}0m"
 	# Reg="${F}22;24m" ; RegF="${F}39m" ; RegB="${F}49m"  # Reset all coloring and style
 fi
