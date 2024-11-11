@@ -66,6 +66,7 @@ s() { cX ; [ -z "$1" -o "$1" = null -o "$1" = UNKNOWN ] && echo null || echo "*$
 
 # Initialize our own variables:
 bQuiet=
+bLogger=y
 bVerbose=${INIT_TRACE:+y} # set it to y to start debugging right from the start
 set -o noglob  # set noglob will limit security and escaping problems
 sMe=$(cTrd -c A-Za-z0-9_.- "${0##*/}") # script fails on purpose if its name contains white space
@@ -317,10 +318,9 @@ cGetGluonDomainsStarred() {
 	}
 
 cLogger() {
-		logger -p daemon.$1 -t "$sMe($$,$hTarget)" -- "$2" || alias cLogger=": logger" # for systems without logger command	
+		[ $bLogger ] && { logger -p daemon.$1 -t "$sMe($$,$hTarget)" -- "$2" || bLogger="" ; } # for systems without logger command	
 	}
-	cCmv logger || alias cLogger=": logger" # for systems without logger command
-	# set -x ; cLogger info "blabla" ; exit 99
+	# set -x ; cLogger infoxx "blabla" ; cLogger info "blub" ; exit 99
 
 cErr() {
 	cX
