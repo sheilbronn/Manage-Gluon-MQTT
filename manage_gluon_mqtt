@@ -90,12 +90,12 @@ sSsidBase=UNKNOWN # would be an an error
 sPubIfs= # will be determined on first call to every node, then cached
 nStartTime=$(date +%s)
 nMqttSleep=1199
-sHassPrefix=homeassistant/sensor
+sHassPrefix=homeassistant
 hPubMqtt=test.mosquitto.org
 basetopic=xyz  # default MQTT topic prefix
 sGrepSsid='.*'
 
-umask -S u=rwx,g=rx,o= # no rights for others
+umask -S u=rwx,g=rx,o= # no rights for any others
 
 if [ -t 1 -a ! "$NO_COLOR" ] ; then # only color code on terminals and not when NO_COLOR is set tbd: -a ! "$TERMUX_VERSION" 
 	F='\033[' # https://gist.github.com/bcap/5682077#file-terminal-control-sh
@@ -553,18 +553,19 @@ cMqtt() { # cMqtt(topic,msg, options) # expanding a leading / in topic to $sSite
 		#  passing $3 without quotes on purpose:
 		$cMPub ${h:+-h $h} ${sMID:+-i $sMID} -t "$_topic" -m "$2" -i "${sSite}_$hTarget" $_o  || dbg "$cMPub(host=$h): rc=$?"
 	done && [ "$_comp" -a "$bModified" ] && cCWrite ".$_f" "$2" # ... cache the message
+	true
   }
-  # set -x ; cMqtt ss/tt mm ; cMPub=mosquitto_pub ; export hMqtt=localhost ; cMqtt sss/ttt mm ; exit 99
-  # set -x ; cMPub=mosquitto_pub ; export hMqtt=localhost ; echo ==1== ; cMqtt hhh mmm -M ; echo ==2== ; cMqtt hhh mmm -M ; echo ==3== ; cMqtt hhh mm2 -M ; exit 99
+  # cDebug ; cMqtt ss/tt mm ; cMPub=mosquitto_pub ; export hMqtt=localhost ; cMqtt sss/ttt mm ; cExit99
+  # cDebug ; cMPub=mosquitto_pub ; export hMqtt=localhost ; echo ==1== ; cMqtt hhh mmm -M ; echo ==2== ; cMqtt hhh mmm -M ; echo ==3== ; cMqtt hhh mm2 -M ; cExit99
 
 cStarredToJSON() { # ...  replace double quotes by single quotes and stars by double quotes
 	awk -v a="${*:-$data}" 'BEGIN {gsub("\"","'\''",a) ; gsub("*","\"",a) ; print a }' # " => ' , then * => "
 	}
-	# set -x ; cStarredToJSON "{*a*:0}"  ; exit
+	# cDebug ; cStarredToJSON "{*a*:0}"  ; exit
 
 cMqttStarred() {   # cMS(expandableTopic,message,moreMosquittoOptions)
 		cX
-		[ "$hMqtt" -o "$homie" -o "$bMosqFile" ] && [ $cMPub != : ] &&
+		[ "$hMqtt" -o "$homie" -o "$bMosqFile" ] && [ "$cMPub" != : ] &&
 			cMqtt "$1" "$(cStarredToJSON "${2:-$data}")" "$3" 
 	}
 	alias cMS=cMqttStarred
@@ -633,7 +634,6 @@ cHassAnnounce() {
 	cX
 	dbg cHassAnnounce "$*"
     local _topicpart="${3%/set}" # if $3 ends in /set it is settable, but remove /set from state topic
-	local _command_topic_str="$( [ "$3" != "$_topicpart" ] && echo ",*cmd_t*:*~/set*" )"  # determined by suffix ".../set"
     # local _name="$(p "${2:+$2-}$4" | tr " " "-" | tr -d "[)()]/" )"
     local _dev_class="${6:-none}"
 	local _state_class
@@ -654,27 +654,35 @@ cHassAnnounce() {
 		local _dev_unique_id="${sMe2}$2" # remove the trailing process-id
 	    local _dev_name="$2"
     fi
-    local _topic="${sHassPrefix}/$1${_configtopicpart}$_jsonpath_red/$_dev_class/config"  # e.g. homeassistant/sensor/rtl433bresser3ch109/{temperature,humidity}/config
-    local _sensortopic="${1:+$1/}$_topicpart"
+	_topic="${sHassPrefix}/sensor" 
+    local _sensortopic="${1:+$1}${2:+/$2}$_topicpart"
 	# local *friendly_name*:*${2:+$2 }$4*,
 
-    local _icon_str=",*icon*:*mdi:mdi-$_dev_class*"  # mdi icons: https://cdn.materialdesignicons.com/5.4.55/
     local _unit_str=""
     # local _channelname="$_dev_name ${_dev_class}" # ${_dev_class^}"
    	local _channelname="$_dev_name $4" # take something meaningfull
     case "$_dev_class" in
-        temperature*)	_unit_str=",*unit_of_measurement*:*°C*"	; _state_class=measurement ;;
+        temperature*|dewpoint)	_unit_str=",*unit_of_measurement*:*°C*"	; _state_class=measurement 
+						_dev_class=temperature ;;
         humidity)		_unit_str=",*unit_of_measurement*:*%*"	; _state_class=measurement ;;
         counter)		_unit_str=",*unit_of_measurement*:*#*"	; _state_class=total ;; # UOM must have a content to trigger recognition as a number on OpenHab
-		clock)			_icon_str=",*icon*:*mdi:clock-outline*" ;;
-        switch)			_icon_str=",*icon*:*mdi:mdi-toggle-switch*" ;;
-		none)			_icon_str="" ;;
+		clock)			_icon_str="*icon*:*mdi:clock-outline*" ;;
+		wifi)			_icon_str="*icon*:*mdi:wifi*" 
+						_dev_class="" ;;
+        switch|binary_sensor)	_icon_str="*icon*:*mdi:toggle-switch*"
+						_topic="${sHassPrefix}/$_dev_class"  ; _dev_class=""
+						;;
+		string|none)			_icon_str="" ; _dev_class="" ;;
         # battery*)     _unit_str=",*unit_of_measurement*:*B*" ;;  # 1 for "OK" and 0 for "LOW".
     esac
+	_topic="$_topic/$1${_configtopicpart}$_jsonpath_red/config" # _dev_class removed
+	_icon_str="${_icon_str:-*icon*:*mdi:mdi-$_dev_class*}"  # mdi icons: https://cdn.materialdesignicons.com/5.4.55/
+	_command_topic_str="$( [ "$3" != "$_topicpart" ] && echo ",*cmd_t*:*$_sensortopic/set*" )"  # determined by suffix ".../set"
+
 	local _dev_model="$2$( [ "$2" != "$_devid" ] && echo " on channel $_devid" )"
     local _device_string="*device*:{*identifiers*:[*$_dev_unique_id*],*manufacturer*:*$sManufacturer*,*model*:*$_dev_model*,*name*:*$_dev_name*,*sw_version*:*$sMe*}"
-    local _msg="*name*:*$_channelname*,*~*:*$_sensortopic*,*state_topic*:*~*,$_device_string,*device_class*:*$_dev_class*"
-	_msg="$_msg,*unique_id*:*${sMe2}${_configtopicpart}$_jsonpath_red*${_unit_str}${_value_template_str}${_command_topic_str}$_icon_str${_state_class:+,*state_class*:*$_state_class*}"
+    local _msg="*name*:*$_channelname*,*state_topic*:*$_sensortopic*,$_device_string${_dev_class:+,*device_class*:*$_dev_class*}"
+	_msg="$_msg,*unique_id*:*${sMe2}${_configtopicpart}$_jsonpath_red*${_unit_str}${_value_template_str}${_command_topic_str},$_icon_str${_state_class:+,*state_class*:*$_state_class*}"
 
    	cMS "$_topic" "{$_msg}" "-r" # publish retained announcement
   }
@@ -711,18 +719,38 @@ hMulti() { # 1: topic, 2: name, 3: retained, 4: settable, 5: datatype, 6: unit, 
 		if [ $bDeleteAnnouncement ] ; then
 			cHassAnnounce "" "$ad_devname" "homie/$hTarget/$o" "$2"  ""  sensor
 		else
+			_sensor=sensor
 						hMeta $o/name "$2"
-			[ "$3" ] && hMeta $o/retained	"${3:-true}"  # default: true
-			[ "$4" ] && hMeta $o/settable	"${4:-false}" # default: false
-			[ "$5" ] && hMeta $o/datatype	"$5"
+			[ "$3" ] && hMeta $o/retained "${3:-true}"  # default: true
+			[ "$4" ] && hMeta $o/settable "${4:-false}" # default: false
+			[ "$5" ] && {
+				hMeta $o/datatype "$5" 
+				[ "$5" = boolean ] && _sensor=binary_sensor
+				[ "$5" = integer ] && _sensor=counter
+			}
 			[ "$6" ] && hMeta $o/unit	"$6"
 			[ "$7" ] && hMeta $o/format	"$7"
 
-			cHassAnnounce "" "$ad_devname" "homie/$homie/$o$( [ "$4" = true ] && echo "/set" )" "$2" "" sensor
+			cHassAnnounce "" "$ad_devname" "homie/$homie/$o$( [ "$4" = true ] && echo "/set" )" "$2" "" $_sensor
 			# cHassAnnounce "" "$ad_devname" "$sSite/$hTarget/statistics"         "Public Wifi RX bytes"   "value_json.traffic.rx" "counter"
 			# cHassAnnounce "$sSite" "$ad_devname" "$hTarget/$cmd"    "Public Wifi TX bytes"   "value_json.traffic.tx" "counter"
 		fi
 	}
+	# BEGIN_DELETE
+	cDebug && { 
+		# mosquitto_sub   -v  -t homie/# -t homeassistant/# -v -v -v  -W 3 --retained-only --remove-retained
+		cSEP HMULTI
+		homie=annotest
+		hMulti radio/channel24 "Radio channel 2.4" false "" integer ""  "1:13" 
+		cSEP HASSANNOUNCEs
+		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/state/set"    "Public SSID State"   "" "switch"
+		cHassAnnounce "$sSite" "$ad_devname" "$1/radio/channel24/set" "Radio channel 2.4GHz" "" "counter"
+		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssidshort" "Public SSID Short"  "" "string" # MUST: String statt wifi, kein /set
+		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssid"      "Public SSID"        "" "wifi"
+		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/localclients" "Local Clients Count" "value_json.count" "counter" # 5: value_json.count
+		cExit99
+	}
+	# END_DELETE
 
 cBothMqtt() {
 		cMS		"/$1" "$2" "$3"
@@ -749,9 +777,9 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 		_rc=$?
 		[ "$_rc" -ne 0 -a "$_rc" -ne 27 ] && dbg "Removal of retained topics below $_top returned $_rc"
 
-	    _topic="$sHassPrefix/#" # deletes eveything below "homeassistant/sensor/..." !
-		dbg "Removing all announcements matching $_topic ... (timeout ok)"
-		cMqttSub -W 1 -t "$_topic" --remove-retained --retained-only >$fNul
+	    _topic="$sHassPrefix" # deletes eveything below "homeassistant/..." !
+		dbg "Removing announcements matching $_topic/... (timeout ok)"
+		cMqttSub -W 1 -t "$_topic/sensor/#" -t "$_topic/switch/#" --remove-retained --retained-only >$fNul
 		_rc=$?
 		[ "$_rc" -ne 0 -a "$_rc" -ne 27 ] && dbg "Removal of retained topics below $_topic returned $_rc"
 		cMS "$sSite/$1/state" "{*event*:*cleaned*,*note*:*removed all announcements starting with $_topic*}"
@@ -767,7 +795,7 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 			{ dbg announce_disco "Warning: No OS Data obtainable" ; return 1 ;} # abort
 
 		dbg announce_disco ": WILL ANNOUNCE ... (arg1=$1,arg2=$2"
-		ad_devname="$(p "$1" | awk '{print toupper(substr($i,1,1)) substr($i,2) }' )"
+		ad_devname="$1" # "$(p "$1" | awk '{print toupper(substr($i,1,1)) substr($i,2) }')"
 		ad_fwid="$(cCRead .os_id 9)"
 		ad_fwname="$(cCRead .os_name 9)"
 		ad_fwversion="$(cCRead .os_pretty_name 9)"
@@ -775,11 +803,12 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 		dbg announce_disco "($1,$2): announcing ad_devname=$ad_devname,ad_fwname=$ad_fwname,ad_fwversion=$ad_fwversion,ad_impl=$ad_impl"
 
 		# https://www.home-assistant.io/docs/mqtt/discovery/
+		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/state/set"    "Public SSID State"   "" "switch"
 		cHassAnnounce "$sSite" "$ad_devname" "$1/radio/channel24/set" "Radio channel 2.4GHz" "" "counter"
 		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssidshort/set" "Public SSID Short"  "" "wifi"
 		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssid"      "Public SSID"        "" "wifi"
 		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/localclients" "Local Clients Count" "value_json.count" "counter" # 5: value_json.count
-		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/state/set"    "Public SSID State"   "" "switch"
+		# cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssidshort2/set"    "Public SSID StateTesti2"   "" "wifi"
 		# cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/lastdate"    "Last date wifi check" "" "clock"
 	fi
 	hMeta homie "3.0.1"
@@ -2357,7 +2386,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					awk '/scan report/ { ip=substr($6,2,length($6)-2) ; printf "%s{\"IpAddr\":\"%s\",\"host\":\"%s\"", lim, ip, gensub(/\..*/,"","g",$5) }
 						/OS details:/ { gsub("OS details: ",""); printf ",\"OS\":\"%s\"}\n", $0 ; lim="," }
 						/MAC Address:/ { gsub("MAC Address: ",""); printf ",\"mac\":\"%s\",\"vendor\":\"%s\"}\n", gensub(" .*","",0) , gensub(".* (","",0,gensub(")$","",0)) ; lim="," }
-						/Failed to / { printf "*details*:*%s (or nmap rights?)*", $0 ; exit 99 }
+						/Failed to / { printf "*details*:*%s (or nmap rights?)*", $0 ; cExit99 }
 					')"
 				rc=$?
 				if [ $rc = 0 ] ; then
