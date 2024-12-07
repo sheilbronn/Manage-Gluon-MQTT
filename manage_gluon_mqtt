@@ -2046,24 +2046,40 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				fi
 				;;
 			status)
-				cSsh "cat /proc/uptime /proc/loadavg"
-				_r=$(cRan)
+				cSsh "cat /proc/uptime /proc/loadavg" || { cErr :;} 
 				cEcho
-				cEcho $sMeAge $_r
-				data="$(cOut|awk -v v=$sMeAge -v r=$_r '
+				data="$(cOut|awk -v v=$sMeAge -v r=$(cRan) '
 					NR==1 { uptime=sprintf("%d", $1) }
 					NR==2 { printf "{*uptime*:%s,*load*:%.2f,*version*:*%s*,rantime=%d}",uptime,$1,v,r }' )" # uptime in seconds
 				cMS /$cmd
 				;;
-			printmap)
+			printmap) 
+				# for non-Gluon systems, probably gone soon
 				cProbeGET
-				cSsh "print_map.sh" || cntnue # Freifunk node info as JSON for non-Gluon systems, e.g. from earlier Ulm
+				cSsh print_map.sh || { cErr :;cntnue;} # Freifunk node info as JSON for non-Gluon systems, e.g. from earlier Ulm firmware
 				cOut|json_pp
 				cMS /$cmd "$ssh_data"
 				;;			
+			localclientscount)  
+				# works  for ffmuc only currently
+				# wget https://gw04.ext.ffmuc.net/nodelist.json
+				# jsonfilter -e '@.nodes[@.name="Ares"].status.clients' < n.json
+				cProbeGET && cCmv jq || { cStackCommand localclients && cntnue ; }
+				_w="https://gw04.ext.ffmuc.net/nodelist.json"
+				_f=$dCache/nodelist.json
+				# if no file or older then 1 minute then get a new one
+				[ -f $_f ] && [ $(date +%s -r $_f) -gt $(( $(date +%s) - 60 )) ] && { dbg "$_f" "is fresh" ; : ; } ||
+					{ dbg "$_f" "not fresh" ; wget ${bQuiet:+-q} $_w -O - | jq . - > $_f ;} || { cMR ERROR "wget failed" ; cntnue ;}
+				# extract the clients count from the json file where name is hTarget
+				_n=$(jq -r ".nodes[] | select( (.name|ascii_downcase) ==\"$hTarget\") | .status.clients" < $_f)
+				[ ${_n:-0} -gt 0 ] && { dbg COUNT "$_n" ; cStackCommand localclients ; } && cntnue # if there are clients, then get them
+				[ "$_n" = 0 ] && cEcho "$_n" || cErr "No client count found for $hTarget" 
+				cMS /publicwifi/localclients "{ *count*:${_n:-null}, *localclients*:[],*node*:*$hTarget* }" $([ "$cmdopts" ] || e "-M")
+				[ $bWorkAllClients ] && nLocClients=$((nLocClients + _n))
+				;;
 			localclients)
 				cProbeGET
-				[ ! -d $dGluon -a $hFull = localhost ] && { cMR ERROR "$cmd on Gluon" ; cntnue ;}
+				[ ! -d $dGluon -a $hFull = localhost ] && { ! [ $bWorkAllClients ] && cMR ERROR "$cmd on Gluon" ; cntnue ;}
 				fCollection=$dTmp/clientcollection
 				touch $fCollection && chmod g+w $fCollection
 				fClients=$fCollection.$hTarget
