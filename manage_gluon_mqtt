@@ -387,7 +387,7 @@ cPidPName() { # print name of parent process. If $2 is set, parent name must als
 	# cDebug ; cPidPName $$ ; cSEP ; cPidPName 1 ; cSEP ; cPidPName 9651 ; cExit99
 
 #  DELETE_BEGIN#
-cKillChilds() { # $1=pid, $2=parent name, $3=child name using data from /proc
+cKillChilds() { # $1=pid, $2=optional parent name, $3=child name using data from /proc ; similar to pkill
 	cX
 	[ "$1" -a -d /proc/$1 ] || return 1
 	[ "$2" ] && { [ $2 = "$(awk '$1=="Name:" {print$2}' /proc/$1/status )" ] || return 1 ; }		
@@ -400,6 +400,7 @@ cKillChilds() { # $1=pid, $2=parent name, $3=child name using data from /proc
 	return $_rc
 	}
 	# cDebug ; bVerbose=y ; cKillChilds $1 ; cSEP ; cKillChilds $1 xxxx ; cSEP ; cKillChilds $1 ${2:-autossh} ; cExit99
+	: || cKillChilds 9999
 #  DELETE_END#
 
 for d in /var/log $TEMP $TMPDIR /tmp /data/data/com.termux/cache ; do # find a suitable writable dir. Prefer /var/log over /tmp on openhabian (because of zram).
@@ -574,7 +575,7 @@ cMqttReply() { # $1=status $2_reply $3=moreopts|-M. If $2 is empty, use "$_cmd($
 		# If $2 ends in a colon, append ssh_rc and ssh_msg.
 		cX
 		local _cmd="${cmd%%[0-9]*}" # clean any trailing digits from the MQTT command
-		local _ms="${2%:}" # colon removed
+		local _ms="${2%:}" # remove trailing colon
 		_ms="${_ms:-$_cmd($cmdopts)}" # if $2 empty, only use "$_cmd($cmdopts)"
 		[ "$1" = ERROR ] && _ms="$_ms failed:" # if $1=ERROR  and  $2,$3 empty
 		if [ "$_ms" != "${_ms%:}" ] ; then
@@ -588,6 +589,7 @@ cMqttReply() { # $1=status $2_reply $3=moreopts|-M. If $2 is empty, use "$_cmd($
 	alias cMR=cMqttReply
 	# cDebug ; for t in "" ":" ; do cMR ONGOING "Rushing$t" ; cSEP $t ; cMR OK "Okidoki$t" ; cSEP $t ; cMR ERROR "$t" ; cSEP ===$t ; done ; set +x ; cExit99
 	# cDebug ; cMR ERROR ; set +x ; cExit99
+	# cDebug ; cMR ONGOING : ; cSEP ; cExit99
 
 cMqttBeacon() {
 	_pubcmd="$cMPub -h $hPubMqtt" # caution: Freifunk/Gluon seems to need IPV6 connectivity, not all brokers have it!
@@ -1161,7 +1163,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				# we'll make it restart in a loop, if it ends - for now.
 				_secs=$((nSeconds-nBridgeDelta)) # make sure it ends shortly after the bridge
 
-				awk -v f=$fPipe -v t=$_secs -v pid=$$ 'BEGIN { cmd="while [ -d /proc/" pid " ];do ubus -t " int(t/4+99) " listen ;rc=$? ;echo \"{ RESTARTING($rc," int(t/2+1) ") }\" ;done"
+				awk -v f=$fPipe -v t=$_secs -v pid=$$ 'BEGIN { cmd="while [ -d /proc/"pid" ];do ubus -t " int(t/4+99) " listen ;rc=$? ;echo \"{ RESTARTING($rc," int(t/2+1) ") }\" ;done"
 						while (cmd|getline line) {
 							if (line~/^\{/) { print "UBUS LISTEN "line>>f
 								# ; print "UBUS LISTEN "line>>"/tmp/u"
