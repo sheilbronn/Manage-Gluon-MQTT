@@ -11,9 +11,9 @@
 # Some fixed constants and preliminary (fixed) settings ...
 # semi-hungarian notation for vars: i(n)teger, (s)tring, (d)irectory, (c)ommand, (b)oolean usage, (f)ile, (h)ost, (_) local meaning only
 
-# manage_gluon_mqtt -m localhost -v -c noop,ignore,echo,date,loop,filecopy,wifidown,wifiup,wifistatus,limit,ffcond,gluonreconfigure,site,gluondata,speedtest,status,printmap,localclients,nodeinfo,neighbours,statistics,showsite,memory
+# manage_gluon_mqtt -m localhost -v -c noop,ignore,echo,date,loop,filecopy,wifidown,wifiup,wifistate,limit,ffcond,gluonreconfigure,site,gluondata,speedtest,state,printmap,localclients,nodeinfo,neighbours,statistics,showsite,memory
 
-nWifiSleep=7 # seconds to sleep after "wifi up" 
+nWifiSleep=9 # seconds to sleep after "wifi up" 
 dGluon=/lib/gluon
 fOpenWrt=/etc/openwrt_release
 sSite="" #  will be set to something like "ffmuc".... but could also be frozen here
@@ -50,6 +50,8 @@ fi
 alias cX="local - && set +x" # stop any verbosity locally
 alias cS="sleep"
 alias cIsVerbose='[ $bVerbose ]'
+alias cIsCmd='test "$cmd" ='
+alias cIsOpt='test "$cmdopts" ='
 cTrd() { cX ; _r="$(p "${3:-$2}" | tr -d ${3:+$1} "${3:+$2}$([ "$3" ] || p "$1")" )" ; echo "$_r" ; [ "$_r" = "${3:-$2}" ] ;} # delete some chars or their complement (-c) from a string
 cR() { [ -r "$1" ] ;} # test if a file is readable
 # cR() { cX ; [ "$2" ] && c=echo || c=: ; [ -r "$1" ] && $c "$1(OK)" || $c "$1(MISS)" ;} # test if a file is readable, output to stdout if $2 is set, e.g. -v
@@ -150,9 +152,8 @@ _helper() {
 	}
 cGetOSData() {
 	cX
-	if ! _val="$(cCRead .os_datay 1)" ; then
-		f=/usr/lib/os-release
-		cSsh "cat $f" || ssh_data="PRETTY_NAME=unknown
+	if ! _val="$(cCRead .os_data 1)" ; then
+		cSsh "cat /usr/lib/os-release" || ssh_data="PRETTY_NAME=unknown
 NAME=$(uname -o)
 ID=$(uname -s)" 
 		# || return $? # cancel func
@@ -358,11 +359,11 @@ cEcho() { # log and output stuff (in color), unless to be quiet
 
 dbg() { # output its args to stderr if verbosity set
 	cX
-	 [ $bVerbose ] && {
+	[ $bVerbose ] && {
 		{ [ "$#" = 2 ] && ECHO "$Yellow$1:$Rst" "$2" || ECHO "${Yellow}debug$Rst" "$*" ;
 			[ $bVeryVerbose ] && cLogger info "$*" ;} 1>&2
 		: # return true if verbose	
-	 }
+	}
 	}
 
 cShorten() { # shorten string $1 to at most $2 chars plus some ellipses
@@ -414,6 +415,7 @@ done
 cd $dTmp
 
 trap_EXIT() {
+	set +x
 	dbg TRAP_EXIT "cleaning up $dTmp (rc=$?)" && ls -lA "$dTmp" | tail -n +2
 	cd "$dCache" || exit 2
 	# [ $bVerbose ] && ls -alt "$dCache" | head -15
@@ -536,7 +538,7 @@ alias cProbeGET="cProbe GET || cntnue"
 alias cProbeSET="cProbe SET || cntnue" # FIXME: logic not implemented consistently
 alias cProbeNOMQTT="{ cProbe NOMQTT || cntnue ;}" # FIXME: covered by catchall
 
-cStackCommand() { cX ; cmdsToDo="$1${cmdsToDo:+,$cmdsToDo}" ; dbg STACKCOMMAND "$1 ($cmdsToDo)" ; : ;}
+cStackCmd() { cX ; cmdsToDo="$1${cmdsToDo:+,$cmdsToDo}" ; dbg STACKCOMMAND "$1 ($cmdsToDo) from $cmd" ; : ;}
 cIsNonGluon() { [ "$(cCRead .nodeip 9)" = NONGLUON ] ;} # return 0 if non-gluon, 1 if gluon or unknown # FIXME: not strong enough for detection
 
 bMosqFile=$( cR $HOME/.config/$MP && echo yes)
@@ -745,11 +747,11 @@ hMulti() { # 1: topic, 2: name, 3: retained, 4: settable, 5: datatype, 6: unit, 
 		homie=annotest
 		hMulti radio/channel24 "Radio channel 2.4" false "" integer ""  "1:13" 
 		cSEP HASSANNOUNCEs
-		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/state/set"    "Public SSID State"   "" "switch"
-		cHassAnnounce "$sSite" "$ad_devname" "$1/radio/channel24/set" "Radio channel 2.4GHz" "" "counter"
-		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssidshort" "Public SSID Short"  "" "string" # MUST: String statt wifi, kein /set
-		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssid"      "Public SSID"        "" "wifi"
-		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/localclients" "Local Clients Count" "value_json.count" "counter" # 5: value_json.count
+		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/state/set"    "Public SSID State"   "" switch
+		cHassAnnounce "$sSite" "$ad_devname" "$1/radio/channel24/set" "Radio channel 2.4GHz" "" counter
+		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssidshort" "Public SSID Short"  "" string # MUST: String statt wifi, kein /set
+		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssid"      "Public SSID"        "" wifi
+		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/localclients" "Local Clients Count" "value_json.count" counter # 5: value_json.count
 		cExit99
 	}
 	# END_DELETE
@@ -764,7 +766,7 @@ cEchoPub() {
 		cBothMqtt "$cmd/$1" "${3:-$2}"
 	}
 
-announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are to be deleted.
+cDisco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are to be deleted.
 	# NB: $hTarget and optionally $bDeleteAnnouncement must have been set!
 
 	local -
@@ -790,30 +792,30 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 		[ "$sSshUser" = LOCAL ] && { hLine \$stats/uptime "$(cCut . </proc/uptime)" ;}
 		# cHomieReady "$1" ; echo DEBUG: $?
 		if [ "$_nDay" ] && [ "$(date +%j)" -eq "$_nDay" ] && cHomieReady "$1" ; then
-			dbg announce_disco ": skip announcements, homie state is ready... " # (re-)announce ONLY IF restart or new day or necessary
+			dbg cDisco ": skip announcements, homie state is ready... " # (re-)announce ONLY IF restart or new day or necessary
 			return 0
 		fi
 		os_data="$(cGetOSData)" ||
-			{ dbg announce_disco "Warning: No OS Data obtainable" ; return 1 ;} # abort
+			{ dbg cDisco "Warning: No OS Data obtainable" ; return 1 ;} # abort
 
-		dbg announce_disco ": WILL ANNOUNCE ... (arg1=$1,arg2=$2"
+		dbg cDisco ": WILL ANNOUNCE ... (arg1=$1,arg2=$2"
 		ad_devname="$1" # "$(p "$1" | awk '{print toupper(substr($i,1,1)) substr($i,2) }')"
 		ad_fwid="$(cCRead .os_id 9)"
 		ad_fwname="$(cCRead .os_name 9)"
 		ad_fwversion="$(cCRead .os_pretty_name 9)"
 		ad_impl="$(cCRead .os_id 9)"
-		dbg announce_disco "($1,$2): announcing ad_devname=$ad_devname,ad_fwname=$ad_fwname,ad_fwversion=$ad_fwversion,ad_impl=$ad_impl"
+		dbg cDisco "($1,$2): announcing ad_devname=$ad_devname,ad_fwname=$ad_fwname,ad_fwversion=$ad_fwversion,ad_impl=$ad_impl"
 
 		# https://www.home-assistant.io/docs/mqtt/discovery/
-		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/state/set"    "Public SSID State"   "" "switch"
-		cHassAnnounce "$sSite" "$ad_devname" "$1/radio/channel24/set" "Radio channel 2.4GHz" "" "counter"
-		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssidshort/set" "Public SSID Short"  "" "wifi"
-		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssid"      "Public SSID"        "" "wifi"
-		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/localclients" "Local Clients Count" "value_json.count" "counter" # 5: value_json.count
-		# cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssidshort2/set"    "Public SSID StateTesti2"   "" "wifi"
-		# cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/lastdate"    "Last date wifi check" "" "clock"
+		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/state/set"    "Public SSID State"   "" switch
+		cHassAnnounce "$sSite" "$ad_devname" "$1/radio/channel24/set" "Radio channel 2.4GHz" "" counter
+		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssidshort/set" "Public SSID Short"  "" wifi
+		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssid"      "Public SSID"        "" wifi
+		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/localclients" "Local Clients Count" "value_json.count" counter # 5: value_json.count
+		# cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssidshort2/set"    "Public SSID StateTesti2"   "" wifi
+		# cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/lastdate"    "Last date wifi check" "" clock
 	fi
-	hMeta homie "3.0.1"
+	hMeta homie 3.0.1
 	hMeta state init
 	hMeta name  "$ad_devname"
 
@@ -867,7 +869,7 @@ announce_disco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are 
 	bDeleteAnnouncement="" # end of side effect
 	cCWrite .AnnounceDay "$(date +%j)" # support reducing re-announcements to only once per day
   }
-  # cDebug ; homie=testiio ; announce_disco "$homie" ; cExit99
+  # cDebug ; homie=testiio ; cDisco "$homie" ; cExit99
 
 cAddSuccHost() {
 	[ $ssh_rc = 0 ] && nHosts=$((nHosts+1)) && sHosts="$sHosts,$hTarget" # ... since we were successful
@@ -920,7 +922,7 @@ do
 		;;
 	E) nMaxGoneDays="$(cSaniNum)" || exit 1
 		;;
-    v) [ $bVerbose ] && bVeryVerbose=yes && nMqttSleep=60 # not to small to allow for gathering status in between !
+    v) [ $bVerbose ] && bVeryVerbose=yes && nMqttSleep=60 # not to small to allow for gathering state in between !
 		[ $nMqttSleep -gt 295 ] && nMqttSleep=295 # reduce to max 5 minutes when verbose
 		bVerbose=yes
 		dbg STARTUP "dUser=$dUser  dTmp=$dTmp ($(date +%T))"
@@ -989,8 +991,8 @@ if [ "$homie" -o "$hMqtt" -o "$bMosqFile" ] ; then # enable MQTT
 	: dbg "MQTT commands real."
 else
 	dbg2 "MQTT commands aliased."
-	alias cMS=": cMS"
-	alias cMR=": cMR"
+	alias cMS="dbg cMS"
+	alias cMR="dbg cMR"
 	alias hLine=": hLine"
 	alias hMeta=": hMeta"
 	alias cMqttReply=": cMqttReply"
@@ -1009,7 +1011,6 @@ fi
 fCollection=""
 nHosts=0
 sHosts=""
-
 
 hAll="${hAll:-$LH}" # if none given, take localhost
 for hFull in $hAll ; do # do it for each given target node (or maybe just one)...
@@ -1041,7 +1042,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 			ssh_cmd="$*"
 			ssh_data="$(cTrd '`' "$_r")"
 			if [ $ssh_rc = 255 ] ; then
-				ssh_msg="UNREACHABLE"
+				ssh_msg=UNREACHABLE
 			else
 				_n="$(cCRead .sshcnt)"
 				cCWrite .sshcnt $((_n+1))
@@ -1066,7 +1067,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 	if [ "$sUciQuery" ] ; then
 		cSsh "uci show $sUciQuery" || cErr "$hFull: $ssh_cmd:" && [ $ssh_rc = 127 ] && cntnue
 		[ $bDoAll ] && cEcho && cntnue # for debugging
-		data="$(cOut|cut -d= -f2)"
+		data="$(cOut|sed -n -e "{s/.*=//;s/'//g;p}")"
 		if ! [ "$sUciVal" ] ; then # query only = nothing to be written
 			cEcho "$data"
 		elif expr "$data" : ".*\n" >$fNul ; then
@@ -1078,9 +1079,9 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 	else
 		cmdsToDo="$commands"
 		if e "$cmdsToDo" | grep -qw bridge ; then # treat MQTT bridge as a special case
-			_p="$(cd $dCache && find . -mindepth 2 -mtime -1 -name p |head -1|cSanitize)"
+			_p="$(cd $dCache && find . -mindepth 2 -mtime -1 -name p |head -1|tr -cd 0-9)"
 			if [ $_p ] ; then
-				_p=${_p#./} ; _p=${_p%/p}
+				# _p=${_p#./} ; _p=${_p%/p}
 				if cPidValid $_p ; then
 					cUbus send $sMe "{\"debug\":\"$$:skipbridgestart:other=$_p\"}"
 					cmd=bridge cErrAndExit "$$: Another bridge ($_p) probably still running!"
@@ -1129,7 +1130,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 			cLogger info "ONGOING: bridge startup (for $nSeconds(-$nBridgeDelta) sec,$(cR $fOpenWrt && echo "OpenWrt"),gap=$nGap)"
 			dbg SUBSCRIPTION "\"$hMqtt $_subscriptions\", homie=$homie, fPipe=$fPipe"
 
-			_last_will_options="--will-qos 1 --will-topic $sSite/$hTarget/bridge/log --will-payload {\"status\":\"OFF\",\"alive\":0} --will-retain"
+			_last_will_options="--will-qos 1 --will-topic $sSite/$hTarget/bridge/log --will-payload {\"state\":\"OFF\",\"alive\":0} --will-retain"
 
 			cMqttSub -F "MQTT %t %p" ${nSeconds:+-W $((nSeconds+72))} -R $_subscriptions $_last_will_options 2>&1 |
 					awk -v f=$fPipe 'NR==1&&!/^MQTT/{print "PERIODIC TERMINATE MQTT:"$0>f ; exit 1} $1=="MQTT"{print>f;fflush(f)}' & #  prevent multi-line commands thus avoiding injections
@@ -1236,7 +1237,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 		fi
 		# NB: OpenHab Homie autodiscovery didn't like uppercase characters at the beginning...
 		[ "$homie" ] && os_data="$(cGetOSData)" && homie="$(cLower $hTarget)" &&  # change "yes" to $hTarget
-			 [ "$cmdsToDo" != "homie-delete" ] && announce_disco "$homie" # FIXME: check handling/interpretation of "homie-delete"
+			 [ "$cmdsToDo" != "homie-delete" ] && cDisco "$homie" # FIXME: check handling/interpretation of "homie-delete"
 
 		dbg LOOP "START (cmdsToDo=$cmdsToDo)"
 		while [ "$cmdsToDo" ] ; do
@@ -1295,8 +1296,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					# FIXME Reenable:
 					[ "$bVerbose" -a "$cmd" != FINAL -a "$cmd" != TERMINATE ] && 
 						cMS /bridge/state "{*TelePeriod*:$nMqttSleep}" # FIXME: nMqttSleep might have been modified in subshell
-					[ "$cmd" = PULSE ] && cStackCommand echo+pulse
-					[ "$cmd" = TELE  ] && { cIsNonGluon && cStackCommand echo+BRIDGEALIVE_$cmdopts || cStackCommand wifistatus,statistics ;}
+					[ "$cmd" = PULSE ] && cStackCmd echo+pulse
+					[ "$cmd" = TELE  ] && { cIsNonGluon && cStackCmd echo+BRIDGEALIVE_$cmdopts || cStackCmd wifistate,statistics ;}
 					[ "$cmd" = TERMINATE ] && cmd=bridge && { 
 						: cMR OFF "Terminating $sMe ($cmdopts,${nSeconds}s)" # FIXME: remove cMR if really not needed
 						[ $nSeconds ] && [ $(date +%s) -ge $((nStartTime+nSeconds)) ] && 
@@ -1322,8 +1323,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 						cmd="${cmd%/get}"
 						# cmd="$(p "$cmd" | awk -v FS=/ 'NF && NF-1 { print $3 ( $4 && $4=="get" ? "" : "/" $4 ) ( $5 && $5=="get" ? "" : "/" $5 ) }' )"
 						case "$cmd" in
-						localclients*|publicwifi/localclients*)				cmd=localclients ;;
-						publicwifi/ssidshort/set) cmd="wifissid_$cmdopts" ;;
+						localclients*|publicwifi/localclients*)	cmd=localclients ;;
+						publicwifi/ssidshort/set) cmd="wifissid" ;;
 						radio/channel24/set)		cmd=channel24 ;;
 						publicwifi/state/set) 	case "$cmdopts" in
 												true|ON|1)	cmd=wifiup ;;
@@ -1331,11 +1332,11 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 												*) false ;;
 												esac || cErr "Illegal cmdopts=$cmdopts"
 											;;
-						wifistatus*|radio/channel24|publicwifi/state|publicwifi/ssidshort|publicwifi/ssid) cmd="wifistatus" ;;
+						wifistat*|radio/channel24|publicwifi/state|publicwifi/ssidshort|publicwifi/ssid) cmd=wifistate ;;
 						wifiup*|wifidown*|echo*|loop*|sSite*) cmd="${cmd%\*}"  ;;
 						gluon-data*)	cmd=gluondata ;;
 						machine-data*)	cmd=machine-data ;;
-						wifissid*)	cmd="wifissid_$cmdopts" ;;
+						wifissid*)	cmd="wifissid" ;;
 						esac
 						;;
 					*) cmd="$(p "$cmd" | awk -v FS=/ 'NF && NF-1 {print ($(NF-1)) }' )"
@@ -1361,7 +1362,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				     cmd="$_c"
 			fi		
 			    cmd="$(p "$cmd" 	| cSanitize)" # for security reasons
-			cmdopts="$(p "$cmdopts" | cSanitize)"
+			cmdopts="$(p "$cmdopts" | tr -cd "A-Za-z0-9_.%, /-" )"
 			dbg2 COMMAND "$cmd ($cmdopts) (REMAIN: $cmdsToDo)"
 			case "$cmd" in
 			help) # really hacky implementation: grepping this script code for singular case branches that look like a implemented command ....
@@ -1380,8 +1381,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 			bridge|noop|ignore|echo|date)
 				cProbeGET
 				dbg COMMAND "cmd=$cmd,$cmdopts,($(date +%T))"
-				[ $cmd = echo ] && { _msg="$(cExpand "${cmdopts:-%s}")" ; cEcho "$_msg" ; cMR OK "Command $cmd($_msg) by $(cat $fHost) at $(date +"%T") (V=$sMeAge,NPID=$(cPid))" ; [ "$cmdopts" = TESTERROR ] && cErr "Test error" ;}
-				[ $cmd = date ] && { _msg="$(date +"%F %T")" ; cEcho "$_msg" ; cMR OK "Command $cmd($cmdopts): $_msg" ;}
+				cIsCmd echo && { _msg="$(cExpand "${cmdopts:-%s}")" ; cEcho "$_msg" ; cMR OK "Command $cmd($_msg) by $(cat $fHost) at $(date +"%T") (V=$sMeAge,NPID=$(cPid))" ; cIsOpt TESTERROR && cErr "Test error" ;}
+				cIsCmd date && { _msg="$(date +"%F %T")" ; cEcho "$_msg" ; cMR OK "Command $cmd($cmdopts): $_msg" ;}
 				;;
 			bridgestop) # inject a command into p to stop a running bridge
 				cProbeNOMQTT
@@ -1399,7 +1400,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				cMqttBeacon
 				;;
 			dns|dnslocal)
-				[ $cmd = dnslocal ] && _g="gluon-wan " && cProbeNOMQTT
+				cIsCmd dnslocal && _g="gluon-wan " && cProbeNOMQTT
 				cProbeNOMQTT # cProbeGET
 				cmdopts=${cmdopts:-openwrt.org}
 				if cSsh "${_g}nslookup $cmdopts" ; then
@@ -1468,7 +1469,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					# dbg AUTOSSH "pid=$nPidAutoSSH for: $hAll"
 					cS 10
 					trap_AUTOSSH() {
-						cmd=autossh && cMR ONGOING "Exiting."
+						cmd=autossh
+						cMR ONGOING "Exiting."
 						jobs
 						wait $nPidAutoSSH
 						kill $nPidAutoSSH 2>$fNul || :
@@ -1482,7 +1484,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 			loop|check)
 				cProbeGET
 				_opts=  #  empty _opts signals "check" command
-				[ $cmd = check ] && cmdopts="" || {
+				cIsCmd check && cmdopts="" || {
 					_opts=$(cSaniNum "${cmdopts:-5}") && [ $_opts -ge 1 -a $_opts -le 99 ]  ||
 							{ cMR ERROR "$cmd: Invalid parameter '$cmdopts'" ; cntnue ;} # "$cmd: Invalid parameter '$cmdopts'"
 				}
@@ -1508,11 +1510,11 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				cSsh -v "id -nu"
 				_user="$(cOut|cSanitize)"
 				[ "$_user" ] || { cErr "user@$hFull could not be determined. Debug your SSH setup:" ; cntnue ;}
-				_lxlvl=1 # determine "Linux level", 0=Basic/1=GNU_Linux-like/2=e.g. Debian-like/3=OpenWrt (implied UCI)/4=Gluon
+				nLvl=1 # determine "Linux level", 0=Basic/1=GNU_Linux-like/2=e.g. Debian-like/3=OpenWrt (implied UCI)/4=Gluon
 
 				if [ "$hFull" != localhost -o "$(dirname "$0")" != /sbin ] && [ "$_user" = root ] ; then
 					cEcho "Remote targetuser is $_user: Will try to copy this script to /sbin later..."
-					cStackCommand filecopy
+					cStackCmd filecopy
 					fFile="$0"
 				fi
 
@@ -1538,22 +1540,22 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					cEcho "$MP already installed on $hFull..."
 				else
 					cEcho "$hFull: $MP not found .. determining install cmd .."
-					cSsh "command -v opkg || command -v apt || echo nothing" 2>$fNul
+					cSsh "command -v opkg || command -v apt || echo NONE" 2>$fNul
 					_scmd="${ssh_data##*/}" && _c="$_scmd update && $_scmd install mosquitto"
 					case "$_scmd" in
 					opkg|X)
 						# FIXME on newer Gluon - might needed for SSL downloads:
 						# 1) temporarily change https to http for "openwrt_packages" in /etc/opkg/distfeeds.conf
 						# 2) opkg install libustream-tls && opkg install ca-certificates  #   or opkg ... --no-check-certificate
-						_c="sed -i 's/19.07-SNAPSHOT/19.07.9/' /etc/opkg/distfeeds.conf ; $_c" # fixes old wrong path
+						_c="sed -i -e 's/19.07-SNAPSHOT/19.07.9/' -e 's/23.05-SNAPSHOT/23.05.5/' /etc/opkg/distfeeds.conf ; $_c" # fixes old wrong path
 						_c="$_c-client-nossl coreutils-stdbuf${bDoAll:+ psmisc}"
-						_lxlvl=2
+						nLvl=2
 						;;
 					apt|X)
 						_c="$_c-clients coreutils"
-						_lxlvl=2
+						nLvl=2
 						;;
-					nothing|X)
+					NONE|X)
 						cErrAndExit "ERROR: opkg/apt not found on $hFull. Stopping..." # never returns here afterwards
 						;;
 					esac
@@ -1568,10 +1570,10 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				# then comes a Gluon-specific part - determine Gluon by checking for the UCI entry autoupdater_branch
 				cSsh -v 'uci get autoupdater.settings.branch && { autoupdater -n ; echo rc=$? ; }' 
 				_branch="$(cLine 1)" # use autoupdater_branch setting as indicator for seeing whether we are on Gluon
-				[ "$_branch" ] && _lxlvl=4 # indicates we are probably on Gluon
+				[ "$_branch" ] && nLvl=4 # indicates we are probably on Gluon
 				_rc="$(cOut|awk -F= '/rc=/{print $2}')"
 				# [ "$_rc" -ne 0 ] && { cEcho "autoupdater -n failed:\nssh_data=$ssh_data\nAborting ..." ; cntnue ;}
-				dbg AUTOUPDATER "branch=$_branch,lxlvl=$_lxlvl,rc=$_rc,autoupdater_rc=$_rc"
+				dbg AUTOUPDATER "branch=$_branch,LxLvl=$nLvl,rc=$_rc,autoupdater_rc=$_rc"
 				[ ! $bDoAll ] && {
 					# only minimal install requested: abort hereafter			
 					cEcho "Done partly install for target $hTarget (autoupdater_branch=$_branch,bDoAll=$bDoAll)..."
@@ -1593,7 +1595,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				}
 				
 				# STEP: open firewall for MQTT on Gluon (only on Gluon)
-				if [ "$_lxlvl" -ge 4 -a "yup" -a ! "$bDoExperiment" ] ; then # on Gluon
+				if [ "$nLvl" -ge 4 -a "yup" -a ! "$bDoExperiment" ] ; then # on Gluon
 					# similar to https://ffmuc.net/wiki/doku.php?id=knb:ssh#webseite_des_ff-knoten_aus_dem_lan_aufrufen :
 					cEcho "Assuming Gluon: add firewall rules for incoming HTTP from LAN..."
 					_gen_opt http wan 80 | cSsh "xargs ${bVerbose:+-t} -n 1 uci set && uci commit"						
@@ -1612,7 +1614,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				_rlfw
 				
 				# STEP: add more firewall rules (only on Gluon)
-				if [ "$_lxlvl" -ge 4 -a "$bDoExperiment" ] ; then
+				if [ "$nLvl" -ge 4 -a "$bDoExperiment" ] ; then
 					cEcho "... adding other firewall rules for outgoing MQTT..."
 					for x in loc_client wan mesh ; do
 						_gen_opt mqtt $x 1883
@@ -1622,7 +1624,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				fi
 				
 				# STEP: add a regular MQTT "beacon" to crontab on Linux-like systems
-				if cMqttBeacon && [ "$_lxlvl" -ge 2 ] ; then
+				if cMqttBeacon && [ "$nLvl" -ge 2 ] ; then
 					if cSsh -v "crontab -l | grep \"$sMe\"" ; then
 						cEcho
 						dbg MODIFY "A crontab line already containing '$sMe' was found... Leaving crontab unmodified."
@@ -1642,7 +1644,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				# ... FIXME: still not implemented: installing it as an MQTT daemon on OpenWrt/Gluon ...
 				_f=/etc/rc.local
 				cSsh "cat $_f"
-				if [ "$_lxlvl" -ge 3 ] ; then # FIXME: linux should be sufficient
+				if [ "$nLvl" -ge 3 ] ; then # FIXME: linux should be sufficient
 					if cOut|grep $sMe ; then
 						dbg MODIFY "The $_f line containing '$sMe' was found above... Leaving $_f unmodified."
 					else
@@ -1716,8 +1718,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 			sh)
 				cProbeNOMQTT
 				for i in $(seq "${cmdopts:-1}") ; do
-					cMR ONGOING "Trying shell (i=$i)"
-					dbg SHELL "$(date +%T)"
+					cMR ONGOING "Trying shell (i=$i at $(date +%T))"
 					ping -W1 -c1 $hTarget >$fNul ; _rc=$?
 					[ $_rc = 0 -o $_rc = 2 ] && ssh $sSshUser && break
 					dbg PING "rc=$_rc"
@@ -1728,17 +1729,17 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				cProbeGET
 				_cmd="cat /proc/uptime"
 				homieuptime="$( [ "$hFull" = localhost ] && $_cmd || $0 -h "$hFull" "$_cmd"  )" && hLine \$stats/uptime "${homieuptime%%.*}" -M # "$(p "$homieuptime" | cCut . )" -M
-				cStackCommand "localclients,wifistatus,gluondata,machine-data"
+				cStackCmd "localclients,wifistate,gluondata,machine-data"
 				;;
 			homie-delete|discovery-delete)
 				cProbeSET
 				homie="$(cLower $hTarget)" # duplicated code...
-				announce_disco "$homie" -d
+				cDisco "$homie" -d
 				;;
-			wifidown) # stop Freifunk public interface
+			wifidown) # stop Gluon public interface
 				cProbeSET
 				cGetPubIF || cntnue # also sets sPubIfs and sSsidBase
-				dbg PREPARING "$cmd on host $hTarget (if=$sPubIf0,$sPubIf1) ..."
+				dbg PREPARING "$cmd($cmdopts) on $hTarget (if=$sPubIf0,$sPubIf1) ..."
 				cSsh "{ iw dev $sPubIf0 del ${sPubIf1:+; iw dev $sPubIf1 del >$fNul} ;} 2>&1"
 				_tmp="$(cOut|xargs)"
 				if [ $ssh_rc = 237 -o $ssh_rc = 1 ] ; then
@@ -1750,20 +1751,22 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				else
 					cMR OK "tempstr=$_tmp"
 				fi
-				dbg wifidown "Now starting wifistatus"
-				cStackCommand wifistatus
+				cStackCmd wifistate
 				;;
-			wifiup|wifistatus|ffup|ffstatus) ## determine status of open/guest wifi network, n.b. ff... are being obsoleted
+			wifiup|wifistate) ## determine state of open/guest wifi network, N.B. ffstatus etc. is obsoleted
 				cProbeGET
 				cIsNonGluon && { cMR ERROR "$hTarget is NONGLUON:" ; cntnue ;}
 				cGetPubIF || cntnue # abort command if no public interface is found (error msg emitted in cGetPubIF)
-				dbg PREPARING "$cmd on host $hTarget (if=$sPubIfs) ..."
+				cIsOpt OFF && cStackCmd wifidown && continue
+				cIsOpt ON  && cmd=wifiup
+				dbg PREPARING "$cmd($cmdopts) on $hTarget (if=$sPubIf0,$sPubIf1) ..."
 				_scmd="command -v iw >$fNul 2>&1 && iw $sPubIf0 info || uci show wireless.client_radio0.ssid || uci show wireless.ap_gn_g.ssid" # .. fallback to uci-setting ... and ignoring any 2nd interface for now
 				ssh_data=""
-				if [ $cmd = wifiup ] ; then
+				if cIsCmd wifiup ; then
 					cProbeSET
+					_scmd="wifi up && sleep $nWifiSleep && $_scmd"
 					cMR ONGOING "Running $_scmd"
-					cSsh "wifi up && sleep $nWifiSleep && $_scmd"
+					cSsh "$_scmd"
 				elif [ "$sNewSSID" ] ; then
 					ssh_rc=0
 					dbg REUSED "sNewSSID=$sNewSSID"
@@ -1774,10 +1777,9 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				ssh_data="$(cOut|tail -14)" # shorten away the long redundant error msg from stdout from iw
 				# dbg TAILED "$ssh_data"
 				if ! [ "$sNewSSID" ] ; then # ... was cached or if not cached, not unreachable
-					sNewSSID="$(cOut|sed -n -e '/\.ssid=/{s/.*=//;p;q}' -e '/ssid/{s/\tssid //;p;q}')" # coerced uci and iw output to get results # for iwinfo: -e '/ESSID:/{s/[^:]*: //;s/\"//g;p;q}'
+					sNewSSID="$(cOut|sed -n -e "/\.ssid=/{s/.*=//;s/[']//g;p;q}" -e "/ssid/{s/\tssid //;p;q}")" # coerced uci and iw output to get results # for iwinfo: -e '/ESSID:/{s/[^:]*: //;s/\"//g;p;q}'
 					if [ $ssh_rc = 0 ] && [ "${ssh_data#"Interface $sPubIf0"}" != "${ssh_data}" -o "${ssh_data#wlan}" != "${ssh_data}" ] ; then
-						dbg SUCCESS "tempstr=$ssh_data"
-						# cEcho "$sNewSSID"
+						dbg SUCCESS "$ssh_data"
 						sChannel24="$(cOut|awk '$1=="channel" {print$2}' )" # works for iw
 						cMS 	/publicwifi/state	ON -M
 						hLine	publicwifi/state	true  -M
@@ -1796,7 +1798,6 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 						fi
 						cMS 	/publicwifi/state	OFF 	-M
 						hLine	publicwifi/state	false	-M
-						# cEchoPub publicwifi/clientscount 0
 						cBothMqtt 	publicwifi/clientscount 0
 					fi
 				fi
@@ -1820,12 +1821,11 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				cErrAndExit UNFINISHED # FIXME
 				if cOut|grep -A 9 -w '6e:a3:09:ea:31:e00' | grep -w "SSID:.$sSsidBase"
 				then
-					# client0   ESSID: "muenchen.freifunk.net/welt"
 					cEcho "To be upped..."
-					[ "$ifresult" ] || cStackCommand wifiup
+					[ "$ifresult" ] || cStackCmd wifiup
 				else	
 					cEcho "To be downed..."
-					[ "$ifresult" ] && cStackCommand wifidown # FIXME: Correct && ?
+					[ "$ifresult" ] && cStackCmd wifidown # FIXME: Correct && ?
 				fi
 				dbg cmdsToDo "$cmdsToDo"
 				# ( ( iwinfo | fgrep client0 ) || ( wifi up ; echo wifi upped. ) )	) || ( iwinfo | fgrep client0 && iw dev client0 del ; echo if downed )
@@ -1852,19 +1852,16 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 						dbg "_result=****$ssh_data****"
 					fi
 				fi
-				cStackCommand wifistatus # ... implicitly followed by a wifistatus
+				cStackCmd wifistate # ... implicitly followed by a wifistate
 				;;
-			limit|limit-*)
+			limit) # deprecated use of _ and - in cmdopts
 				cProbeSET
 				_tmp="$cmdopts"
 				[ "$_tmp" ] || _tmp=$cmd
 				_tmp=$(cSaniNum "${_tmp#limit-}") || cntnue # abort for security reasons
-				cmd=limit
+				# cmd=limit
 				# cErrAndExit UNIMPLEMENTED  # FIXME
-				if [ "$_tmp" -lt 50 -a "$_tmp" -ne 0 ] ; then
-					cMR ERROR "Illegal limit: $_tmp"
-					cntnue
-				fi
+				[ "$_tmp" -lt 50 -a "$_tmp" -ne 0 ] && cMR ERROR "Illegal limit: $_tmp" && cntnue
 				cMR ONGOING "Setting gluon.mesh_vpn.limit_*gress=$_tmp"
 				cSsh "uci set gluon.mesh_vpn.limit_ingress=$_tmp && uci set gluon.mesh_vpn.limit_egress=$_tmp && gluon-reconfigure 2>&1" || # FIXME: ignoring any 2nd interface # iwinfo $sPubIf0 info
 					cMR ERROR
@@ -1872,45 +1869,50 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				# FIXME: more code to be added
 				# ...
 				;;
-			wifissid|wifissid_*|wifissid-*)
+			wifissid) # deprecated use of _ and - in cmdopts
 				# dbg "cmd=$cmd,cmdopts=$cmdopts"
 				cProbeGET
 				cGetPubIF 0 || cntnue # sets sPubIfs and sSsidBase
+				# dbg XXX "cmd=$cmd($cmdopts)"
 				[ "$sSsidBase" ] || { cMR ERROR "Current SSID base empty - no change" ; cntnue ;}
 				# _tmp="${cmdopts:-welt}"
 				_tmp="${cmd#wifissid_}"
 				_tmp="${_tmp#wifissid-}"
 				_tmp="${_tmp#wifissid}"
 				_tmp="${_tmp:-$cmdopts}"
-				# ! [ "$_tmp" ] || cEcho "Empty shortssid from cmd=$cmd ($cmdopts), using 'welt'"
+				[ "$_tmp" ] || { cStackCmd wifistate ; cntnue ;}
 				_ssid="$(cTrd '}{)( ,=' "${_tmp:-welt}")"
-				dbg _ssid "$_ssid"
-				cmd=wifissid
+				_domain="$(expr substr "$_ssid" 1 \( "$_ssid" : ".*/\|.*\.[0-9a-z]*" \) )"
+				_ssid="$(expr substr "$_ssid" $(( ${#_domain} + 1 )) 99)"				
+				dbg ssid "$_domain  $_ssid"
+				[ "$_ssid" = MYHOSTNAME ] && _ssid="%s"
 				# further checks for allowed and legal SSID values among the gluon domains ....
-				if [ "$_ssid" = OFFLINE -o "$_ssid" = MYHOSTNAME -o "$_ssid" = %s -o "$_ssid" = $hTarget ] || expr "$(cGetGluonDomainsStarred)" : ".*\*${_ssid}[*]" >$fNul ; then
-					cMR ONGOING "Intended SSID suffix: $_ssid:"
-					otherssid="$sSsidBase/$_ssid"
-					dbg INTENDEDSSID "$otherssid"
+				if { [ "$_ssid" = OFFLINE -o "$_ssid" = "%s" -o "$_ssid" = $hTarget ] || 
+							expr "$(cGetGluonDomainsStarred)" : ".*[*]$_ssid[*]" >$fNul && [ "$_ssid" ] ;}  &&
+						{ [ -z "$_domain" ] || expr "$_domain" : "[a-z0-9]*.freifunk.net" ;} ; then
+					_ssid="${_domain:-$sSsidBase/}$_ssid"
+					cMR ONGOING "Intended SSID: $_ssid:"
+					dbg INTENDEDSSID "$_ssid"
 				else
-					cMR ERROR "Illegal shortssid: $_ssid"
+					cMR ERROR "Illegal (short) ssid: $_domain$_ssid"
 					cMS /gluondata/gluon-domains "$(cGetGluonDomainsStarred)"
-					cEcho "Illegal shortssid: $_ssid"
+					cEcho "Illegal shortssid: $_domain$_ssid"
 					cntnue
 				fi
 				cSsh ": set -x &&
 						_hn=\"\$(tr A-Z a-z <$fHost)\" &&
-						other=\"\$( printf %s \"$otherssid\" | sed -e \"s,MYHOSTNAME,\$_hn,\" -e \"s,%s,\$_hn,\" )\"  &&
-						otheresc=\"\$( ec\"ho\" \"\$other\" | sed -e 's,/,\\\\/,' )\"  &&
 						prevssid=\"\$( iwinfo $sPubIf0 info | sed -e 's/: /:/' -e '1q' | cut -d: -f2 | xargs )\"  &&
+						other=\"\$( printf %s \"$_ssid\"| sed -e \"s,%s,\$_hn,\" )\"  &&
+						otheresc=\"\$( ec\"ho\" \"\$other\" | sed -e 's,/,\\\\/,' )\"  &&
 						ec\"ho\" SSIDPREV:\$prevssid | awk \"{print} /\$otheresc/ { exit(99) }\"  &&
 						[ \"\$prevssid\" ] &&
 						iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' | awk \"{print} /\$otheresc/ { exit(99) }\" &&
 						uci set wireless.client_radio0.ssid=\$other ${sPubIf1:+&& : $sPubIf1 && uci set wireless.client_radio1.ssid=\$other} &&
 				        wifi up && sleep $nWifiSleep ;
-						[ \"$bDoAll\" ] && uci commit ;
+						[ $bDoAll ] && uci commit ;
 						iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDNEW/' -e '1q' " # FIXME: ignoring any 2nd or further interface
 				# echo ----------------
-				dbg RESULT "=***$ssh_data***"
+				dbg RESULT "$ssh_data"
 				prev_ssid="$(cOut | awk -F: '/SSIDPREV:/ {print$2;exit}')"
 
 				if ! cData ; then
@@ -1918,16 +1920,15 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					cEcho "$_log"
 					cMR ERROR "$_log"
 				elif [ "$prev_ssid" ] ; then
-					sNewSSID="$(cOut|grep -m 1 SSIDNEW:  | cCut : 2 | xargs)"
+					sNewSSID="$(cOut|grep -m 1 SSIDNEW: | cCut : 2 | xargs)"
 					_log="previous=$prev_ssid, new=$sNewSSID"
 					if [ "$prev_ssid" = "$sNewSSID" ] ; then
-						_log="$_log (no change)"
+						_log="$_log (NO CHANGE)"
 					else
 						sNewSSID=""
 					fi
-					dbg "$_log"
 					cMR OK "$_log"
-					cStackCommand wifistatus # ... implicitly followed by a wifistatus
+					: cStackCmd wifistate # ... implicitly followed by a wifistate
 				fi
 				;;
 			gluonreconfigure)
@@ -1941,9 +1942,9 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				new_ssid="$( cOut |grep SSIDNEW	| cCut : 2 )"
 				cEcho "$hTarget: Ran gluon-reconfigure, previously $prev_ssid, then wifi up, then $new_ssid.\n"
 				if [ "$prev_ssid" != "$new_ssid" ] ; then
-					cStackCommand localclients
+					cStackCmd localclients
 				fi
-				cStackCommand wifistatus # ... implicitly followed by a wifistatus
+				cStackCmd wifistate # ... implicitly followed by a wifistate
 				;;
 			site)
 				cProbeGET
@@ -1976,6 +1977,18 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 			  	cMR OK
 			  fi
 			  ;;
+			gluon-info)
+				cProbeGET
+				if cSsh "gluon-info" ; then
+					cEcho
+					data="{$(cOut|awk -F: '{gsub(/^[[:space:]]*/,"",$2); printf c "*%s*:*%s*", $1, $2 ; c="," }' )}"
+					cMS /$cmd ""
+					cAddSuccHost
+				else
+					cMR ERROR
+					cErr :
+				fi
+				;;
 			machine-data)
 				os_data="$(cGetOSData)"
 				dbg os_data "$os_data"
@@ -2017,7 +2030,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				# _url="http://ipv4.download.thinkbroadband.com:80/$_url.zip" # IPV4 doesn't work in Freifunk?
 				# _url="http://129.143.4.238/$_url"
 				# _url="http://speedtest.belwue.net/$_url"
-				dbg SPEEDTEST "Using $_url ..."
+				# dbg SPEEDTEST "Using $_url ..."
 				cMR ONGOING "Trying $_url"
 				cSsh "date -u +%s; wget $_spparam -O - $_url | wc -c ; date -u +%s"
 				if [ $ssh_rc = 0 ] ; then
@@ -2028,17 +2041,16 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					speedMB="$( awk "BEGIN { printf \"%.2g\" , $filesize*8 / ($_val+0.000001) / 1048576}" )"
 					if [ "$filesize" -lt 20000 ] ; then
 						dbg "File size ${filesize}B for $_url too small, will abort."
-						cStackCommand speedtest0000000000 # head for abort
+						cStackCmd speedtest0000000000 # head for abort
 					elif [ "$_val" -lt 11 ] ; then
 						_spcmd="${_spcmd}0" # try next bigger size
 						_s="Result ${_val}s too small for file size ${filesize}B"
-						dbg "$_s, redo with $_spcmd"
 						cMR ONGOING "$_s. Retrying larger file (*speedMb*:*$speedMB*)"
 						cCWrite .lastspdcmd "$_spcmd" # cache bigger file speedtest for next time
-						cStackCommand "${_spcmd}"
+						cStackCmd "${_spcmd}"
 					else
 						cEcho "$speedMB"
-						cMS /speedtest "{*speedMb*:$speedMB,*filesize*:$filesize,*elapsedtime*:$_val,*unit*:*Mb/s*${sLastSpeed}}"
+						cMS /speedtest "{*speedMb*:$speedMB,*filesize*:$filesize,*elapsed*:$_val,*unit*:*Mb/s*${sLastSpeed}}"
 						cCWrite .lastspd "$speedMB"
 						cAddSuccHost
 					fi
@@ -2047,16 +2059,17 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					cMR ERROR "{*ERROR*:*$ssh_rc*,*url*:*$_url*${sLastSpeed}}"
 				fi
 				;;
-			status)
-				cSsh "cat /proc/uptime /proc/loadavg" || { cErr :;} 
+			state)
+				cSsh "cat /proc/uptime /proc/loadavg;df -k" || { cErr :;} 
 				cEcho
 				data="$(cOut|awk -v v=$sMeAge -v r=$(cRan) '
-					NR==1 { uptime=sprintf("%d", $1) }
-					NR==2 { printf "{*uptime*:%s,*load*:%.2f,*version*:*%s*,rantime=%d}",uptime,$1,v,r }' )" # uptime in seconds
+					NR==1 { printf "{*uptime*:%d", $1 }
+					NR==2 { printf ",*load*:%.2f,*version*:*%s*,rantime=%d",$1,v,r } # uptime in seconds
+					$6 == "/" { printf ",*available*:%d,*percent*:%d}",$4,100-$5 }' )"
 				cMS /$cmd
 				;;
 			printmap) 
-				# for non-Gluon systems, probably gone soon
+				# for older non-Gluon systems, probably gone in 2023 or before
 				cProbeGET
 				cSsh print_map.sh || { cErr :;cntnue;} # Freifunk node info as JSON for non-Gluon systems, e.g. from earlier Ulm firmware
 				cOut|json_pp
@@ -2066,7 +2079,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				# works  for ffmuc only currently
 				# wget https://gw04.ext.ffmuc.net/nodelist.json
 				# jsonfilter -e '@.nodes[@.name="Ares"].status.clients' < n.json
-				cProbeGET && cCmv jq || { cStackCommand localclients && cntnue ; }
+				cProbeGET && cCmv jq || { cStackCmd localclients && cntnue ; }
 				_w="https://gw04.ext.ffmuc.net/nodelist.json"
 				_f=$dCache/nodelist.json
 				# if no file or older then 1 minute then get a new one
@@ -2074,7 +2087,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					{ dbg "$_f" "not fresh" ; wget ${bQuiet:+-q} $_w -O - | jq . - > $_f ;} || { cMR ERROR "wget failed" ; cntnue ;}
 				# extract the clients count from the json file where name is hTarget
 				_n=$(jq -r ".nodes[] | select( (.name|ascii_downcase) ==\"$hTarget\") | .status.clients" < $_f)
-				[ ${_n:-0} -gt 0 ] && { dbg COUNT "$_n" ; cStackCommand localclients ; } && cntnue # if there are clients, then get them
+				[ ${_n:-0} -gt 0 ] && { dbg COUNT "$_n" ; cStackCmd localclients ; } && cntnue # if there are clients, then get them
 				[ "$_n" = 0 ] && cEcho "$_n" || cErr "No client count found for $hTarget" 
 				cMS /publicwifi/localclients "{ *count*:${_n:-null}, *localclients*:[],*node*:*$hTarget* }" $([ "$cmdopts" ] || e "-M")
 				[ $bWorkAllClients ] && nLocClients=$((nLocClients + _n))
@@ -2149,8 +2162,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				_val="$ssh_data"
 				dbg $cmd "Had called $_cGNI $ffnodeip (rc=$ssh_rc,${#ssh_data} bytes)"
 				if [ ${#ssh_data} -le 1 ]  ;  then
-					cErr "Connection or gluon-neighbour-info failed: Command $cmd on node ip $ffnodeip failed:"
 					[ $ssh_rc = 127 ] && cCWrite .nodeip NONGLUON # non-Gluon node: gluon-neighbour-info missing
+					cErr "Connection or gluon-neighbour-info failed: Command $cmd on node ip $ffnodeip failed:"
 					cMR ERROR # "result empty (ssh_data=$ssh_data):"
 				else
 					cAddSuccHost
@@ -2158,7 +2171,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					cCWrite .$cmd # cache the whole data to support change detection in the future
 					cEcho
 					cMqtt /$cmd "$ssh_data" -M
-					if [ $cmd = statistics ] ; then
+					if cIsCmd statistics ; then
 						# node_id=$( jq -r .node_id $fTmpMqtt )
 						# cMqtt /nodeid "$node_id" "-r"
 						### cMqtt "$sSite/$node_id/$cmd"  "$(cat $fTmpMqtt)"  "-r"
@@ -2166,8 +2179,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 						### cMqtt "$sSite/$node_id/ipv6"      "$ffnodeip" "-r"
 						cFilter .clients.wifi < $fTmpMqtt
 						# echo $ssh_data
-						#		cHassAnnounce "$sSite" "$ad_devname" "$hTarget/$cmd"    "Public Wifi RX bytes"   "value_json.traffic.rx" "counter"
-						# 		cHassAnnounce "$sSite" "$ad_devname" "$hTarget/$cmd"    "Public Wifi TX bytes"   "value_json.traffic.tx" "counter"
+						#		cHassAnnounce "$sSite" "$ad_devname" "$hTarget/$cmd"    "Public Wifi RX bytes"   "value_json.traffic.rx" counter
+						# 		cHassAnnounce "$sSite" "$ad_devname" "$hTarget/$cmd"    "Public Wifi TX bytes"   "value_json.traffic.tx" counter
 						cMS /clients "" -M
 						[ $bWorkAllClients ] && nLocClients="$(( nLocClients + data ))"
 						# cMqtt "$sSite/$node_id/clients" "$data"
@@ -2179,7 +2192,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				;;
 			showsite|addresses)
 				cProbeGET
-				[ $cmd = addresses ] && _scmd="ip -6 -j addr show" || _scmd="gluon-show-site"
+				cIsCmd addresses && _scmd="ip -6 -j addr show" || _scmd="gluon-show-site"
 				if cSsh "$_scmd" ; then
 					cMqtt /$cmd "$ssh_data"
 					[ $bQuiet ] || cOut | json_pp
@@ -2203,18 +2216,19 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				;;
 			sleep)
 				cProbeNOMQTT
-				[ "$cmdopts" ] || cmdopts=51
-				[ "${cmdopts%%[0-9]*}" = "var" ] && n=${cmdopts#var} && cmdopts=$(printf %d "'$(cLower $hTarget)") && cmdopts=$(( (cmdopts-97)/4+4+ ${n:-0} ))
-				[ $cmdopts -gt 12 ] && dbg $cmd "Sleeping $cmdopts secs ..."
-				cMR ONGOING :
-				cS "$cmdopts"
+				o=51
+				cIsOpt "" || o="$cmdopts"
+				[ "${o%%[0-9]*}" = var ] && n=${o#var} && o=$(printf %d "'$(cLower $hTarget)") && o=$(( (o-97)/4+4+ "${n:-0}" ))
+				[ $o -gt 12 ] && dbg $cmd "Sleeping $o secs..."
+				[ $cmdsToDo ] && cMR ONGOING :
+				cS "$o"
 				;;
 			ps|pstree)
 				cProbeNOMQTT
 				_n=6
-				if [ $cmd = pstree ] && cSsh "pstree -sptal|grep -v \"$_n $cmdopts\"|grep -C $_n \"$cmdopts\"" ; then
+				if cIsCmd pstree && cSsh "pstree -sptal|grep -v \"$_n $cmdopts\"|grep -C $_n \"$cmdopts\"" ; then
 					cEcho
-				elif [ $cmd = pstree ] && cSsh "{ ps axu 2>$fNul || ps w ;} |awk 'NR==1 || ( /$cmdopts/ && ! /$cmd.$cmdopts/) {gsub(/ busybox /,\" \");print}'" ; then
+				elif cIsCmd pstree && cSsh "{ ps axu 2>$fNul || ps w ;} |awk 'NR==1 || ( /$cmdopts/ && ! /$cmd.$cmdopts/) {gsub(/ busybox /,\" \");print}'" ; then
 					cEcho
 					cMS /$cmd "{*table*:$(cOut|cTableToJSON), *grepexp*:$(s "$cmdopts"), *count*:$(( $(cOut|cCount) - 1))}"
 					cMS "/$cmd${cmdopts:+/$(cTrd -c "A-Za-z0-9.!-+" "$cmdopts")}" "{*table*:$(cOut|cTableToJSON), *grepexp*:*$cmdopts*, *count*:$(( $(cOut|cCount) - 1))}"
@@ -2245,26 +2259,26 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				cProbeNOMQTT
 				cMR ONGOING :
 				_key="gluon-setup-mode.@setup_mode[0].enabled"
-				[ "$cmdopts" = config ] && _more="uci set $_key=1 && uci commit &&" || _more="" # reboot to config mode on next boot
+				cIsOpt config && _more="uci set $_key=1 && uci commit &&" || _more="" # reboot to config mode on next boot
 				if cSsh "uci show $_key && $_more $cmd"  ; then
 					dbg $cmd "$(cOut)"
 					cMR OK # might not even get here if run locally ...
 					cAddSuccHost
 				else
-					cErr :
 					cMR ERROR
+					cErr :
 				fi
 				;;
 			# BEGIN_DELETE
 			debug_msub) # FIXME: remove this after explore mosquitto_sub stalling bug
 				# for i in $(seq 20) ; do  $MP -t ffmuc/herkules/echo/get -m $i ; echo $i ; cS 0 ; done
-				if [ "$cmdopts" = s ] ; then
+				if cIsOpt s ; then
 					cMqttSub -t $sSite/\# -v -R | awk -v f=$fPipe '{print "//" $0 ; system("sleep 1") }'
 					exit 0
 				else
 					for i in $(seq "${cmdopts:-5}") ; do
-						# cMqtt /wifistatus/get $i
-						# cMqtt /status/get $i
+						# cMqtt /wifistate/get $i
+						# cMqtt /state/get $i
 						cMqtt /date/get $i
 						cEcho $i
 					done
@@ -2305,8 +2319,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 						network="${network%.255}.0"
 						cCWrite .network "$network" # cache the value
 					else
-						cErr "Command $cmd aborted:"
 						cMR ERROR
+						cErr "Command $cmd aborted:"
 						cntnue
 					fi
 				fi
@@ -2354,7 +2368,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					}' # | tee /tmp/scanni.$USER
 					set +x
 				}
-				gen_removecmd() {
+				genRemoveCmd() {
 					printf "sed "
 					echo "${*:-xyzx}" | awk -v RS=" " -v ORS=" " '{printf " -e /^%s/d", $1}'
 				}
@@ -2363,7 +2377,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				while [ "$_n" -gt 0 ] ; do # now scan _n times for ports
 					cMR ONGOING "Will do $cmd($network/$_m) number $_n."
 					# IP;HOSTNAME;MAC;VENDOR;http://IP;ssh://IP :
-					netprobe | eval "$(gen_removecmd "$sRemoveList")" |
+					netprobe | eval "$(genRemoveCmd "$sRemoveList")" |
 						awk -F\; -v OFS=\; 'ARGIND==1 {a[$2]=$3 OFS $4 OFS $5 OFS $6 OFS $7 OFS $8;next} {print $0 , a[$1] }' $fList > $fScanTmp
 					dbg "NMAP3" "Scanned hosts of $network/$_m (n=$_n, $(date +%F) )" && cat $fScanTmp
 

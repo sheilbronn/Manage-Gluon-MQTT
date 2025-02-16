@@ -95,9 +95,9 @@ The commands for the -c option are:
 * _sh_: Invoke a remote SSH shell on the remote host (limited to A,B for security reasons)
 * _discovery-update_: Issue all auto-discovery announcements as well as the values.
 * _discovery-delete_: Remove all retained messages for auto-discovery.
-* _wifistatus_ ...
+* _wifistate_ ...
 * _wifidown_ ...
-* _wifiup_: Return the status of the public Freifunk wifi interface, or switch it down or up
+* _wifiup_: Return the state of the public Freifunk wifi interface, or switch it down or up
 * _wifissid_: Change name of public Wifi interface (within Freifunk community boundaries if applicable)
 * _channel24_ : Change the WiFi channel of the public Freifunk wifi network (for the 2.4 Ghz channel only)
 * _limit_: limit throughput (ingress and egress)
@@ -106,7 +106,7 @@ The commands for the -c option are:
 * _gluondata_: Lots of Gluon configuration data
 * _machine-data_: Version and CPU info of the  node
 * _speedtest_: Get a large file, measure the time it takes and calculate download speed in MB/s
-* _status_: Load and uptime of the node
+* _state_: Load and uptime of the node
 * _localclients_: Amount and fingerprints of Freifunk clients connected to the node
 * _nodeinfo_:  JSON results from the invocation of `gluon-neighbour-info nodeinfo`
 * _neighbours_: JSON results from the invocation of `gluon-neighbour-info neighbours`
@@ -143,7 +143,7 @@ Remotely on a linux box at home (gluonnode ist the FF node):
 
 On the Freifunk/Gluon node itself:
 
-  ``$ manage_gluon_mqtt -m test.mosquitto.org -c status``
+  ``$ manage_gluon_mqtt -m test.mosquitto.org -c state``
 
 To run verbosely as a daemon on the target host:
 
