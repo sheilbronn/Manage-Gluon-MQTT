@@ -52,7 +52,7 @@ alias cS="sleep"
 alias cIsVerbose='[ $bVerbose ]'
 alias cIsCmd='test "$cmd" ='
 alias cIsOpt='test "$cmdopts" ='
-cTrd() { cX ; _r="$(p "${3:-$2}" | tr -d ${3:+$1} "${3:+$2}$([ "$3" ] || p "$1")" )" ; echo "$_r" ; [ "$_r" = "${3:-$2}" ] ;} # delete some chars or their complement (-c) from a string
+cTrd() { cX ; _r="$(p "${3:-$2}" | tr -d ${3:+$1} "${3:+$2}$([ "$3" ] || p "$1")" )" ; p "$_r" ; [ "$_r" = "${3:-$2}" ] ;} # delete some chars or their complement (-c) from a string
 cR() { [ -r "$1" ] ;} # test if a file is readable
 # cR() { cX ; [ "$2" ] && c=echo || c=: ; [ -r "$1" ] && $c "$1(OK)" || $c "$1(MISS)" ;} # test if a file is readable, output to stdout if $2 is set, e.g. -v
 # cDebug ; cTrd _- "Aa_Bb" && echo yes; echo ; cTrd -c _- "Aa_Bb" && echo yes; cTrd -c "[a-zA-Z]" "AaBb" && echo yeah; echo ; cExit99
@@ -101,7 +101,7 @@ umask -S u=rwx,g=rx,o= # no rights for any others
 
 if [ -t 1 -a ! "$NO_COLOR" ] ; then # only color code on terminals and not when NO_COLOR is set tbd: -a ! "$TERMUX_VERSION" 
 	F='\033[' # https://gist.github.com/bcap/5682077#file-terminal-control-sh
-	Yellow="${F}33m" ; Cyan="${F}36m" ; OnRed="${F}41m" ; Rst="${F}0m"
+	Yellow="${F}33m" ; Cyan="${F}36m" ; Red="${F}41m" ; Green="${F}32m" ; Rst="${F}0m"
 	# Reg="${F}22;24m" ; RegF="${F}39m" ; RegB="${F}49m"  # Reset all coloring and style
 fi
 
@@ -193,7 +193,7 @@ cGetSitecode() { # $1=cachetimeout
 		fi
 	fi
 	sSite="$data"
-	dbg cGetSitecode "sSite=$sSite arg1=$1"
+	dbg SITE "$sSite ${1:+($1)}"
 	}
 
 cMostFrequentSite() {
@@ -333,7 +333,7 @@ cErr() {
 	[ "$1" = : ] && _tmp="Ssh to $sSshUser for $cmd failed" # default msg is ....
 	[ "$1" != "${1%:}" ] && _tmp="${_tmp%:} (rc=$ssh_rc,$ssh_msg)" # if $1 ends in :, then add rc and msg
 	shift
-	ECHO "${OnRed}ERROR$Rst:" "$_tmp" "$@" 1>&2
+	ECHO "${Red}ERROR$Rst:" "$_tmp" "$@" 1>&2
 	cLogger error "$_tmp" "$@"
 	}
 
@@ -344,7 +344,7 @@ cErrAndExit() {
 	exit 1
 	}
 
-jsonfilter=$($C -v jq) || jsonfilter=$($C -v jsonfilter) || cErrAndExit "jsonfilter or jq must be made available"
+jsonfilter=$($C -v jq) || jsonfilter=$($C -v jsonfilter) || cErrAndExit "jsonfilter or jq needed"
 jsonfilter=${jsonfilter##*/}
 
 cEcho() { # log and output stuff (in color), unless to be quiet
@@ -353,7 +353,7 @@ cEcho() { # log and output stuff (in color), unless to be quiet
 	[ "$bQuiet" -o -z "$_o" ] && return
 	# FIXME:  [ "$1" = "${1#\{\*}" -a "$1" = "${1#\[\*}" ] && _o="$(cStarredToJSON "$*" | json_pp)"  # expand (only) "starred" pseudo-JSON
 	ECHO "$Cyan$_o$Rst"
-	cLogger $(cIsVerbose && echo info || echo debug) "$_o"
+	cLogger ${bVerbose:+info} ${bVerbose:-debug} "$_o"
 	}
 	# cDebug ; cEcho -e -e zwei ; cSEP ; cEcho "" ; cExit99
 
@@ -441,7 +441,7 @@ cStoreWrite() { # write a key/value pair to a dir: key,value,dir,filesuffix # if
 	cX
 	_dir="$3"
 	_f="$_dir/$([ "${1#.}" = "$1" ] || e $hTarget)$1"
-	_t=STORE_WRITE
+	_t=WRITE
 	[ "$1" ] || {
 		e "$_t: #INVALIDPARAM#"
 		cErrAndExit "$_t($1, \"$2\", $_dir) = #INVALIDPARAM#"
@@ -475,7 +475,7 @@ cStoreRead() { # read key/value pair from cache or user storage  (1:key, 2:cache
 			[ "$_val" ] || _res="#EMPTY#"
 		fi
 	fi
-	dbg STORE_READ "(${_fn#$dCache/},$2)=\"$(cShorten "$_val")\"$([ "$_res" != "#OK#" ] && e "($_res)")"
+	dbg READ "(${_fn#$dCache/},$2)=\"$(cShorten "$_val")\"$([ "$_res" != "#OK#" ] && e "($_res)")"
 	p "$_val"
 	[ "$_val" ] # return 1 if empty, 0 otherwise
   }
@@ -550,7 +550,7 @@ cMqtt() { # cMqtt(topic,msg, options) # expanding a leading / in topic to $sSite
 	local _comp="" && [ "$3" = "-M" ] && _comp=y || _o="$3"
 	local _topic="$1"
 	[ "$1" != "${1#/}" ] && _topic="$sSite/$hTarget$1" # ... expand shortcut starting with "/"
-	dbg PUB_MQTT "$_topic  $2  ${3:+OPT=$3}${bVeryVerbose:+ (hMqtt=$hMqtt;hTarget=$hTarget)}"
+	dbg MQTT "$Green$_topic$Rst $2  ${3:+OPT=$3}${bVeryVerbose:+ (hMqtt=$hMqtt;hTarget=$hTarget)}"
 	[ "$_comp" -a "$bModified" ] && _f="mqtt.$(p $_topic|cSanitize)" && _pv="$(cCRead $_f 0.1)" && [ "$_pv" = "$2" ] && return 0 # ... skip if value is unchanged
 	for h in $hMqtt ; do
 		#  passing $3 without quotes on purpose:
@@ -586,7 +586,7 @@ cMqttReply() { # $1=status $2_reply $3=moreopts|-M. If $2 is empty, use "$_cmd($
 		fi
 		cMS ${_cmd:+/$_cmd}/log "{*status*:*$1*${_ms:+,*details*:*$_ms*}${3:+,$3}${fPipe:+,*pid*:$$}}" $3
 		[ "$1" != OK -a "$1" != ONGOING ] && cLogger info "$1: $_ms $3"
-		dbg MQTTREPLIED "$1: $_ms : $3"
+		dbg REPLIED "$1: $_ms : $3"
 	}
 	alias cMR=cMqttReply
 	# cDebug ; for t in "" ":" ; do cMR ONGOING "Rushing$t" ; cSEP $t ; cMR OK "Okidoki$t" ; cSEP $t ; cMR ERROR "$t" ; cSEP ===$t ; done ; set +x ; cExit99
@@ -775,18 +775,14 @@ cDisco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are to be de
 	if [ "$2" = "-d" -o "$bDeleteAnnouncement" ] ; then
 		cMqtt "debug/$1" "DELETE ANOUNCEMENTS BEGIN: $1,bDeleteAnnouncement=$bDeleteAnnouncement"
 		bDeleteAnnouncement=yes # used in side effect in hMeta, will be resetted further down
-		# use "remove-retained" feature from newer mosquitto-clients versions:
-		_top="homie/$homie/#"
-		cMqttSub -W 1 -t "$_top" --remove-retained --retained-only >$fNul 2>&1
-		_rc=$?
-		[ "$_rc" -ne 0 -a "$_rc" -ne 27 ] && dbg "Removal of retained topics below $_top returned $_rc"
 
-	    _topic="$sHassPrefix" # deletes eveything below "homeassistant/..." !
-		dbg "Removing announcements matching $_topic/... (timeout ok)"
-		cMqttSub -W 1 -t "$_topic/sensor/#" -t "$_topic/switch/#" --remove-retained --retained-only >$fNul
+	    _tops="-t homie/$homie/# -t $sHassPrefix/sensor/# -t $sHassPrefix/switch/#" 
+		dbg "Removing announcements with '$_tops' (timeout ok)"
+		cMqttSub -W 1 $_tops --remove-retained --retained-only >$fNul
 		_rc=$?
-		[ "$_rc" -ne 0 -a "$_rc" -ne 27 ] && dbg "Removal of retained topics below $_topic returned $_rc"
-		cMS "$sSite/$1/state" "{*event*:*cleaned*,*note*:*removed all announcements starting with $_topic*}"
+		[ "$_rc" -ne 0 -a "$_rc" -ne 27 ] && dbg "Removal of retained topics '$_tops' returned $_rc"
+		
+		cMS "$sSite/$1/state" "{*event*:*cleaned*,*note*:*removed announcements related to $sHassPrefix/... and homie/... *}"
 	else
 		# cMqtt "debug/$1" "MQTT ANOUNCEMENTS BEGIN (arg2=$2)"
 		[ "$sSshUser" = LOCAL ] && { hLine \$stats/uptime "$(cCut . </proc/uptime)" ;}
@@ -925,7 +921,7 @@ do
     v) [ $bVerbose ] && bVeryVerbose=yes && nMqttSleep=60 # not to small to allow for gathering state in between !
 		[ $nMqttSleep -gt 295 ] && nMqttSleep=295 # reduce to max 5 minutes when verbose
 		bVerbose=yes
-		dbg STARTUP "dUser=$dUser  dTmp=$dTmp ($(date +%T))"
+		dbg START "USER=$dUser TMP=$dTmp ($(date +%T))"
 		;;
 	x) bVerbose=yes && bTrace=yes
 		set -o xtrace
@@ -1059,7 +1055,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 		[ $nMaxGoneDays ] && [ -z "$(cCRead .sshcnt $nMaxGoneDays)" ] && continue # dont try this node if not seen for N days
 	fi
 	_msg="" && [ $sSshUser = "${sSshUser%${hTarget}-e}" -a $sSshUser = "${sSshUser%${hTarget}}" ] && _msg="($hTarget) "
-	[ "$bVerbose" -o "$nGiveHost" ] && ECHO "\n#######$Yellow ${sSshUser#root@} $_msg//${commands:+ $commands //} $*" "$Rst######" >&${nGiveHost:-1} 2>&1
+	[ "$bVerbose" -o "$nGiveHost" ] && ECHO "$Green#######$Rst $Yellow${sSshUser#root@} $_msg//${commands:+ $commands //} $*" "$Rst$Green######$Rst" >&${nGiveHost:-1} 2>&1
 	cGetSitecode # reuse value for all other nodes, too
 	fTmpMqtt=$dTmp/mqtt.$hFull
 	sNewSSID=""
@@ -1156,12 +1152,12 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 			done > $fPipe &
 			nPidSleep=$!
 			
-			_tf=$fNul ; [ $bVerbose ] && _tf=/tmp/$sMe.log ; # _tf=/tmp/mlog
+			# _tf=$fNul ; [ $bVerbose ] && _tf=/tmp/$sMe.log
 			if cCmv ubus ; then # enable a background listener for the ubus bus on OpenWrt
 				# make ubus listen a real subprocess and pipe its (modified) output to fPipe:
 				# to test: for i in $(seq 1 199) ; do ubus send ==== ; for n in $(seq 1 4) ; do ping -qc $n 192.168.178.1 > /dev/null ; echo $i.$n ; ubus send chime$i.$n ; ubus send anotherfast ; done ; cS 1 ; done
 				# WARNING: On Gluon (OpenWrt?) it seems that "ubus listen" stalls sometimes, if it is not read fast enough (makes it unreliable for logging)...
-				# we'll make it restart in a loop, if it ends - for now.
+				# we'll make it restart in a loop if it ends.
 				_secs=$((nSeconds-nBridgeDelta)) # make sure it ends shortly after the bridge
 
 				awk -v f=$fPipe -v t=$_secs -v pid=$$ 'BEGIN { cmd="while [ -d /proc/"pid" ];do ubus -t " int(t/4+99) " listen ;rc=$? ;echo \"{ RESTARTING($rc," int(t/2+1) ") }\" ;done"
@@ -1928,13 +1924,13 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 						sNewSSID=""
 					fi
 					cMR OK "$_log"
-					: cStackCmd wifistate # ... implicitly followed by a wifistate
+					cStackCmd wifistate # ... implicitly followed by a wifistate
 				fi
 				;;
 			gluonreconfigure)
 				cProbeSET
 				cGetPubIF || cntnue # sets sPubIf* and sSsidBase
-				cMR	ONGOING "Affected Interface(s): $sPubIfs"
+				cMR	ONGOING "Affected interfaces: $sPubIfs"
 				# 6 seconds needed for s after wifi up !
 				cSsh "iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDPREV/' -e '1q' ; gluon-reconfigure | tail -3 ; wifi up ; sleep $nWifiSleep ; iwinfo $sPubIf0 info | sed -e 's/: /:/' -e 's/ESSID/SSIDNEW/' -e '1q' "
 				dbg $cmd "$ssh_data"
@@ -2055,7 +2051,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 						cAddSuccHost
 					fi
 				else
-					cEcho "ERROR: $ssh_rc"
+					cErr :
 					cMR ERROR "{*ERROR*:*$ssh_rc*,*url*:*$_url*${sLastSpeed}}"
 				fi
 				;;
@@ -2125,8 +2121,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 					[ "$_seen" ] && _seen="$(( 60 * $_m + ${_seen#0} ))" # convert mm:ss to seconds
 					_line="$_time;$_mac;$hTarget;$_vdr;$_name;$_ipv4;$_ping;$_seen"
 					dbg IP "*$_mac* *$_name* *$_vdr* *$_time* *$_ipv4* *$_ping* *$_seen*" # IP: *6e:95:18:16:87:58* *Thomas3* *MySamsung* *2024_**
-					echo "$_line" >> $fCollection # NEW! : # write  time;mac;node;vendor;name  to collection file, too
-					echo "$_line"
+					p "$_line" >> $fCollection # NEW! : # write  time;mac;node;vendor;name  to collection file, too
+					p "$_line"
 					cMS "$sSite/$sArea/$(cTrd : "$_mac")" "{*node*:*$hTarget*,*mac*:*$_mac*,*name*:$(s "$_name"),*vendor*:$(s "$_vdr"),*ipv4*:*$_ipv4*,*pingable*:$_ping,*lastseen*:$_seen}" -M
 				done <$fClients >$fClients.2
 				data="{*count*:$_n,*localclients*:[$(awk -F\; -v bA=$bDoAll -v hname=$hTarget '{
@@ -2218,7 +2214,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				cProbeNOMQTT
 				o=51
 				cIsOpt "" || o="$cmdopts"
-				[ "${o%%[0-9]*}" = var ] && n=${o#var} && o=$(printf %d "'$(cLower $hTarget)") && o=$(( (o-97)/4+4+ "${n:-0}" ))
+				[ "${o%%[0-9]*}" = var ] && n=${o#var} && o=$(printf %d "'$(cLower $hTarget)") && o=$(( (o-97)/4+4+ ${n:-0} ))
 				[ $o -gt 12 ] && dbg $cmd "Sleeping $o secs..."
 				[ $cmdsToDo ] && cMR ONGOING :
 				cS "$o"
