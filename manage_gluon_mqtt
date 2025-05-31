@@ -23,7 +23,7 @@ fNul=/dev/null
 MP=mosquitto_\pub
 LH=localhost
 C=comman\d
-A A=alias
+alias A=alias
 
 cCmv() { command -v "$@" >$fNul ;} # true if a command exists
 cLower() { awk -v s="$*" 'BEGIN {print tolower(s)}' ;} # simplified for args only
@@ -1371,7 +1371,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 			cmdopts="$(p "$cmdopts" | tr -cd "A-Za-z0-9_.%, /-" )"
 			dbg2 COMMAND "$cmd ($cmdopts) (REMAIN: $cmdsToDo)"
 			case "$cmd" in
-			help) # really hacky implementation: grepping this script code for singular case branches that look like a implemented command ....
+			help)
+				# really hacky implementation: grepping this script code for singular case branches that look like a implemented command ....
 				cProbeGET
 				_msg="$( awk '$1 ~ /^[a-z]{3,}[a-z|]+)/ { gsub(/)/,"",$1); gsub(/\|/," ",$1); if ($1=="help") doit=1 ; if (doit) printf $1 " " }' "$0")"
 				cEcho "$_msg"
@@ -1390,7 +1391,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				cIsCmd echo && { _msg="$(cExpand "${cmdopts:-%s}")" ; cEcho "$_msg" ; cMR OK "Command $cmd($_msg) by $(cat $fHost) at $(date +"%T") (V=$sMeAge,NPID=$(cPid))" ; cIsOpt TESTERROR && cErr "Test error" ;}
 				cIsCmd date && { _msg="$(date +"%F %T")" ; cEcho "$_msg" ; cMR OK "Command $cmd($cmdopts): $_msg" ;}
 				;;
-			bridgestop) # inject a command into p to stop a running bridge
+			bridgestop)
+				# inject a command into p to stop a running bridge
 				cProbeNOMQTT
 				if T -p $dCache/p ; then  # cErrAndExit "No pipe $(ls -l $dCache/p|xargs)"
 					echo "PERIODIC TERMINATE bridgestop${cmdopts:++$cmdopts}" > $dCache/p
@@ -1418,7 +1420,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				fi
 				cEcho
 				;;
-			autossh) # FIXME: running this should be limited to max one or two per minute....
+			autossh)
+				# FIXME: running this should be limited to max one or two per minute....
 				cProbeSET 
 				_ml="$((${cmdopts:-12} * 3600 - 10))" # Default = for almost 12 hours
 
@@ -1739,7 +1742,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				homie="$(cLower $hTarget)" # duplicated code...
 				cDisco "$homie" -d
 				;;
-			wifidown) # stop Gluon public interface
+			wifidown)
+				# stop Gluon public interface
 				cProbeSET
 				cSetPubIF || cntnue
 				dbg PREPARING "$cmd($cmdopts) on $hTarget (if=$sPubIf0,$sPubIf1) ..."
@@ -1756,7 +1760,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				fi
 				cStackCmd wifistate
 				;;
-			wifiup|wifistate) ## determine state of open/guest wifi network, N.B. ffstatus etc. is obsoleted
+			wifiup|wifistate)
+				# determine state of open/guest wifi network, N.B. ffstatus etc. is obsoleted
 				cProbeGET
 				cIsNonGluon && { cMR -e ERROR "$hTarget is NONGLUON:" ; cntnue ;}
 				cSetPubIF || cntnue # abort command if no public interface is found (error msg emitted in cSetPubIF)
@@ -1857,7 +1862,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				fi
 				cStackCmd wifistate # ... implicitly followed by a wifistate
 				;;
-			limit) # deprecated use of _ and - in cmdopts
+			limit)
+				# deprecated use of _ and - in cmdopts
 				cProbeSET
 				_tmp="$cmdopts"
 				T "$_tmp" || _tmp=$cmd
@@ -1871,7 +1877,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				# FIXME: more code to be added
 				# ...
 				;;
-			wifissid) # deprecated use of _ and - in cmdopts
+			wifissid)
+				# deprecated use of _ and - in cmdopts
 				# dbg "cmd=$cmd,cmdopts=$cmdopts"
 				cProbeGET
 				cSetPubIF 0 || cntnue
@@ -2251,7 +2258,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				fi
 				;;
 			# BEGIN_DELETE
-			debug_msub) # FIXME: remove this after explore mosquitto_sub stalling bug
+			debug_msub)
+				# FIXME: remove this after explore mosquitto_sub stalling bug
 				# for i in $(seq 20) ; do  $MP -t ffmuc/herkules/echo/get -m $i ; echo $i ; cS 0 ; done
 				if cIsOpt s ; then
 					cMqttSub -t $sSite/\# -v -R | awk -v f=$fPipe '{print "//" $0 ; system("sleep 1") }'
@@ -2267,7 +2275,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				exit 0
 				;;
 			# END_DELETE
-			checkprocs) # explore number of process started in pipe
+			checkprocs)
+				# explore number of process started in pipe
 				cProbeNOMQTT
 				_n=20
 				_d=$(cPid)
@@ -2385,7 +2394,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				done
 				cMR OK "Command $cmd($cmdopts): $network/$_m"
 				;;
-			networkscan) # use nmap to scan the local network for IP devices and for ports (option -a), too
+			networkscan)
+				# use nmap to scan the local network for IP devices and for ports (option -a), too
 				cProbeNOMQTT
 				# -sV: Probe open ports to determine service/version info
 				# --version-intensity 6 # the higher the more intense, default is 7
