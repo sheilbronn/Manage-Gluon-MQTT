@@ -20,9 +20,9 @@ fOpenWrt=/etc/openwrt_release
 sSite= #  will be set to something like "ffmuc".... but could also be frozen here
 fMacIDs=/srv/openhab-conf/phones # file is only for presence detection in mapping known phones to known people at....
 fNul=/dev/null
-MP=mosquitto_\pub
+MP=mosquitto_p\ub
 LH=localhost
-C=comman\d
+C=comm\and
 alias A=alias
 
 cCmv() { command -v "$@" >$fNul ;} # true if a command exists
@@ -647,15 +647,17 @@ cMqttBeacon() {
 # cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/state/set"    "Public SSID State"   "" "switch"
 
 cHassAnnounce() {
-	cX
+	# cX
 	dbg cHassAnnounce "$*"
     local _topicpart="${3%/set}" # if $3 ends in /set it is settable, but remove /set from state topic
     # local _name="$(p "${2:+$2-}$4" | tr " " "-" | tr -d "[)()]/" )"
-    local _dev_class="${6:-none}"
+    local _dev="${6:-none}"
 	local _state_class
+	local _dev_class
 	local _jsonpath
 	local _jsonpath_red
 	local _value_template_str
+	local _icon_str
     if T "$5" ; then
 		_jsonpath="${5#value_json.}" #  "${_jsonpath//[ \/-]/}"
 		_jsonpath_red="$(cTrd "][. /-_" "$_jsonpath")"    # cleaned and reduced, needed in unique id's
@@ -675,30 +677,34 @@ cHassAnnounce() {
 	# local *friendly_name*:*${2:+$2 }$4*,
 
     local _unit_str=""
-    # local _channelname="$_dev_name ${_dev_class}" # ${_dev_class^}"
+    # local _channelname="$_dev_name ${_dev}" # ${_dev^}"
    	local _channelname="$_dev_name $4" # take something meaningfull
-    case "$_dev_class" in
+    case "$_dev" in
         temperature*|dewpoint)	_unit_str=",*unit_of_measurement*:*°C*"	; _state_class=measurement 
 						_dev_class=temperature ;;
-        humidity)		_unit_str=",*unit_of_measurement*:*%*"	; _state_class=measurement ;;
+        humidity)		_unit_str=",*unit_of_measurement*:*%*"	; _state_class=measurement 
+						_dev_class=humidity ;;
         counter)		_unit_str=",*unit_of_measurement*:*#*"	; _state_class=total ;; # UOM must have a content to trigger recognition as a number on OpenHab
-		clock)			_icon_str="*icon*:*mdi:clock-outline*" ;;
-		wifi)			_icon_str="*icon*:*mdi:wifi*" 
-						_dev_class="" ;;
-        switch|binary_sensor)	_icon_str="*icon*:*mdi:toggle-switch*"
-						_topic="${sHassPrefix}/$_dev_class"  ; _dev_class=""
+		clock)			_icon_str="clock-outline" ;;
+		wifi)			_icon_str="wifi" ;;
+        binary_sensor)	_icon_str="toggle-switch" ; _topic="${sHassPrefix}/$_dev"
+						;;	
+        switch)			_icon_str="toggle-switch" ; _topic="${sHassPrefix}/$_dev"
+						_dev_class="switch"
 						;;
-		string|none)			_icon_str="" ; _dev_class="" ;;
+		string|none)	;;
+		sensor)			;;
         # battery*)     _unit_str=",*unit_of_measurement*:*B*" ;;  # 1 for "OK" and 0 for "LOW".
     esac
 	_topic="$_topic/$1${_configtopicpart}$_jsonpath_red/config" # _dev_class removed
-	_icon_str="${_icon_str:-*icon*:*mdi:mdi-$_dev_class*}"  # mdi icons: https://cdn.materialdesignicons.com/5.4.55/
+	_icon_str="${_icon_str:-$_dev_class}"  # mdi icons: https://cdn.materialdesignicons.com/5.4.55/
+	_icon_str="${_icon_str:+,*icon*:*mdi:$_icon_str*}"
 	_command_topic_str="$( T "$3" != "$_topicpart" && echo ",*cmd_t*:*$_sensortopic/set*" )"  # determined by suffix ".../set"
 
 	local _dev_model="$2$( T "$2" != "$_devid" && echo " on channel $_devid" )"
     local _device_string="*device*:{*identifiers*:[*$_dev_unique_id*],*manufacturer*:*$sManufacturer*,*model*:*$_dev_model*,*name*:*$_dev_name*,*sw_version*:*$sMe*}"
     local _msg="*name*:*$_channelname*,*state_topic*:*$_sensortopic*,$_device_string${_dev_class:+,*device_class*:*$_dev_class*}"
-	_msg="$_msg,*unique_id*:*${sMe2}${_configtopicpart}$_jsonpath_red*${_unit_str}${_value_template_str}${_command_topic_str},$_icon_str${_state_class:+,*state_class*:*$_state_class*}"
+	_msg="$_msg,*unique_id*:*${sMe2}${_configtopicpart}$_jsonpath_red*${_unit_str}${_value_template_str}${_command_topic_str}$_icon_str${_state_class:+,*state_class*:*$_state_class*}"
 
    	cMS "$_topic" "{$_msg}" "-r" # publish retained announcement
   }
@@ -736,20 +742,24 @@ hMulti() { # 1: topic, 2: name, 3: retained, 4: settable, 5: datatype, 6: unit, 
 			cHassAnnounce "" "$ad_devname" "homie/$hTarget/$o" "$2"  ""  sensor
 		else
 			_sensor=sensor
-						hMeta $o/name "$2"
+					  hMeta $o/name "$2"
 			T "$3" && hMeta $o/retained "${3:-true}"  # default: true
 			T "$4" && hMeta $o/settable "${4:-false}" # default: false
 			T "$5" && {
 				hMeta $o/datatype "$5" 
-				T "$5" = boolean && _sensor=binary_sensor
+				T "$5" = boolean &&   T "$4" && _sensor=switch
+				T "$5" = boolean && ! T "$4" && _sensor=binary_sensor 
 				T "$5" = integer && _sensor=counter
 			}
 			T "$6" && hMeta $o/unit	"$6"
 			T "$7" && hMeta $o/format	"$7"
 
-			cHassAnnounce "" "$ad_devname" "homie/$homie/$o$( T "$4" = true && echo "/set" )" "$2" "" $_sensor
+			cHassAnnounce "$sSite" "$ad_devname" "/$o$( T "$4" = true && echo "/set" )" "$2" "" $_sensor
+			# cHassAnnounce "" "$ad_devname" "homie/$homie/$o$( T "$4" = true && echo "/set" )" "$2" "" $_sensor
+			
 			# cHassAnnounce "" "$ad_devname" "$sSite/$hTarget/statistics"         "Public Wifi RX bytes"   "value_json.traffic.rx" "counter"
 			# cHassAnnounce "$sSite" "$ad_devname" "$hTarget/$cmd"    "Public Wifi TX bytes"   "value_json.traffic.tx" "counter"
+			# cHassAnnounce:  hera homie/hera/gluondata/autoupdater-enabled Autoupdater Enabled  binary_sensor
 		fi
 	}
 	# BEGIN_DELETE
@@ -1172,7 +1182,8 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				# we'll make it restart in a loop if it ends.
 				_secs=$((nSeconds-nBridgeDelta)) # make sure it ends shortly after the bridge
 
-				awk -v f=$fPipe -v t=$_secs -v pid=$$ 'BEGIN { cmd="while [ -d /proc/"pid" ];do ubus -t " int(t/4+99) " listen ;rc=$? ;echo \"{ RESTARTING($rc," int(t/2+1) ") }\" ;done"
+				awk -v f=$fPipe -v t=$_secs -v pid=$$ 'BEGIN { if (t<1) { t=1 }
+							cmd="while [ -d /proc/"pid" ];do ubus -t " int(t/4+99) " listen ;rc=$? ;echo \"{ RESTARTING($rc," t  "," int(t/2+1) ") }\" ;sleep 1;done"
 						while (cmd|getline line) {
 							if (line~/^\{/) { print "UBUS LISTEN "line>>f
 								# ; print "UBUS LISTEN "line>>"/tmp/u"
@@ -1971,7 +1982,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 	
 				cEchoPub os-data "$os_data"	
 				cEchoPub autoupdater-branch 	"$(cLine 1)"
-				cEchoPub autoupdater-enabled	"$(cOut|sed -n -e 2s/0/false/ -e 2s/1/true/ -e 2p)"
+				cEchoPub autoupdater-enabled	"$(cOut|sed -n -e 2s/0/OFF/ -e 2s/1/ON/ -e 2p)"
 				cEchoPub core-domain	"$(cLine 3)"
 				cEchoPub model	"$(cLine 4)"
 				cEchoPub gluon-version	"$(cLine 5)"				
