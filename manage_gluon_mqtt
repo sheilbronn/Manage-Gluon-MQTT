@@ -8,7 +8,7 @@
 #
 # Repository: https://github.com/sheilbronn/Manage-Gluon-MQTT
 # Prerequisites: ash or dash?, mosquitto-clients, jq, jsonfilter
-
+#
 # Some fixed constants and preliminary (fixed) settings ...
 # semi-hungarian notation for vars: i(n)teger, (s)tring, (d)irectory, (c)ommand, (b)oolean usage, (f)ile, (h)ost, (_) local meaning only
 
@@ -157,9 +157,10 @@ _helper() {
 cGetOSData() {
 	cX
 	if ! _val="$(cCRead .os_data 1)" ; then
-		cSsh "cat /usr/lib/os-release" || ssh_data="PRETTY_NAME=unknown
-NAME=$(uname -o)
-ID=$(uname -s)" 
+		cSsh 'cat /usr/lib/os-release' || ssh_data="PRETTY_NAME=unknown
+		NAME=$(uname -o)
+		ID=$(uname -s)"
+		ssh_data="$(cOut|awk -F= '{OFS="=";if ($2 !~ "^\"") $2= "\"" $2 "\"" ; print}')"
 		# || return $? # cancel func
 		if cData ; then
 			_val="$(cOut|awk -F= '
@@ -2005,14 +2006,14 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				;;
 			machine-data)
 				os_data="$(cGetOSData)"
-				dbg os_data "$os_data"
+				dbg machine-data "$os_data"
 				cSsh "command -v $MP || echo NONE ; cat /proc/version /proc/cpuinfo ; command lscpu > $fNul 2>&1 && lscpu" # deal with different output formats
 				data="$(cOut|awk -v os_data="$os_data" '
 					NR==1 {mpub=$1}
 					NR==2 {lxversion=$3 ; FS=": " }
-					/^machine|^Hardware|^Model|odel name/ { FS=": " ; printf "{*mosquitto*:*%s*,*linuxversion*:*%s*,*machine*:*%s*,%s}", mpub, lxversion, $2, substr(os_data,2,length(os_data)-2) ; exit 0 }
+					/^machine|^Hardware|^Model|odel name/ { FS=": " ; sub(/^[[:space:]]+/, "", $2) ; printf "{*mosquitto*:*%s*,*linuxversion*:*%s*,*machine*:*%s*,%s}", mpub, lxversion, $2, substr(os_data,2,length(os_data)-2) ; exit 0 }
 					' )"
-
+set +x
 				if T "$data" ; then
 					cEcho "$(cStarredToJSON)"
 					cMS /$cmd "" -M
