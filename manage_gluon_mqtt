@@ -23,13 +23,23 @@ fNul=/dev/null
 MP=mosquitto_p\ub
 LH=localhost
 C=comm\and
-alias A=alias
 
 cCmv() { command -v "$@" >$fNul ;} # true if a command exists
 cLower() { awk -v s="$*" 'BEGIN {print tolower(s)}' ;} # simplified for args only
 # set -x ; cLower "AA Bb" ; cExit99
 cPid() { sh -c 'echo $$' ;}
 # echo TEST: ; cPid ; cPid ; cExit99
+
+alias A=alias
+A T=t\est
+# This avoids the impact of spawning /bin/echo, in case -e not understood:
+T "$(ec\ho -e)" = "-e" && A ECHO=ec\ho || A ECHO="ec\ho -e" # some echo's know -e, some not. 
+A e=ec\ho # special quoting needed when compressing script for reduced storage
+A L=loc\al
+A cntnue=con\tinue # word "continue" to be compressed (outside of awk!)
+A c=con\tinue
+A r=ret\urn
+A p='pri\ntf %s\\n'
 
 if cCmv busybox ; then # prefer busybox for performance, memory usage and compatibility
 	A awk="busybox awk"
@@ -39,17 +49,8 @@ if cCmv busybox ; then # prefer busybox for performance, memory usage and compat
 	A xargs="busybox xargs -r"
 	A diff="busybox diff"
 fi
-	A T=t\est
-	# This avoids the impact of spawning of /bin/echo, in case -e not understood:
-	T "$(ec\ho -e)" = "-e" && A ECHO=ec\ho || A ECHO="echo -e" # some echo's know -e, some not. 
-	A e=ec\ho # special quoting needed when compressing script for reduced storage
-	A l=loc\al
-	A cntnue=continue # word "continue" to be compressed (outside of awk!)
-	A c=cont\inue
-	A r=ret\urn
-	A p='pri\ntf %s\\n'
-
 A cX="local - && set +x" # to stop any verbosity locally in a function
+A eX='dbg PARAM "$1" "$2" "$3" "$4"; set -x'
 A cS=sleep
 A cIsCmd='T "$cmd" ='
 A cIsOpt='T "$cmdopts" ='
@@ -60,10 +61,10 @@ cR() { T -r "$1" ;} # test if a file is readable
 # cR() { cX ; "$2" && c=echo || c=: ; -r "$1" && $c "$1(OK)" || $c "$1(MISS)" ;} # test if a file is readable, output to stdout if $2 is set, e.g. -v
 # cDebug ; cTrd _- "Aa_Bb" && echo yes; echo ; cTrd -c _- "Aa_Bb" && echo yes; cTrd -c "[a-zA-Z]" "AaBb" && echo yeah; echo ; cExit99
 A cClean='tr -cd A-Za-z0-9_.%,\ -' # remove special, leave spaces and ,._-
-cSaniStr() { cTrd -c "/A-Za-z0-9_.%,\ -" "${1:-$OPTARG}" ;}
-cSaniNum() { cX ; n="$(cTrd -c 0-9 "${1:-$OPTARG}")" || { echo "$0: ${1:+-$opt }${1:-$OPTARG} must be numerical!" 1>&2 ; return 1 ;} && echo $n ;}
 A cData='T "$ssh_data"'
 A cOut='printf "%s\n" "$ssh_data"'
+cSaniStr() { cTrd -c "/A-Za-z0-9_.%,\ -" "${1:-$OPTARG}" ;}
+cSaniNum() { cX ; n="$(cTrd -c 0-9 "${1:-$OPTARG}")" || { echo "$0: ${1:+-$opt }${1:-$OPTARG} must be numerical!" 1>&2 ; return 1 ;} && echo $n ;}
 cCmv ubus && A cUbus=ubus|| A cUbus=": ubus"
 cRan() { echo $(($(date +%s)-nStartTime)) ;} # seconds passed since start of script
 cLine() { cOut | sed -n "$1"p ;} # print line n of ssh_data
@@ -333,7 +334,7 @@ cLogger() {
 cErr() {
 	cX
 	_tmp="$1"
-	T "$1" = : && _tmp="Failed${cmd:+ for command $cmd}${sSshUser:+ with ssh to $sSshUser}" # default msg is ....
+	T "$1" = : && _tmp="Failed${cmd:+ for command $cmd}${sSshUser:+ while ssh to $sSshUser}" # default msg is ....
 	T "$1" != "${1%:}" && _tmp="${_tmp%:} (rc=$ssh_rc${ssh_msg:+,$ssh_msg})" # if $1 ends in :, then add rc and msg
 	shift
 	ECHO "${Red}ERROR$Rst:" "$_tmp" "$@" 1>&2
@@ -463,7 +464,7 @@ cCWrite() { # write a key/value pair to be cached across script invocations from
 	}
 	# cDebug ; cCWrite test1 shouldnotfail ; ls -al $_f ; cCWrite "" shouldfail ; cExit99
 
-cStoreRead() { # read key/value pair from cache or user storage  (1:key, 2:cachetime, 2: filesuffix, 3:dir)
+cStoreRead() { # read key/value pair from cache or user storage  (1:key, 2:cachetime, 3:dir)
 	cX
 	local _fn="$3/$([ "${1#.}" = "$1" ] || e $hTarget)$1"
 	local _nMin=$([ "$2" = 0.1 ] && e 58 || e $((${2:-2}*60*24-5)) ) # default 2 days,  0.1=1 hour=59 minutes
@@ -472,13 +473,13 @@ cStoreRead() { # read key/value pair from cache or user storage  (1:key, 2:cache
 	local _deloutput
 
 	if cR $_fn ; then
-		T "$4" = cache && _deloutput="$(find $_fn -mmin +"$_nMin" | head -1 | xargs -r -t rm 2>&1)" # cache invalidated after n days and remove file
+		T "$3" = "$dCache" && _deloutput="$(find $_fn -mmin +"$_nMin" | head -1 | xargs -r -t rm 2>&1)" # cache invalidated after n days and remove file
 		if ! T "$_deloutput" ; then
 			_val="$(cat $_fn)" && _res="#OK#"  # read cache file successfully
 			T "$_val" || _res="#EMPTY#"
 		fi
 	fi
-	dbg READ "(${_fn#"$dCache/"},$2)=\"$(cShorten "$_val")\"$(T "$_res" != "#OK#" && e "($_res)")"
+	dbg READ "(${_fn#"$dCache/"},$2)=\"$(cShorten "$_val")\"$(T "$_res" != "#OK#" && e " ($_res)")"
 	p "$_val"
 	T "$_val" # return 1 if empty, 0 otherwise
   }
@@ -769,7 +770,7 @@ hMulti() { # 1: topic, 2: name, 3: retained, 4: settable, 5: datatype, 6: unit, 
 		homie=testi
 		hMulti radio/channel24 "Radio channel 2.4" false "" integer ""  "1:13" 
 		cSEP HASSANNOUNCEs
-		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/state/set"    "Public SSID State"   "" switch
+		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/state/set" "Public Wifi State"   "" switch
 		cHassAnnounce "$sSite" "$ad_devname" "$1/radio/channel24/set" "Radio channel 2.4GHz" "" counter
 		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssidshort" "Public SSID Short"  "" string # MUST: String statt wifi, kein /set
 		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssid"      "Public SSID"        "" wifi
@@ -825,7 +826,7 @@ cDisco() { # $1: <homie-host>,  $2: "-d" if retained advertisements are to be de
 		dbg cDisco "($1,$2): announcing ad_devname=$ad_devname,ad_fwname=$ad_fwname,ad_fwversion=$ad_fwversion,ad_impl=$ad_impl"
 
 		# https://www.home-assistant.io/docs/mqtt/discovery/
-		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/state/set"    "Public SSID State"   "" switch
+		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/state/set"    "Public Wifi State"   "" switch
 		cHassAnnounce "$sSite" "$ad_devname" "$1/radio/channel24/set" "Radio channel 2.4GHz" "" counter
 		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssidshort/set" "Public SSID Short"  "" wifi
 		cHassAnnounce "$sSite" "$ad_devname" "$1/publicwifi/ssid"      "Public SSID"        "" wifi
@@ -1061,9 +1062,10 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 			ssh_cmd="$*"
 			ssh_data="$(cTrd '`' "$_r")"
 			if T $ssh_rc = 255 ; then
-				ssh_msg=UNREACHABLE # could also be invalid fingerprint
+				ssh_msg=UNREACHABLE # could also be an invalid fingerprint
 			else
 				_n="$(cCRead .sshcnt)"
+				T "$_n" -gt 0 || _n=0 # in case of non-numeric value, reset to 0
 				cCWrite .sshcnt $((_n+1))
 			fi
 			if T $ssh_rc -ne 0 ; then
@@ -1450,6 +1452,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				# AUTOSSH_PORT        # port to use for monitor connection
 				# AUTOSSH_DEBUG       # turn logging to maximum verbosity and log to                           stderr
 				dbg AUTOSSH "maxlife=${_ml}s" && env|awk '/AUTOSSH/{printf gensub("AUTOSSH_"," ","1")} END{print""}' 1>&2
+				cCmv autossh || cErrAndExit "autossh not installed"
 				if T "var1" ; then
 					_mpcmd="$cMPub -r -h $LH -t $sSite/$hTarget/autossh/heartbeat"
 					cSsh "d=\$(date '+%F %T (produced on $hTarget)') && $_mpcmd -m \"\$d\" && $sMe -m - -c memory"
@@ -1688,7 +1691,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				  sed -e '/^[ \t]*#DELETE_BEGIN#/,/^[ \t]*#DELETE_END#/d' -e '/#DELETE_LINE#[ \t]*$/d' -i $_fn &&
 					sed -e 's/^[ \t]*//' -e 's/\(^[ \t]*\| \+\)#\($\|#*[\t ]\+[^"].*$\)//g' -i $_fn &&
 					#      ^Whitespace      WhiteSpace # Comment
-					  sed -e 's/() *{/(){/' -e 's/[\t ]*\t[\t ]*/\t/g' -e '/^$/d' -e 's/ *;/;/'   -e 's/  *"/ "/g' -e 's/"  */" /g' -e 's,\$( ,$(,g' -e 's, )",)",g'  -e 's,\$(echo ,$(e ,g' -e 's,\t+$,,g' -e 's,^local ,l ,'  -e 's,^echo ,e ,'  -e 's,\<cntnue\>$,c,'  -e 's,\<return\>,r,' -e "s,\<command\>,\$C,g" -e 's,_msg\>,_m,g'  -e 's,\<cMqtt,cM,g'  -i $_fn &&
+					  sed -e 's/() *{/(){/' -e 's/[\t ]*\t[\t ]*/\t/g' -e '/^$/d' -e 's/ *;/;/'   -e 's/  *"/ "/g' -e 's/"  */" /g' -e 's,\$( ,$(,g' -e 's, )",)",g'  -e 's,\$(echo ,$(e ,g' -e 's,\t+$,,g' -e 's,^local ,L ,'  -e 's,^echo ,e ,'  -e 's,\<cntnue\>$,c,'  -e 's,\<return\>,r,' -e "s,\<command\>,\$C,g" -e 's,_msg\>,_m,g'  -e 's,\<cMqtt,cM,g'  -i $_fn &&
 					  #  kompr: () *{            Whitesp tab Whitespace  emptyline  any WS before ;  WS bef DouQts   WS after DblQts  spaceAfter$(     spaceBefore)"    echo to e after $(     tab at eol     local to alias l    echo to e          cntnue to c            return to r          command  to  $C        suffix _msg to _m    command with cMqtt...
 						cp -p $_fn /tmp &&
 						  sed -E -i $_fn -e 's/([^\];) +/\1/g'  -e 's,[ \t]*(&&|>|>>|\|)[ \t]*,\1,g' -e '/awk|lua|printf|test|:/!s,"([a-z0-9/-][a-z0-9/._-]+)",\1,g' && #  -e 's,[^\)]\) [^a-zA-Z],),g'  &&
@@ -1816,7 +1819,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 							fi
 						fi
 						cMS 	/publicwifi/state	OFF 	-M
-						hLine	publicwifi/state	false	-M
+						hLine	 publicwifi/state	false	-M
 						cBothMqtt 	publicwifi/clientscount 0
 					fi
 				fi
@@ -1996,7 +1999,7 @@ for hFull in $hAll ; do # do it for each given target node (or maybe just one)..
 				cProbeGET
 				if cSsh "gluon-info" ; then
 					cEcho
-					data="{$(cOut|awk -F: '{gsub(/^[[:space:]]*/,"",$2); printf c "*%s*:*%s*", $1, $2 ; c="," }' )}"
+					data="{$(cOut|awk -F: -v IFS=":" '{printf "%s*%s*:*", c, $1; gsub(/^[[:space:]]*/,"",$2); for(i=2;i<=NF;i++) printf "%s%s", $i, (i<NF?":":"*") ; c="," }' )}"
 					cMS /$cmd ""
 					cAddSuccHost
 				else
